@@ -38,11 +38,12 @@
     let azimuth = 0;
     let altitude = 0;
     const PITCH_LIMIT = Math.PI / 2 - 0.01;
+    const FOV_MIN = 15, FOV_MAX = 100;
 
     const hud = document.getElementById('hud');
     const deg = r => (r * 180 / Math.PI).toFixed(1);
     const updateHud = () => {
-      hud.textContent = `azimuth ${deg(azimuth)}°  altitude ${deg(altitude)}°`;
+      hud.textContent = `azimuth ${deg(azimuth)}°  altitude ${deg(altitude)}°  fov ${camera.fov.toFixed(1)}°`;
     };
     updateHud();
 
@@ -65,6 +66,15 @@
       altitude = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, altitude));
       updateHud();
     });
+
+    renderer.domElement.addEventListener('wheel', e => {
+      e.preventDefault();
+      // Normalize deltaY to pixels: Firefox mouse wheels report LINE (≈ ±3); Chrome PIXEL (≈ ±100).
+      const pxDelta = e.deltaMode === 1 ? e.deltaY * 30 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+      camera.fov = Math.max(FOV_MIN, Math.min(FOV_MAX, camera.fov * Math.exp(pxDelta * 0.001)));
+      camera.updateProjectionMatrix();
+      updateHud();
+    }, { passive: false });
 
     addEventListener('resize', () => {
       camera.aspect = innerWidth / innerHeight;
