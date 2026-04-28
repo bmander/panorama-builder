@@ -16,19 +16,28 @@ export function createHud(getSnapshot) {
   };
 }
 
-export function attachFlatToggle({ baker, viewer, hud }) {
+export function attachViewTabs({ baker, viewer, hud, mapView }) {
   const flatCanvas = document.getElementById('flat');
   const flatWrap = document.getElementById('flat-wrap');
-  const toggleBtn = document.getElementById('toggle');
-  let showingFlat = false;
-  toggleBtn.addEventListener('click', () => {
-    showingFlat = !showingFlat;
-    if (showingFlat) baker.paintToCanvas(flatCanvas, baker.bake(2048));
-    flatWrap.classList.toggle('show', showingFlat);
-    viewer.setCanvasVisible(!showingFlat);
-    hud.setVisible(!showingFlat);
-    toggleBtn.textContent = showingFlat ? '360° view' : 'flat view';
-  });
+  const mapWrap = document.getElementById('map-wrap');
+  const tabs = {
+    '360': document.getElementById('tab-360'),
+    flat: document.getElementById('tab-flat'),
+    map: document.getElementById('tab-map'),
+  };
+
+  function setMode(mode) {
+    if (mode === 'flat') baker.paintToCanvas(flatCanvas, baker.bake(2048));
+    flatWrap.classList.toggle('show', mode === 'flat');
+    mapWrap.classList.toggle('show', mode === 'map');
+    viewer.setCanvasVisible(mode === '360');
+    hud.setVisible(mode === '360');
+    for (const [key, btn] of Object.entries(tabs)) btn.classList.toggle('active', key === mode);
+    if (mode === 'map') mapView.onShow();
+  }
+
+  for (const [mode, btn] of Object.entries(tabs)) btn.addEventListener('click', () => setMode(mode));
+  setMode('360');
 }
 
 export function attachDownload({ baker }) {

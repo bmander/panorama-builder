@@ -32,7 +32,11 @@ export function createBaker({ renderer, scene, setSelectionVisible }) {
   equirectScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), equirectMat));
   const equirectRT = new THREE.WebGLRenderTarget(2048, 1024);
 
+  let lastBake = null;
+  let dirty = true;
+
   function bake(width = 2048) {
+    if (!dirty && lastBake && lastBake.width === width) return lastBake;
     const height = width / 2;
     setSelectionVisible?.(false);
     cubeCam.update(renderer, scene);
@@ -44,7 +48,9 @@ export function createBaker({ renderer, scene, setSelectionVisible }) {
     const pixels = new Uint8Array(width * height * 4);
     renderer.readRenderTargetPixels(equirectRT, 0, 0, width, height, pixels);
     setSelectionVisible?.(true);
-    return { pixels, width, height };
+    lastBake = { pixels, width, height };
+    dirty = false;
+    return lastBake;
   }
 
   function paintToCanvas(canvas, baked) {
@@ -61,5 +67,5 @@ export function createBaker({ renderer, scene, setSelectionVisible }) {
     ctx.putImageData(img, 0, 0);
   }
 
-  return { bake, paintToCanvas };
+  return { bake, paintToCanvas, markDirty() { dirty = true; } };
 }

@@ -3,15 +3,29 @@
 <head>
   <meta charset="utf-8">
   <title>Panorama</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div id="flat-wrap"><canvas id="flat"></canvas></div>
-  <button id="toggle" class="btn">flat view</button>
+  <div id="map-wrap">
+    <div id="map"></div>
+    <div id="map-coords"></div>
+  </div>
+  <div id="tabs">
+    <button id="tab-360" class="btn tab">360°</button>
+    <button id="tab-flat" class="btn tab">Flat</button>
+    <button id="tab-map" class="btn tab">Map</button>
+  </div>
   <button id="download" class="btn">download PNG</button>
   <div id="hud"></div>
   <script type="importmap">
-    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "leaflet": "https://unpkg.com/leaflet@1.9.4/dist/leaflet-src.esm.js"
+      }
+    }
   </script>
   <script type="module" src="src/main.js"></script>
 </body>

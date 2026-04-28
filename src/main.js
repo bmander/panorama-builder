@@ -2,13 +2,15 @@ import { createViewer } from './viewer.js';
 import { createOverlayManager } from './overlay.js';
 import { createBaker } from './bake.js';
 import { attachInput } from './input.js';
-import { createHud, attachFlatToggle, attachDownload } from './ui.js';
+import { createHud, attachViewTabs, attachDownload } from './ui.js';
+import { createMapView } from './map.js';
 
 const viewer = createViewer({ panoramaUrl: 'panorama.png', container: document.body });
 
 const overlays = createOverlayManager({
   overlaysGroup: viewer.overlaysGroup,
   getAnisotropy: () => viewer.renderer.capabilities.getMaxAnisotropy(),
+  onMutate: () => baker.markDirty(),
 });
 
 const baker = createBaker({
@@ -27,8 +29,17 @@ const hud = createHud(() => {
   };
 });
 
+const coordsEl = document.getElementById('map-coords');
+coordsEl.textContent = 'no location set — click map to set';
+const mapView = createMapView({
+  container: document.getElementById('map'),
+  onLocationChange: loc => {
+    coordsEl.textContent = `lat ${loc.lat.toFixed(5)}  lng ${loc.lng.toFixed(5)}`;
+  },
+});
+
 attachInput({ viewer, overlays, onChange: () => hud.refresh() });
-attachFlatToggle({ baker, viewer, hud });
+attachViewTabs({ baker, viewer, hud, mapView });
 attachDownload({ baker });
 
 hud.refresh();

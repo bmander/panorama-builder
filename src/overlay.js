@@ -18,8 +18,9 @@ export function dirFromAzAlt(az, alt) {
   return v;
 }
 
-export function createOverlayManager({ overlaysGroup, getAnisotropy }) {
+export function createOverlayManager({ overlaysGroup, getAnisotropy, onMutate }) {
   const overlaySphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), OVERLAY_R);
+  const notify = () => onMutate?.();
   let selected = null;
 
   function makeOverlay(tex, aspect) {
@@ -106,6 +107,7 @@ export function createOverlayManager({ overlaysGroup, getAnisotropy }) {
       placeAt(o, dir);
       overlaysGroup.add(o);
       this.setSelected(o);
+      notify();
       return o;
     },
     getSelected: () => selected,
@@ -119,11 +121,13 @@ export function createOverlayManager({ overlaysGroup, getAnisotropy }) {
       if (!selected) return;
       selected.position.copy(point);
       selected.lookAt(0, 0, 0);
+      notify();
     },
     resizeSelectedTo(sizeRad) {
       if (!selected) return;
       selected.userData.sizeRad = THREE.MathUtils.clamp(sizeRad, SIZE_MIN, SIZE_MAX);
       applySize(selected);
+      notify();
     },
     deleteSelected() {
       if (!selected) return;
@@ -133,6 +137,7 @@ export function createOverlayManager({ overlaysGroup, getAnisotropy }) {
       o.userData.body.geometry.dispose();
       o.userData.body.material.map?.dispose();
       o.userData.body.material.dispose();
+      notify();
     },
     setVisualsVisible(visible) {
       if (!selected) return;
