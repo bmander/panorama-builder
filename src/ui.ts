@@ -51,7 +51,7 @@ export function attachViewTabs({ baker, viewer, hud, mapView }: {
   };
 
   let current: ViewMode = '360';
-  let modeChangeCb: ((mode: ViewMode) => void) | null = null;
+  const modeChangeCbs: ((mode: ViewMode) => void)[] = [];
 
   function setMode(mode: ViewMode): void {
     current = mode;
@@ -63,7 +63,7 @@ export function attachViewTabs({ baker, viewer, hud, mapView }: {
     for (const [key, btn] of Object.entries(tabs)) btn.classList.toggle('active', key === mode);
     if (mode === 'map') mapView.onShow();
     else mapView.onHide();
-    modeChangeCb?.(mode);
+    for (const cb of modeChangeCbs) cb(mode);
   }
 
   for (const [mode, btn] of Object.entries(tabs)) btn.addEventListener('click', () => { setMode(mode as ViewMode); });
@@ -72,7 +72,7 @@ export function attachViewTabs({ baker, viewer, hud, mapView }: {
   return {
     setMode,
     getMode: () => current,
-    onModeChange(cb) { modeChangeCb = cb; },
+    onModeChange(cb) { modeChangeCbs.push(cb); },
   };
 }
 

@@ -5,7 +5,7 @@
 
 import type { LatLng } from './types.js';
 
-const DB_NAME = 'panorama-builder';
+const DB_NAME = 'panorama-builder-v1';
 const DB_VERSION = 1;
 const STATE_STORE = 'state';
 const BLOBS_STORE = 'blobs';
@@ -56,6 +56,7 @@ function openDB(): Promise<IDBDatabase> {
     };
     req.onsuccess = (): void => { resolve(req.result); };
     req.onerror = (): void => { reject(req.error ?? new Error('Failed to open IDB')); };
+    req.onblocked = (): void => { console.warn('[persistence] open blocked by another connection'); };
   });
 }
 

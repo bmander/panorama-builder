@@ -60,13 +60,13 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded }: Atta
   let tool: Tool = TOOL_MOVE;
   let mode: ModeState = null;
   let lastX = 0, lastY = 0;
-  let toolChangeCb: ((tool: Tool) => void) | null = null;
+  const toolChangeCbs: ((tool: Tool) => void)[] = [];
 
   function setTool(newTool: Tool): void {
     if (tool === newTool) return;
     tool = newTool;
     canvas.classList.toggle('tool-poi', tool === TOOL_POI);
-    toolChangeCb?.(tool);
+    for (const cb of toolChangeCbs) cb(tool);
   }
 
   let batchOpen = false;
@@ -226,6 +226,6 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded }: Atta
 
   return {
     setTool, getTool: () => tool,
-    onToolChange(cb: (tool: Tool) => void): void { toolChangeCb = cb; },
+    onToolChange(cb: (tool: Tool) => void): void { toolChangeCbs.push(cb); },
   };
 }
