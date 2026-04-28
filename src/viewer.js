@@ -30,6 +30,20 @@ function makeGridTexture() {
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
   }
   ctx.beginPath(); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.stroke();
+
+  // Compass rose on the floor (cardinal labels at altitude −75°).
+  // Equirect u mapping (Three.js convention u = atan2(z, x)/(2π) + 0.5):
+  //   N (-Z) → u=0.25, E (+X) → u=0.5, S (+Z) → u=0.75, W (-X) → u=0/1.
+  ctx.fillStyle = '#5a5a5a';
+  ctx.font = 'bold 90px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const yLabel = (90 - (-75)) / 180 * H;
+  for (const [label, u] of [['N', 0.25], ['E', 0.5], ['S', 0.75], ['W', 0]]) {
+    ctx.fillText(label, u * W, yLabel);
+  }
+  ctx.fillText('W', W, yLabel); // wraparound copy so W at u=0 isn't half-clipped
+
   return canvas;
 }
 
