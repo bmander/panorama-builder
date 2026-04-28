@@ -1,20 +1,41 @@
 import * as L from 'leaflet';
+import type * as THREE from 'three';
 import { R_EARTH, bearingFromLocation, viewerAzToBearing, bearingToViewerAz } from './geo.js';
+import type { Cone, LatLng, POIBearing } from './types.js';
+
+export interface MapView {
+  getLocation(): LatLng | null;
+  setLocation(latlng: LatLng | null): void;
+  viewerAzToAnchor(latlng: LatLng): number;
+  setOverlayCones(newCones: Cone[]): void;
+  setPOIBearings(newPOIs: POIBearing[]): void;
+  isVisible(): boolean;
+  onShow(): void;
+  onHide(): void;
+}
+
+export interface CreateMapViewOptions {
+  container: HTMLElement;
+  onLocationChange?: (loc: LatLng) => void;
+  onPOIAnchorClick?: (handle: THREE.Mesh, latlng: LatLng) => void;
+  onPOIAnchorDragged?: (handle: THREE.Mesh, latlng: LatLng, viewerAz: number) => void;
+  onShowRefresh?: () => void;
+}
 
 const HIST_ATTR = 'Historical maps via <a href="https://bmander.com/seamap">bmander.com/seamap</a>';
-const histLayer = (year, opts = {}) => L.tileLayer(
+const histLayer = (year: number, opts: L.TileLayerOptions = {}): L.TileLayer => L.tileLayer(
   `https://storage.googleapis.com/seatimemap/${year}/{z}/{x}/{y}.png`,
   { minZoom: 12, maxZoom: 20, attribution: HIST_ATTR, ...opts },
 );
 
-function destination(loc, bearingDeg, distM) {
+function destination(loc: LatLng, bearingDeg: number, distM: number): LatLng {
   const bRad = bearingDeg * Math.PI / 180;
   const dLat = (distM / R_EARTH) * Math.cos(bRad) * 180 / Math.PI;
   const dLng = (distM / R_EARTH) * Math.sin(bRad) * 180 / Math.PI / Math.cos(loc.lat * Math.PI / 180);
   return { lat: loc.lat + dLat, lng: loc.lng + dLng };
 }
 
-function projectClickToRay(loc, bearingDeg, click) {
+function projectClickToRay(loc: LatLng, bearingDeg: number, click: L.LatLng): LatLng {
   // Flat-earth projection of click onto the ray (loc, bearing); clamps t≥0 (no points behind apex).
   const cosLat = Math.cos(loc.lat * Math.PI / 180);
   const dLat = click.lat - loc.lat;
@@ -25,15 +46,21 @@ function projectClickToRay(loc, bearingDeg, click) {
   return { lat: loc.lat + t * dirN, lng: loc.lng + (t * dirE) / cosLat };
 }
 
-function pixelsToMeters(map, pixels) {
+function pixelsToMeters(map: L.Map, pixels: number): number {
   const c = map.getCenter();
   const p = map.latLngToContainerPoint(c);
   const ll2 = map.containerPointToLatLng(L.point(p.x + pixels, p.y));
   return c.distanceTo(ll2);
 }
 
-export function createMapView({ container, onLocationChange, onPOIAnchorClick, onPOIAnchorDragged, onShowRefresh }) {
-  const layers = {
+export function createMapView({
+  container,
+  onLocationChange,
+  onPOIAnchorClick,
+  onPOIAnchorDragged,
+  onShowRefresh,
+}: CreateMapViewOptions): MapView {
+  const layers: Record<string, L.TileLayer> = {
     'Sanborn 1884': histLayer(1884),
     'Sanborn 1888': histLayer(1888),
     'Sanborn 1893': histLayer(1893),
@@ -43,72 +70,86 @@ export function createMapView({ container, onLocationChange, onPOIAnchorClick, o
     }),
   };
 
-  const map = L.map(container, { layers: [layers['Sanborn 1893']] })
+  const baseLayer = layers['Sanborn 1893']!;
+  const map = L.map(container, { layers: [baseLayer] })
     .setView([47.607, -122.335], 14);
   L.control.layers(layers, {}, { collapsed: false, position: 'topleft' }).addTo(map);
 
-  let location = null;
-  let marker = null;
-  let cones = [];
-  let coneLayers = [];
-  let pois = [];
-  let poiLayers = [];
-  let anchorMarkers = new Map(); // poiHandle -> L.marker
+  let location: LatLng | null = null;
+  let marker: L.Marker | null = null;
+  let cones: Cone[] = [];
+  const coneLayers: L.Polygon[] = [];
+  let pois: POIBearing[] = [];
+  const poiLayers: L.Polyline[] = [];
+  const anchorMarkers: Map<THREE.Mesh, L.Marker> = new Map();
   let visible = false;
 
-  const CONE_STYLE = { color: '#ffd84a', weight: 1, fillColor: '#ffd84a', fillOpacity: 0.18 };
-  const POI_STYLE = { color: '#ff5050', weight: 2, opacity: 0.8 };
+  const CONE_STYLE: L.PolylineOptions = { color: '#ffd84a', weight: 1, fillColor: '#ffd84a', fillOpacity: 0.18 };
+  const POI_STYLE: L.PolylineOptions = { color: '#ff5050', weight: 2, opacity: 0.8 };
   const ANCHOR_ICON = L.divIcon({
     className: 'poi-anchor-marker',
     iconSize: [14, 14],
     iconAnchor: [7, 7],
   });
-  function screenDiagonalMeters() {
+
+  function screenDiagonalMeters(): number {
     const s = map.getSize();
     return pixelsToMeters(map, Math.hypot(s.x, s.y));
   }
 
-  function syncLayerPool(items, layers, makeLayer, applyLatLngs) {
+  function syncLayerPool<TItem, TLayer extends L.Layer>(
+    items: TItem[],
+    layerPool: TLayer[],
+    makeLayer: () => TLayer,
+    applyLatLngs: (layer: TLayer, item: TItem, distM: number) => void,
+  ): void {
     if (!location || items.length === 0) {
-      while (layers.length) map.removeLayer(layers.pop());
+      while (layerPool.length) map.removeLayer(layerPool.pop()!);
       return;
     }
-    while (layers.length > items.length) map.removeLayer(layers.pop());
-    while (layers.length < items.length) layers.push(makeLayer().addTo(map));
+    while (layerPool.length > items.length) map.removeLayer(layerPool.pop()!);
+    while (layerPool.length < items.length) layerPool.push(makeLayer().addTo(map));
     const distM = screenDiagonalMeters();
-    for (let i = 0; i < items.length; i++) applyLatLngs(layers[i], items[i], distM);
+    for (let i = 0; i < items.length; i++) {
+      const layer = layerPool[i]!;
+      const item = items[i]!;
+      applyLatLngs(layer, item, distM);
+    }
   }
 
-  function redrawCones() {
+  function redrawCones(): void {
     if (!visible) return;
-    syncLayerPool(cones, coneLayers,
+    syncLayerPool<Cone, L.Polygon>(cones, coneLayers,
       () => L.polygon([[0, 0], [0, 0], [0, 0]], CONE_STYLE),
       (layer, c, distM) => {
-        const ptL = destination(location, viewerAzToBearing(c.azL), distM);
-        const ptR = destination(location, viewerAzToBearing(c.azR), distM);
+        const loc = location!;
+        const ptL = destination(loc, viewerAzToBearing(c.azL), distM);
+        const ptR = destination(loc, viewerAzToBearing(c.azR), distM);
         layer.setLatLngs([
-          [location.lat, location.lng],
+          [loc.lat, loc.lng],
           [ptL.lat, ptL.lng],
           [ptR.lat, ptR.lng],
         ]);
       });
   }
 
-  function redrawPOIs() {
+  function redrawPOIs(): void {
     if (!visible) return;
-    syncLayerPool(pois, poiLayers,
+    syncLayerPool<POIBearing, L.Polyline>(pois, poiLayers,
       () => L.polyline([[0, 0], [0, 0]], POI_STYLE),
       (layer, p, distM) => {
-        const pt = destination(location, viewerAzToBearing(p.az), distM);
-        layer.setLatLngs([[location.lat, location.lng], [pt.lat, pt.lng]]);
+        const loc = location!;
+        const pt = destination(loc, viewerAzToBearing(p.az), distM);
+        layer.setLatLngs([[loc.lat, loc.lng], [pt.lat, pt.lng]]);
       });
     // Re-bind click handlers (closures need fresh poi references).
     for (let i = 0; i < poiLayers.length; i++) {
-      const handle = pois[i].handle;
-      const az = pois[i].az;
-      const layer = poiLayers[i];
+      const poi = pois[i]!;
+      const layer = poiLayers[i]!;
+      const handle = poi.handle;
+      const az = poi.az;
       layer.off('click');
-      layer.on('click', e => {
+      layer.on('click', (e: L.LeafletMouseEvent) => {
         if (!location) return;
         const projected = projectClickToRay(location, viewerAzToBearing(az), e.latlng);
         onPOIAnchorClick?.(handle, projected);
@@ -117,9 +158,9 @@ export function createMapView({ container, onLocationChange, onPOIAnchorClick, o
     }
   }
 
-  function redrawAnchors() {
+  function redrawAnchors(): void {
     if (!visible) return;
-    const wanted = new Map();
+    const wanted: Map<THREE.Mesh, LatLng> = new Map();
     for (const p of pois) {
       if (p.mapAnchor) wanted.set(p.handle, p.mapAnchor);
     }
@@ -127,36 +168,36 @@ export function createMapView({ container, onLocationChange, onPOIAnchorClick, o
       if (!wanted.has(handle)) { map.removeLayer(m); anchorMarkers.delete(handle); }
     }
     for (const [handle, anchor] of wanted) {
-      let m = anchorMarkers.get(handle);
-      if (!m) {
-        m = L.marker([anchor.lat, anchor.lng], { draggable: true, icon: ANCHOR_ICON }).addTo(map);
-        m.on('drag', e => {
+      const existing = anchorMarkers.get(handle);
+      if (!existing) {
+        const m = L.marker([anchor.lat, anchor.lng], { draggable: true, icon: ANCHOR_ICON }).addTo(map);
+        m.on('drag', (e: L.LeafletEvent) => {
           if (!location) return;
-          const ll = e.target.getLatLng();
+          const ll = (e.target as L.Marker).getLatLng();
           const bearing = bearingFromLocation(location, ll);
           onPOIAnchorDragged?.(handle, ll, bearingToViewerAz(bearing));
         });
         anchorMarkers.set(handle, m);
       } else {
-        m.setLatLng([anchor.lat, anchor.lng]);
+        existing.setLatLng([anchor.lat, anchor.lng]);
       }
     }
   }
 
-  function redrawAll() { redrawCones(); redrawPOIs(); redrawAnchors(); }
+  function redrawAll(): void { redrawCones(); redrawPOIs(); redrawAnchors(); }
 
-  function ensureMarker(latlng) {
+  function ensureMarker(latlng: L.LatLngExpression): void {
     if (marker) { marker.setLatLng(latlng); return; }
     marker = L.marker(latlng, { draggable: true }).addTo(map);
-    marker.on('drag', e => {
-      const ll = e.target.getLatLng();
+    marker.on('drag', (e: L.LeafletEvent) => {
+      const ll = (e.target as L.Marker).getLatLng();
       location = { lat: ll.lat, lng: ll.lng };
       onLocationChange?.(location);
       redrawAll();
     });
   }
 
-  map.on('click', e => {
+  map.on('click', (e: L.LeafletMouseEvent) => {
     location = { lat: e.latlng.lat, lng: e.latlng.lng };
     ensureMarker(e.latlng);
     onLocationChange?.(location);
@@ -169,20 +210,20 @@ export function createMapView({ container, onLocationChange, onPOIAnchorClick, o
     getLocation: () => location,
     // Programmatic move from the pose solver. Does NOT fire onLocationChange (which would
     // re-trigger the solver and feedback-loop).
-    setLocation(latlng) {
+    setLocation(latlng: LatLng | null): void {
       if (!latlng) return;
       location = { lat: latlng.lat, lng: latlng.lng };
-      ensureMarker(latlng);
+      ensureMarker([latlng.lat, latlng.lng]);
       redrawAll();
     },
-    viewerAzToAnchor(latlng) {
+    viewerAzToAnchor(latlng: LatLng): number {
       if (!location) return 0;
       return bearingToViewerAz(bearingFromLocation(location, latlng));
     },
-    setOverlayCones(newCones) { cones = newCones; redrawCones(); },
-    setPOIBearings(newPOIs) { pois = newPOIs; redrawPOIs(); redrawAnchors(); },
+    setOverlayCones(newCones: Cone[]): void { cones = newCones; redrawCones(); },
+    setPOIBearings(newPOIs: POIBearing[]): void { pois = newPOIs; redrawPOIs(); redrawAnchors(); },
     isVisible: () => visible,
-    onShow() {
+    onShow(): void {
       // Pull fresh annotation data into our cone/POI caches first. The setters'
       // redraws are gated on `visible`, so they're no-ops here — the redrawAll
       // below paints once with up-to-date inputs.
@@ -193,6 +234,6 @@ export function createMapView({ container, onLocationChange, onPOIAnchorClick, o
       map.invalidateSize();
       redrawAll();
     },
-    onHide() { visible = false; },
+    onHide(): void { visible = false; },
   };
 }
