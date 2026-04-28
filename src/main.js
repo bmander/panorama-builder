@@ -10,8 +10,10 @@ const viewer = createViewer({ container: document.body });
 const overlays = createOverlayManager({
   overlaysGroup: viewer.overlaysGroup,
   getAnisotropy: () => viewer.renderer.capabilities.getMaxAnisotropy(),
-  onMutate: () => baker.markDirty(),
+  onMutate: () => { baker.markDirty(); refreshCones(); },
 });
+
+function refreshCones() { mapView.setOverlayCones(overlays.getCones()); }
 
 const baker = createBaker({
   renderer: viewer.renderer,

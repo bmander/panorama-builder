@@ -139,6 +139,23 @@ export function createOverlayManager({ overlaysGroup, getAnisotropy, onMutate })
       o.userData.body.material.dispose();
       notify();
     },
+    getCones() {
+      // Sample each vertical edge at its centerline (y=0). For tilted overlays the
+      // local Y axis isn't purely world-vertical, so picking y=0 (the edge midpoint)
+      // gives a stable bearing instead of biasing toward the bottom corner.
+      const cones = [];
+      const v = new THREE.Vector3();
+      for (const o of overlaysGroup.children) {
+        const w = widthFromSizeRad(o.userData.sizeRad);
+        o.updateMatrixWorld();
+        v.set(-w / 2, 0, 0).applyMatrix4(o.matrixWorld);
+        const azL = Math.atan2(-v.x, -v.z);
+        v.set(+w / 2, 0, 0).applyMatrix4(o.matrixWorld);
+        const azR = Math.atan2(-v.x, -v.z);
+        cones.push({ azL, azR });
+      }
+      return cones;
+    },
     setVisualsVisible(visible) {
       if (!selected) return;
       if (selected.userData.outline) selected.userData.outline.visible = visible;
