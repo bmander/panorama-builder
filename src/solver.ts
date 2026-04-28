@@ -18,27 +18,29 @@
 //   - u, v ∈ [0,1] image coords; anchor is the map POI's lat/lng.
 
 import { bearingFromLocation, bearingToViewerAz } from './geo.js';
+import type { POIProjection, Pose, SolveResult, SolverParam } from './types.js';
 
 const MAX_ITERS = 20;
 const STEP_TOL = 1e-7;
 const RESIDUAL_TOL = 1e-5;
 const FD_EPS = 1e-5;
-const ALL_PARAMS = ['photoAz', 'sizeRad', 'camLat', 'camLng'];
 
 // Box constraint to keep sizeRad away from the degenerate zero-FOV minimum.
-const PARAM_BOUNDS = {
+const PARAM_BOUNDS: Partial<Record<SolverParam, [number, number]>> = {
   sizeRad: [Math.PI / 180 * 2, Math.PI * 0.95],   // 2°–171° matches overlay's SIZE_MIN/MAX
 };
 
-function applyBounds(pose) {
-  for (const k in PARAM_BOUNDS) {
-    const [lo, hi] = PARAM_BOUNDS[k];
+function applyBounds(pose: Pose): void {
+  for (const k of Object.keys(PARAM_BOUNDS) as SolverParam[]) {
+    const bounds = PARAM_BOUNDS[k];
+    if (!bounds) continue;
+    const [lo, hi] = bounds;
     if (pose[k] < lo) pose[k] = lo;
     else if (pose[k] > hi) pose[k] = hi;
   }
 }
 
-export function autoFreeParams(numPois) {
+export function autoFreeParams(numPois: number): SolverParam[] {
   if (numPois <= 0) return [];
   if (numPois === 1) return ['photoAz'];
   // 4 POIs is the minimum to determine camera location from bearings (3 independent
@@ -64,7 +66,7 @@ export function autoFreeParams(numPois) {
 //   4. POI world dir = center + (u-0.5)*W·localX + (v-0.5)*H·localY (since the photo's
 //      local +Z points toward the camera, the (u,v) plane is its tangent at distance R).
 //   5. Return (atan2(-x, -z), asin(y / |dir|)).
-function projectPOI(pose, u, v) {
+function projectPOI(pose: Pose, u: number, v: number): { az: number; el: number } {
   const { photoAz: az, photoTilt: alt, sizeRad, aspect } = pose;
 
   // Photo center direction (world). Matches dirFromAzAlt(az, alt) in overlay.js.
@@ -117,56 +119,71 @@ function projectPOI(pose, u, v) {
   };
 }
 
-function targetBearingFor(pose, anchor) {
+function targetBearingFor(
+  pose: Pose,
+  anchor: { anchorLat: number; anchorLng: number },
+): number {
   const camLoc = { lat: pose.camLat, lng: pose.camLng };
   return bearingToViewerAz(bearingFromLocation(camLoc, { lat: anchor.anchorLat, lng: anchor.anchorLng }));
 }
 
-const wrapPI = a => ((a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+const wrapPI = (a: number): number => ((a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
 
-function residuals(pose, pois) {
-  const r = new Array(pois.length);
+function residuals(pose: Pose, pois: POIProjection[]): number[] {
+  const r: number[] = new Array(pois.length);
   for (let i = 0; i < pois.length; i++) {
-    const img = projectPOI(pose, pois[i].u, pois[i].v);
-    r[i] = wrapPI(img.az - targetBearingFor(pose, pois[i]));
+    const poi = pois[i]!;
+    const img = projectPOI(pose, poi.u, poi.v);
+    r[i] = wrapPI(img.az - targetBearingFor(pose, poi));
   }
   return r;
 }
 
-function residualNorm(r) {
+function residualNorm(r: number[]): number {
   let s = 0;
   for (const v of r) s += v * v;
   return Math.sqrt(s);
 }
 
 // Solve K×K linear system A·x = b in place via Gaussian elimination. K ≤ 6 here.
-function solveLinear(A, b) {
+function solveLinear(A: number[][], b: number[]): number[] | null {
   const n = b.length;
   for (let i = 0; i < n; i++) {
     let pivot = i;
-    for (let r = i + 1; r < n; r++) if (Math.abs(A[r][i]) > Math.abs(A[pivot][i])) pivot = r;
-    if (pivot !== i) { [A[i], A[pivot]] = [A[pivot], A[i]]; [b[i], b[pivot]] = [b[pivot], b[i]]; }
-    if (Math.abs(A[i][i]) < 1e-12) return null; // singular
+    for (let r = i + 1; r < n; r++) if (Math.abs(A[r]![i]!) > Math.abs(A[pivot]![i]!)) pivot = r;
+    if (pivot !== i) {
+      const tmpRow = A[i]!; A[i] = A[pivot]!; A[pivot] = tmpRow;
+      const tmpB = b[i]!; b[i] = b[pivot]!; b[pivot] = tmpB;
+    }
+    const Ai = A[i]!;
+    if (Math.abs(Ai[i]!) < 1e-12) return null; // singular
     for (let r = i + 1; r < n; r++) {
-      const f = A[r][i] / A[i][i];
-      for (let c = i; c < n; c++) A[r][c] -= f * A[i][c];
-      b[r] -= f * b[i];
+      const Ar = A[r]!;
+      const f = Ar[i]! / Ai[i]!;
+      for (let c = i; c < n; c++) Ar[c] = Ar[c]! - f * Ai[c]!;
+      b[r] = b[r]! - f * b[i]!;
     }
   }
-  const x = new Array(n);
+  const x: number[] = new Array(n);
   for (let i = n - 1; i >= 0; i--) {
-    let s = b[i];
-    for (let c = i + 1; c < n; c++) s -= A[i][c] * x[c];
-    x[i] = s / A[i][i];
+    const Ai = A[i]!;
+    let s = b[i]!;
+    for (let c = i + 1; c < n; c++) s -= Ai[c]! * x[c]!;
+    x[i] = s / Ai[i]!;
   }
   return x;
 }
 
-export function solvePose({ pose, pois, free }) {
+export function solvePose(options: {
+  pose: Pose;
+  pois: POIProjection[];
+  free: SolverParam[];
+}): SolveResult {
+  const { pose, pois, free } = options;
   if (!pois || pois.length === 0 || !free || free.length === 0) {
     return { pose: { ...pose }, residualRMS: 0, iterations: 0, cameraMoved: false };
   }
-  const x = { ...pose };
+  const x: Pose = { ...pose };
 
   let r = residuals(x, pois);
   let prevNorm = residualNorm(r);
@@ -177,30 +194,30 @@ export function solvePose({ pose, pois, free }) {
 
     // Numerical Jacobian: J[i][k] = ∂r_i/∂x_k via central difference.
     const m = r.length, k = free.length;
-    const J = Array.from({ length: m }, () => new Array(k).fill(0));
+    const J: number[][] = Array.from({ length: m }, () => new Array(k).fill(0));
     for (let kk = 0; kk < k; kk++) {
-      const name = free[kk];
+      const name = free[kk]!;
       const orig = x[name];
       x[name] = orig + FD_EPS;
       const rp = residuals(x, pois);
       x[name] = orig - FD_EPS;
       const rn = residuals(x, pois);
       x[name] = orig;
-      for (let i = 0; i < m; i++) J[i][kk] = (rp[i] - rn[i]) / (2 * FD_EPS);
+      for (let i = 0; i < m; i++) J[i]![kk] = (rp[i]! - rn[i]!) / (2 * FD_EPS);
     }
 
     // Normal equations: (JᵀJ + λI) Δx = -Jᵀ r. Tiny LM damping for stability.
     const lambda = 1e-6;
-    const JtJ = Array.from({ length: k }, () => new Array(k).fill(0));
-    const Jtr = new Array(k).fill(0);
+    const JtJ: number[][] = Array.from({ length: k }, () => new Array(k).fill(0));
+    const Jtr: number[] = new Array(k).fill(0);
     for (let kk = 0; kk < k; kk++) {
       for (let jj = 0; jj < k; jj++) {
         let s = 0;
-        for (let i = 0; i < m; i++) s += J[i][kk] * J[i][jj];
-        JtJ[kk][jj] = s + (kk === jj ? lambda : 0);
+        for (let i = 0; i < m; i++) s += J[i]![kk]! * J[i]![jj]!;
+        JtJ[kk]![jj] = s + (kk === jj ? lambda : 0);
       }
       let s = 0;
-      for (let i = 0; i < m; i++) s += J[i][kk] * r[i];
+      for (let i = 0; i < m; i++) s += J[i]![kk]! * r[i]!;
       Jtr[kk] = -s;
     }
 
@@ -211,13 +228,19 @@ export function solvePose({ pose, pois, free }) {
     let alpha = 1;
     let accepted = false;
     for (let attempt = 0; attempt < 5; attempt++) {
-      const trial = { ...x };
-      for (let kk = 0; kk < k; kk++) trial[free[kk]] = x[free[kk]] + alpha * dx[kk];
+      const trial: Pose = { ...x };
+      for (let kk = 0; kk < k; kk++) {
+        const name = free[kk]!;
+        trial[name] = x[name] + alpha * dx[kk]!;
+      }
       applyBounds(trial);
       const rTrial = residuals(trial, pois);
       const normTrial = residualNorm(rTrial);
       if (normTrial < prevNorm) {
-        for (let kk = 0; kk < k; kk++) x[free[kk]] = trial[free[kk]];
+        for (let kk = 0; kk < k; kk++) {
+          const name = free[kk]!;
+          x[name] = trial[name];
+        }
         r = rTrial;
         accepted = true;
         const stepSize = Math.sqrt(dx.reduce((s, v) => s + (alpha * v) ** 2, 0));
