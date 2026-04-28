@@ -12,6 +12,7 @@ export interface MapView {
   isVisible(): boolean;
   onShow(): void;
   onHide(): void;
+  toggleSetLocationArmed(): void;
 }
 
 export interface CreateMapViewOptions {
@@ -20,6 +21,7 @@ export interface CreateMapViewOptions {
   onPOIAnchorClick?: (handle: THREE.Mesh, latlng: LatLng) => void;
   onPOIAnchorDragged?: (handle: THREE.Mesh, latlng: LatLng, viewerAz: number) => void;
   onShowRefresh?: () => void;
+  onArmedChange?: (armed: boolean) => void;
 }
 
 const HIST_ATTR = 'Historical maps via <a href="https://bmander.com/seamap">bmander.com/seamap</a>';
@@ -59,6 +61,7 @@ export function createMapView({
   onPOIAnchorClick,
   onPOIAnchorDragged,
   onShowRefresh,
+  onArmedChange,
 }: CreateMapViewOptions): MapView {
   const layers: Record<string, L.TileLayer> = {
     'Sanborn 1884': histLayer(1884),
@@ -83,6 +86,13 @@ export function createMapView({
   const poiLayers: L.Polyline[] = [];
   const anchorMarkers = new Map<THREE.Mesh, L.Marker>();
   let visible = false;
+  let setLocationArmed = false;
+  function setArmed(v: boolean): void {
+    if (setLocationArmed === v) return;
+    setLocationArmed = v;
+    container.classList.toggle('armed', v);
+    onArmedChange?.(v);
+  }
 
   const CONE_STYLE: L.PolylineOptions = { color: '#ffd84a', weight: 1, fillColor: '#ffd84a', fillOpacity: 0.18 };
   const POI_STYLE: L.PolylineOptions = { color: '#ff5050', weight: 2, opacity: 0.8 };
@@ -198,6 +208,8 @@ export function createMapView({
   }
 
   map.on('click', (e: L.LeafletMouseEvent) => {
+    if (!setLocationArmed) return;
+    setArmed(false);
     location = { lat: e.latlng.lat, lng: e.latlng.lng };
     ensureMarker(e.latlng);
     onLocationChange?.(location);
@@ -235,5 +247,6 @@ export function createMapView({
       redrawAll();
     },
     onHide(): void { visible = false; },
+    toggleSetLocationArmed(): void { setArmed(!setLocationArmed); },
   };
 }
