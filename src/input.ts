@@ -29,9 +29,13 @@ export interface AttachInputOptions {
   viewer: Viewer;
   overlays: OverlayManager;
   onChange: () => void;
+  // Fired right after a dropped file becomes a new overlay. The Blob is the
+  // original dropped File so persistence can stash it before the URL is
+  // revoked. Optional — the app works without it.
+  onOverlayAdded?: (overlay: THREE.Group, blob: Blob) => void;
 }
 
-export function attachInput({ viewer, overlays, onChange }: AttachInputOptions): InputController {
+export function attachInput({ viewer, overlays, onChange, onOverlayAdded }: AttachInputOptions): InputController {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -212,7 +216,8 @@ export function attachInput({ viewer, overlays, onChange }: AttachInputOptions):
         if (!img) return;
         const aspect = img.naturalWidth / img.naturalHeight;
         const { azimuth, altitude } = viewer.getAzAlt();
-        overlays.addOverlay(tex, aspect, dirFromAzAlt(azimuth, altitude));
+        const overlay = overlays.addOverlay(tex, aspect, dirFromAzAlt(azimuth, altitude));
+        onOverlayAdded?.(overlay, file);
         onChange();
         URL.revokeObjectURL(url);
       });

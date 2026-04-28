@@ -12,6 +12,7 @@ import type {
   Pose,
   Role,
 } from './types.js';
+import type { OverlaySnapshot } from './persistence.js';
 
 export const OVERLAY_R = 100;
 export const DEFAULT_SIZE_RAD = Math.PI / 6;       // 30°
@@ -54,6 +55,10 @@ function posToAzAlt(o: THREE.Object3D): { az: number; alt: number } {
 export interface OverlayManager {
   overlaySphere: THREE.Sphere;
   addOverlay(tex: THREE.Texture, aspect: number, dir: THREE.Vector3): THREE.Group;
+  // Restores an overlay from persisted state. Skips selection visuals; the
+  // caller wraps a batch of restoreOverlay calls in withBatch so onMutate
+  // fires once at the end (not per-overlay).
+  restoreOverlay(tex: THREE.Texture, snapshot: OverlaySnapshot): THREE.Group;
   getSelected(): THREE.Group | null;
   setSelected(o: THREE.Group | null): void;
   moveSelectedTo(point: THREE.Vector3): void;
@@ -103,7 +108,7 @@ export function createOverlayManager(
     return Math.atan2(-azScratch.x, -azScratch.z);
   }
 
-  function makeOverlay(tex: THREE.Texture, aspect: number): THREE.Group {
+  function makeOverlay(tex: THREE.Texture, aspect: number, id?: string): THREE.Group {
     const o = new THREE.Group();
     const body = new THREE.Mesh(
       new THREE.PlaneGeometry(1, 1),
@@ -112,6 +117,7 @@ export function createOverlayManager(
     (body.userData as { role: Role }).role = ROLE_BODY;
     o.add(body);
     const data = overlayData(o);
+    data.id = id ?? crypto.randomUUID();
     data.sizeRad = DEFAULT_SIZE_RAD;
     data.aspect = aspect;
     data.body = body;
@@ -205,6 +211,35 @@ export function createOverlayManager(
       placeAt(o, dir);
       overlaysGroup.add(o);
       manager.setSelected(o);
+      notify();
+      return o;
+    },
+    restoreOverlay(tex, snapshot) {
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = getAnisotropy();
+      const o = makeOverlay(tex, snapshot.aspect, snapshot.id);
+      overlayData(o).sizeRad = THREE.MathUtils.clamp(snapshot.sizeRad, SIZE_MIN, SIZE_MAX);
+      placeAt(o, dirFromAzAlt(snapshot.photoAz, snapshot.photoTilt));
+      applySize(o);
+      overlaysGroup.add(o);
+      for (const p of snapshot.pois) {
+        // addPOI assumes selection visuals; bypass it here and add directly.
+        const poi = new THREE.Mesh(
+          new THREE.SphereGeometry(1, 12, 8),
+          new THREE.MeshBasicMaterial({ color: POI_COLOR, depthTest: false, transparent: true }),
+        );
+        const pdata = poiData(poi);
+        pdata.role = ROLE_POI;
+        pdata.uv = { u: p.u, v: p.v };
+        pdata.parentOverlay = o;
+        pdata.mapAnchor = p.mapAnchor;
+        poi.renderOrder = 3;
+        o.add(poi);
+        const data = overlayData(o);
+        data.pois ??= [];
+        data.pois.push(poi);
+      }
+      applySize(o); // apply now that POIs are attached so they get scaled too
       notify();
       return o;
     },
