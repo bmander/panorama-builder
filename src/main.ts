@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { createViewer } from './viewer.js';
 import { createOverlayManager } from './overlay.js';
 import { createBaker } from './bake.js';
@@ -5,9 +6,14 @@ import { attachInput } from './input.js';
 import { createHud, attachViewTabs, attachDownload, attachToolPalette } from './ui.js';
 import { createMapView } from './map.js';
 import { solvePose, autoFreeParams } from './solver.js';
-import type * as THREE from 'three';
 import { getElement, overlayData, poiData } from './types.js';
 import type { LatLng, SolverParam } from './types.js';
+import { openStore } from './persistence.js';
+import type { AppSnapshot, Store } from './persistence.js';
+
+// Open IDB before building UI; null on private mode / unsupported.
+const store: Store | null = await openStore();
+const persisted = await store?.loadAll() ?? null;
 
 const viewer = createViewer({ container: document.body });
 
@@ -31,6 +37,7 @@ const overlays = createOverlayManager({
     // getPOIs walk every overlay and dirty their world matrices for nothing.
     if (mapView.isVisible()) refreshMapAnnotations();
     runSolve();
+    save();
   },
 });
 
@@ -78,6 +85,7 @@ lockCameraEl.addEventListener('change', () => {
   viewer.requestRender();
   if (mapView.isVisible()) refreshMapAnnotations();
   hud.refresh();
+  save();
 });
 
 // Run the photo-pose solver for every overlay that has anchored POIs. The solver
@@ -126,6 +134,7 @@ const mapView = createMapView({
   onLocationChange: loc => {
     coordsEl.textContent = `lat ${loc.lat.toFixed(5)}  lng ${loc.lng.toFixed(5)}`;
     runSolve();
+    save();
   },
   onPOIAnchorClick: (handle, latlng) => {
     overlays.setPOIMapAnchor(handle, latlng);
@@ -138,10 +147,89 @@ const mapView = createMapView({
   },
 });
 
-const input = attachInput({ viewer, overlays, onChange: () => { viewer.requestRender(); hud.refresh(); } });
-attachViewTabs({ baker, viewer, hud, mapView });
+const input = attachInput({
+  viewer,
+  overlays,
+  onChange: () => { viewer.requestRender(); hud.refresh(); save(); },
+  onOverlayAdded: (overlay, blob) => {
+    void store?.saveBlob(overlayData(overlay).id, blob);
+  },
+});
+const viewTabs = attachViewTabs({ baker, viewer, hud, mapView });
+viewTabs.onModeChange(() => { save(); });
 attachDownload({ baker });
 attachToolPalette({ input });
+
+function getSnapshot(): AppSnapshot {
+  const camLoc = mapView.getLocation();
+  const overlaysSnap = (overlays.listOverlays() as THREE.Group[]).map(g => {
+    const data = overlayData(g);
+    const pose = overlays.extractPose(g, camLoc);
+    return {
+      id: data.id,
+      sizeRad: pose.sizeRad,
+      aspect: pose.aspect,
+      photoAz: pose.photoAz,
+      photoTilt: pose.photoTilt,
+      pois: (data.pois ?? []).map(p => {
+        const pd = poiData(p);
+        return { u: pd.uv.u, v: pd.uv.v, mapAnchor: pd.mapAnchor };
+      }),
+    };
+  });
+  const { azimuth, altitude } = viewer.getAzAlt();
+  return {
+    version: 1,
+    camLoc,
+    azimuth,
+    altitude,
+    fov: viewer.camera.fov,
+    tab: viewTabs.getMode(),
+    tool: input.getTool(),
+    lockCamera: lockCameraEl.checked,
+    overlays: overlaysSnap,
+  };
+}
+
+function save(): void {
+  if (restoring) return; // ignore self-induced saves while replaying
+  store?.scheduleSave(getSnapshot);
+}
+
+input.onToolChange(() => { save(); });
+
+// --- Restore from persisted state, if any ---
+let restoring = false;
+if (persisted) {
+  restoring = true;
+  const { snapshot, blobs } = persisted;
+  if (snapshot.camLoc) mapView.setLocation(snapshot.camLoc);
+  viewer.setAzAlt(snapshot.azimuth, snapshot.altitude);
+  viewer.setFov(snapshot.fov);
+  lockCameraEl.checked = snapshot.lockCamera;
+  applyCameraLock(snapshot.lockCamera);
+  input.setTool(snapshot.tool);
+
+  const loader = new THREE.TextureLoader();
+  await Promise.all(snapshot.overlays.map(snap => new Promise<void>(resolve => {
+    const blob = blobs.get(snap.id);
+    if (!blob) { resolve(); return; }
+    const url = URL.createObjectURL(blob);
+    loader.load(url, tex => {
+      overlays.restoreOverlay(tex, snap);
+      URL.revokeObjectURL(url);
+      resolve();
+    }, undefined, () => {
+      URL.revokeObjectURL(url);
+      resolve();
+    });
+  })));
+
+  // Tab last — switching to map/flat triggers Leaflet/bake which need
+  // overlays in place. Default to '360' if persisted value is invalid.
+  viewTabs.setMode(snapshot.tab);
+  restoring = false;
+}
 
 hud.refresh();
 viewer.start();

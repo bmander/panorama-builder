@@ -27,14 +27,20 @@ export function createHud(getSnapshot: () => AzAltSnapshot): Hud {
   };
 }
 
-type ViewMode = '360' | 'flat' | 'map';
+export type ViewMode = '360' | 'flat' | 'map';
+
+export interface ViewTabs {
+  setMode(mode: ViewMode): void;
+  getMode(): ViewMode;
+  onModeChange(cb: (mode: ViewMode) => void): void;
+}
 
 export function attachViewTabs({ baker, viewer, hud, mapView }: {
   baker: Baker;
   viewer: Viewer;
   hud: Hud;
   mapView: MapView;
-}): void {
+}): ViewTabs {
   const flatCanvas = getElement<HTMLCanvasElement>('flat');
   const flatWrap = getElement('flat-wrap');
   const mapWrap = getElement('map-wrap');
@@ -44,7 +50,11 @@ export function attachViewTabs({ baker, viewer, hud, mapView }: {
     map: getElement('tab-map'),
   };
 
+  let current: ViewMode = '360';
+  let modeChangeCb: ((mode: ViewMode) => void) | null = null;
+
   function setMode(mode: ViewMode): void {
+    current = mode;
     if (mode === 'flat') baker.paintToCanvas(flatCanvas, baker.bake(2048));
     flatWrap.classList.toggle('show', mode === 'flat');
     mapWrap.classList.toggle('show', mode === 'map');
@@ -53,10 +63,17 @@ export function attachViewTabs({ baker, viewer, hud, mapView }: {
     for (const [key, btn] of Object.entries(tabs)) btn.classList.toggle('active', key === mode);
     if (mode === 'map') mapView.onShow();
     else mapView.onHide();
+    modeChangeCb?.(mode);
   }
 
   for (const [mode, btn] of Object.entries(tabs)) btn.addEventListener('click', () => { setMode(mode as ViewMode); });
   setMode('360');
+
+  return {
+    setMode,
+    getMode: () => current,
+    onModeChange(cb) { modeChangeCb = cb; },
+  };
 }
 
 export function attachToolPalette({ input }: { input: InputController }): void {

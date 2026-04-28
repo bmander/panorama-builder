@@ -12,6 +12,7 @@ export interface Viewer {
   requestRender(): void;
   getAzAlt(): { azimuth: number; altitude: number };
   setAzAlt(az: number, alt: number): void;
+  setFov(fov: number): void;
   setCanvasVisible(visible: boolean): void;
   start(): void;
 }
@@ -119,6 +120,11 @@ export function createViewer({ container }: { container: HTMLElement }): Viewer 
     setAzAlt(az: number, alt: number) {
       azimuth = az;
       altitude = THREE.MathUtils.clamp(alt, -PITCH_LIMIT, PITCH_LIMIT);
+      dirty = true;
+    },
+    setFov(fov: number) {
+      camera.fov = THREE.MathUtils.clamp(fov, FOV_MIN, FOV_MAX);
+      camera.updateProjectionMatrix();
       dirty = true;
     },
     setCanvasVisible(visible: boolean) {

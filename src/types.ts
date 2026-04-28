@@ -74,6 +74,9 @@ export interface Baked {
 // userData payloads attached to scene-graph objects in overlay.ts.
 // Mutable on purpose: these are the live scene-graph state we mutate in place.
 export interface OverlayUserData {
+  // Stable identifier across page reloads — used to correlate the overlay
+  // with its persisted blob in IndexedDB. Generated at creation time.
+  id: string;
   sizeRad: number;
   aspect: number;
   body: THREE.Mesh;
