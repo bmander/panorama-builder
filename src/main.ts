@@ -63,7 +63,7 @@ const hud = createHud(() => {
 });
 
 const coordsEl = getElement('map-coords');
-coordsEl.textContent = 'no location set — click map to set';
+coordsEl.textContent = 'no location set — click "Set location"';
 
 // User-configurable solver locks. When a parameter is locked, autoFreeParams's
 // suggestion is filtered down so the solver leaves it fixed. Locking the camera
@@ -126,6 +126,7 @@ function solveAllPhotos(): void {
   if (proposed.camLoc) mapView.setLocation(proposed.camLoc);
 }
 
+const setLocationBtn = getElement('set-location');
 const mapView = createMapView({
   container: getElement('map'),
   // Force a refresh when the map tab becomes visible — onMutate skips the
@@ -145,7 +146,12 @@ const mapView = createMapView({
       // Solver runs via onMutate after the batch closes; no per-handle rotate needed.
     });
   },
+  onArmedChange: armed => {
+    setLocationBtn.classList.toggle('armed', armed);
+    setLocationBtn.textContent = armed ? 'Click map to set…' : 'Set location';
+  },
 });
+setLocationBtn.addEventListener('click', () => { mapView.toggleSetLocationArmed(); });
 
 const input = attachInput({
   viewer,

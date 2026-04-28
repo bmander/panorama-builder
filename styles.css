@@ -13,6 +13,9 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 #map-coords { position: fixed; bottom: 30px; left: 10px; padding: 4px 8px;
               background: rgba(0,0,0,0.5); color: #fff; font: 12px monospace;
               border: 1px solid #fff; pointer-events: none; z-index: 1000; }
+#set-location { position: fixed; bottom: 60px; left: 10px; z-index: 1000; }
+#set-location.armed { background: rgba(255,220,80,0.45); }
+#map.armed { cursor: crosshair; }
 .btn { padding: 6px 10px; background: rgba(0,0,0,0.5);
        color: #fff; border: 1px solid #fff; font: 12px monospace; cursor: pointer; }
 #tabs { position: fixed; top: 8px; right: 8px; display: flex; gap: 4px; }
