@@ -54,7 +54,7 @@ export function autoFreeParams(numPois: number): SolverParam[] {
 }
 
 // Forward model for a POI: returns the world (azimuth, elevation) that the photo's
-// pose places the POI direction in. Mirrors the math in overlay.js's lookAt+local-XY
+// pose places the POI direction in. Mirrors the math in overlay.ts's lookAt+local-XY
 // composition, but written in plain trig so the solver doesn't need Three.
 //
 // Pipeline:
@@ -62,7 +62,7 @@ export function autoFreeParams(numPois: number): SolverParam[] {
 //      with (az=0, alt=0) ⇒ (0,0,-1) and the YXZ rotation order, matching dirFromAzAlt.
 //      (Note the sign on the y component: viewer-altitude positive means the camera
 //      pitches DOWN in our viewer's drag mapping, but the POI math just needs a
-//      consistent convention so we match what azFromLocal in overlay.js produces.)
+//      consistent convention so we match what azFromLocal in overlay.ts produces.)
 //   2. Local +Y in world: rotate world up by the photo's rotation. For a flat photo
 //      facing the origin, local +Y stays in the world XY-plane projection.
 //   3. POI local offset: ((u-0.5)*W, (v-0.5)*H, 0) where W = 2·R·tan(sizeRad/2),
@@ -73,7 +73,7 @@ export function autoFreeParams(numPois: number): SolverParam[] {
 function projectPOI(pose: Pose, u: number, v: number): { az: number; el: number } {
   const { photoAz: az, photoTilt: alt, sizeRad, aspect } = pose;
 
-  // Photo center direction (world). Matches dirFromAzAlt(az, alt) in overlay.js.
+  // Photo center direction (world). Matches dirFromAzAlt(az, alt) in overlay.ts.
   const ca = Math.cos(alt), sa = Math.sin(alt);
   const caz = Math.cos(az), saz = Math.sin(az);
   // dirFromAzAlt: start (0,0,-1); rotate around X by alt; rotate around Y by az.
@@ -85,7 +85,7 @@ function projectPOI(pose: Pose, u: number, v: number): { az: number; el: number 
 
   // Local +X (right of photo) and local +Y (up) in world. With lookAt(0,0,0) the photo's
   // local frame has +Z pointing toward the camera; +X is horizontal-perpendicular-to-radial.
-  // Derivation matches overlay.js's lookAt swap convention.
+  // Derivation matches overlay.ts's lookAt swap convention.
   // localZ = (camera origin − overlay position) normalized = -center (already unit).
   // localX = up_world × localZ, normalized, where up_world = (0,1,0).
   //   localX = (0,1,0) × (-cx, -cy, -cz) = (1·-cz − 0·-cy, 0·-cx − 0·-cz, 0·-cy − 1·-cx)

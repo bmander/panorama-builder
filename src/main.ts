@@ -12,6 +12,15 @@ import type { LatLng, SolverParam } from './types.js';
 const viewer = createViewer({ container: document.body });
 
 let isSolving = false;
+// Re-entrancy guard around the solver: applyPose triggers onMutate, which would
+// otherwise recursively re-enter solveAllPhotos. Used by every code path that
+// can request a solve (mutation notify, location change, lock toggle).
+function runSolve(): void {
+  if (isSolving) return;
+  isSolving = true;
+  try { solveAllPhotos(); } finally { isSolving = false; }
+}
+
 const overlays = createOverlayManager({
   overlaysGroup: viewer.overlaysGroup,
   getAnisotropy: () => viewer.renderer.capabilities.getMaxAnisotropy(),
@@ -21,10 +30,7 @@ const overlays = createOverlayManager({
     // Skip the map work entirely when the map tab isn't showing — getCones /
     // getPOIs walk every overlay and dirty their world matrices for nothing.
     if (mapView.isVisible()) refreshMapAnnotations();
-    // Guard against the recursive notify that fires when the solver writes back poses.
-    if (isSolving) return;
-    isSolving = true;
-    try { solveAllPhotos(); } finally { isSolving = false; }
+    runSolve();
   },
 });
 
@@ -57,22 +63,18 @@ coordsEl.textContent = 'no location set — click map to set';
 // position (camLat + camLng) turns 4+ POI fits into a least-squares solve over
 // photoAz/sizeRad only.
 const lockedParams = new Set<SolverParam>();
-const lockCameraEl = getElement<HTMLInputElement>('lock-camera');
-function syncLocksFromUI(): void {
-  if (lockCameraEl.checked) {
-    lockedParams.add('camLat');
-    lockedParams.add('camLng');
-  } else {
-    lockedParams.delete('camLat');
-    lockedParams.delete('camLng');
-  }
+function applyCameraLock(locked: boolean): void {
+  if (locked) { lockedParams.add('camLat'); lockedParams.add('camLng'); }
+  else { lockedParams.delete('camLat'); lockedParams.delete('camLng'); }
 }
-syncLocksFromUI();
+const lockCameraEl = getElement<HTMLInputElement>('lock-camera');
+applyCameraLock(lockCameraEl.checked);
 lockCameraEl.addEventListener('change', () => {
-  syncLocksFromUI();
-  if (isSolving) return;
-  isSolving = true;
-  try { solveAllPhotos(); } finally { isSolving = false; }
+  applyCameraLock(lockCameraEl.checked);
+  runSolve();
+  // Cover the no-solve-happened case: if zero photos have anchored POIs, the
+  // solver was a no-op and onMutate didn't fire. Refresh visuals anyway so the
+  // user sees a response to the toggle.
   viewer.requestRender();
   if (mapView.isVisible()) refreshMapAnnotations();
   hud.refresh();
@@ -119,9 +121,7 @@ const mapView = createMapView({
   onShowRefresh: () => refreshMapAnnotations(),
   onLocationChange: loc => {
     coordsEl.textContent = `lat ${loc.lat.toFixed(5)}  lng ${loc.lng.toFixed(5)}`;
-    if (isSolving) return;
-    isSolving = true;
-    try { solveAllPhotos(); } finally { isSolving = false; }
+    runSolve();
   },
   onPOIAnchorClick: (handle, latlng) => {
     overlays.setPOIMapAnchor(handle, latlng);

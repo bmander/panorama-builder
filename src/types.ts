@@ -129,8 +129,8 @@ export const getRole = (o: THREE.Object3D): Role | undefined =>
 // Look up an element by id; throw with a clear message if it's missing.
 // Replaces the `document.getElementById('id')!` pattern with a single
 // failure mode that names the missing id.
-export function getElement<T extends HTMLElement = HTMLElement>(id: string): T {
+export const getElement = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Missing required element #${id}`);
   return el as T;
-}
+};

@@ -1,4 +1,4 @@
-// Tiny geo helpers shared by map.js (display + interaction) and solver.js (pose math).
+// Tiny geo helpers shared by map.ts (display + interaction) and solver.ts (pose math).
 // Flat-earth approximations are accurate to <1% at sub-km distances; great-circle for
 // bearing because we want to handle anchors anywhere on Earth, not just near apex.
 
