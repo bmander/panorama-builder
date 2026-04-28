@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-export function createBaker({ renderer, scene, setSelectionVisible }) {
+export function createBaker({ renderer, scene, setVisualsVisible }) {
   const cubeRT = new THREE.WebGLCubeRenderTarget(1024);
   const cubeCam = new THREE.CubeCamera(0.1, 1000, cubeRT);
   cubeCam.position.set(0, 0, 0);
@@ -38,7 +38,12 @@ export function createBaker({ renderer, scene, setSelectionVisible }) {
   function bake(width = 2048) {
     if (!dirty && lastBake && lastBake.width === width) return lastBake;
     const height = width / 2;
-    setSelectionVisible?.(false);
+    // Cube face = width / 4 matches the equirect's per-90° span at the equator,
+    // so detail isn't bottlenecked at the cubemap when sampling for hi-res output.
+    // Floor at 1024 keeps the small flat-preview path inexpensive.
+    const cubeFaceSize = Math.max(1024, Math.ceil(width / 4));
+    if (cubeRT.width !== cubeFaceSize) cubeRT.setSize(cubeFaceSize, cubeFaceSize);
+    setVisualsVisible?.(false);
     cubeCam.update(renderer, scene);
     if (equirectRT.width !== width) equirectRT.setSize(width, height);
     const prev = renderer.getRenderTarget();
@@ -47,7 +52,7 @@ export function createBaker({ renderer, scene, setSelectionVisible }) {
     renderer.setRenderTarget(prev);
     const pixels = new Uint8Array(width * height * 4);
     renderer.readRenderTargetPixels(equirectRT, 0, 0, width, height, pixels);
-    setSelectionVisible?.(true);
+    setVisualsVisible?.(true);
     lastBake = { pixels, width, height };
     dirty = false;
     return lastBake;

@@ -292,9 +292,16 @@ export function createOverlayManager({ overlaysGroup, getAnisotropy, onMutate })
       return cones;
     },
     setVisualsVisible(visible) {
-      if (!selected) return;
-      if (selected.userData.outline) selected.userData.outline.visible = visible;
-      if (selected.userData.handles) selected.userData.handles.forEach(m => m.visible = visible);
+      if (selected) {
+        if (selected.userData.outline) selected.userData.outline.visible = visible;
+        if (selected.userData.handles) selected.userData.handles.forEach(m => m.visible = visible);
+      }
+      // POIs are authoring markers — hide them along with the selection visuals
+      // so the bake captures only the photographic content.
+      for (const o of overlaysGroup.children) {
+        if (!o.userData.pois) continue;
+        for (const poi of o.userData.pois) poi.visible = visible;
+      }
     },
   };
 }

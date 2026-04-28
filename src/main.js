@@ -33,7 +33,7 @@ function refreshMapAnnotations() {
 const baker = createBaker({
   renderer: viewer.renderer,
   scene: viewer.scene,
-  setSelectionVisible: overlays.setVisualsVisible,
+  setVisualsVisible: overlays.setVisualsVisible,
 });
 
 const hud = createHud(() => {

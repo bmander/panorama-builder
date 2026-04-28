@@ -60,7 +60,7 @@ export function attachToolPalette({ input }) {
 
 export function attachDownload({ baker }) {
   document.getElementById('download').addEventListener('click', () => {
-    const baked = baker.bake(4096);
+    const baked = baker.bake(8192);
     const c = document.createElement('canvas');
     baker.paintToCanvas(c, baked);
     c.toBlob(blob => {
