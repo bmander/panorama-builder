@@ -6,7 +6,8 @@ import { createHud, attachViewTabs, attachDownload, attachToolPalette } from './
 import { createMapView } from './map.js';
 import { solvePose, autoFreeParams } from './solver.js';
 import type * as THREE from 'three';
-import type { LatLng, OverlayUserData, POIUserData } from './types.js';
+import { getElement, overlayData, poiData } from './types.js';
+import type { LatLng } from './types.js';
 
 const viewer = createViewer({ container: document.body });
 
@@ -44,11 +45,11 @@ const hud = createHud(() => {
   return {
     azimuth, altitude,
     fov: viewer.camera.fov,
-    selectedSizeRad: sel ? (sel.userData as OverlayUserData).sizeRad : null,
+    selectedSizeRad: sel ? overlayData(sel).sizeRad : null,
   };
 });
 
-const coordsEl = document.getElementById('map-coords')!;
+const coordsEl = getElement('map-coords');
 coordsEl.textContent = 'no location set — click map to set';
 
 // Run the photo-pose solver for every overlay that has anchored POIs. The solver
@@ -60,15 +61,15 @@ function solveAllPhotos(): void {
   let proposedCamLoc: LatLng | null = null;
   overlays.withBatch(() => {
     for (const photo of overlays.listOverlays() as THREE.Group[]) {
-      const anchored = ((photo.userData as OverlayUserData).pois ?? []).filter(
-        p => (p.userData as POIUserData).mapAnchor,
+      const anchored = (overlayData(photo).pois ?? []).filter(
+        p => poiData(p).mapAnchor,
       );
       if (anchored.length === 0) continue;
       const pose = overlays.extractPose(photo, camLoc);
       const result = solvePose({
         pose,
         pois: anchored.map(p => {
-          const pd = p.userData as POIUserData;
+          const pd = poiData(p);
           const anchor = pd.mapAnchor!;
           return {
             u: pd.uv.u, v: pd.uv.v,
@@ -86,7 +87,7 @@ function solveAllPhotos(): void {
 }
 
 const mapView = createMapView({
-  container: document.getElementById('map')!,
+  container: getElement('map'),
   // Force a refresh when the map tab becomes visible — onMutate skips the
   // refresh while the map is hidden, so the caches may be stale here.
   onShowRefresh: () => refreshMapAnnotations(),

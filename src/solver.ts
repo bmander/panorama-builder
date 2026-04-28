@@ -18,7 +18,11 @@
 //   - u, v ∈ [0,1] image coords; anchor is the map POI's lat/lng.
 
 import { bearingFromLocation, bearingToViewerAz } from './geo.js';
-import type { POIProjection, Pose, SolveResult, SolverParam } from './types.js';
+import type { Mutable, POIProjection, Pose, SolveResult, SolverParam } from './types.js';
+
+// The solver mutates a working copy of the pose in place. Public Pose is
+// readonly; this alias is the local mutable shape.
+type WorkingPose = Mutable<Pose>;
 
 const MAX_ITERS = 20;
 const STEP_TOL = 1e-7;
@@ -30,7 +34,7 @@ const PARAM_BOUNDS: Partial<Record<SolverParam, [number, number]>> = {
   sizeRad: [Math.PI / 180 * 2, Math.PI * 0.95],   // 2°–171° matches overlay's SIZE_MIN/MAX
 };
 
-function applyBounds(pose: Pose): void {
+function applyBounds(pose: WorkingPose): void {
   for (const k of Object.keys(PARAM_BOUNDS) as SolverParam[]) {
     const bounds = PARAM_BOUNDS[k];
     if (!bounds) continue;
@@ -183,7 +187,7 @@ export function solvePose(options: {
   if (!pois || pois.length === 0 || !free || free.length === 0) {
     return { pose: { ...pose }, residualRMS: 0, iterations: 0, cameraMoved: false };
   }
-  const x: Pose = { ...pose };
+  const x: WorkingPose = { ...pose };
 
   let r = residuals(x, pois);
   let prevNorm = residualNorm(r);
@@ -228,7 +232,7 @@ export function solvePose(options: {
     let alpha = 1;
     let accepted = false;
     for (let attempt = 0; attempt < 5; attempt++) {
-      const trial: Pose = { ...x };
+      const trial: WorkingPose = { ...x };
       for (let kk = 0; kk < k; kk++) {
         const name = free[kk]!;
         trial[name] = x[name] + alpha * dx[kk]!;
