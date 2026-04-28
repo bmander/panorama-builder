@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { TOOL_MOVE, TOOL_POI } from './input.js';
 
 const deg = r => THREE.MathUtils.radToDeg(r).toFixed(1);
 
@@ -34,10 +35,27 @@ export function attachViewTabs({ baker, viewer, hud, mapView }) {
     hud.setVisible(mode === '360');
     for (const [key, btn] of Object.entries(tabs)) btn.classList.toggle('active', key === mode);
     if (mode === 'map') mapView.onShow();
+    else mapView.onHide();
   }
 
   for (const [mode, btn] of Object.entries(tabs)) btn.addEventListener('click', () => setMode(mode));
   setMode('360');
+}
+
+export function attachToolPalette({ input }) {
+  const buttons = {
+    [TOOL_MOVE]: document.getElementById('tool-move'),
+    [TOOL_POI]: document.getElementById('tool-poi'),
+  };
+  function refresh() {
+    const cur = input.getTool();
+    for (const [name, btn] of Object.entries(buttons)) btn.classList.toggle('active', name === cur);
+  }
+  for (const [name, btn] of Object.entries(buttons)) {
+    btn.addEventListener('click', () => input.setTool(name));
+  }
+  input.onToolChange(refresh);
+  refresh();
 }
 
 export function attachDownload({ baker }) {

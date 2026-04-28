@@ -18,3 +18,6 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 #tabs { position: fixed; top: 8px; right: 8px; display: flex; gap: 4px; }
 .tab.active { background: rgba(255,255,255,0.25); }
 #download { position: fixed; top: 8px; right: 200px; }
+#tools { position: fixed; top: 30px; left: 10px; display: flex; gap: 4px; }
+.tool.active { background: rgba(255,255,255,0.25); }
+#view.tool-poi { cursor: crosshair; }

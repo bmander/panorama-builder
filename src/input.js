@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { PITCH_LIMIT, FOV_MIN, FOV_MAX } from './viewer.js';
-import { ROLE_BODY, ROLE_HANDLE, dirFromAzAlt } from './overlay.js';
+import { ROLE_BODY, ROLE_HANDLE, ROLE_POI, dirFromAzAlt } from './overlay.js';
+
+export const TOOL_MOVE = 'move';
+export const TOOL_POI = 'poi';
 
 export function attachInput({ viewer, overlays, onChange }) {
   const { renderer, camera, overlaysGroup } = viewer;
@@ -19,38 +22,69 @@ export function attachInput({ viewer, overlays, onChange }) {
     tmpVec3.copy(worldPos).project(camera);
     return { x: (tmpVec3.x + 1) * 0.5 * innerWidth, y: (1 - tmpVec3.y) * 0.5 * innerHeight };
   }
+  function raycastOverlays() {
+    return raycaster.intersectObjects(overlaysGroup.children, true)
+      .filter(h => h.object.userData.role);
+  }
 
-  let mode = null;        // 'pan' | 'move' | 'resize' | null
+  let tool = TOOL_MOVE;
+  let mode = null;          // 'pan' | 'move' | 'resize' | 'poi-drag' | null
   let lastX = 0, lastY = 0;
   let resizeInitial = null;
+  let draggingPOI = null;
+  let toolChangeCb = null;
+
+  function setTool(newTool) {
+    if (tool === newTool) return;
+    tool = newTool;
+    canvas.classList.toggle('tool-poi', tool === TOOL_POI);
+    toolChangeCb?.(tool);
+  }
 
   canvas.addEventListener('pointerdown', e => {
     ndcFromEvent(e);
     raycaster.setFromCamera(ndc, camera);
-    const hits = raycaster.intersectObjects(overlaysGroup.children, true)
-      .filter(h => h.object.userData.role === ROLE_BODY || h.object.userData.role === ROLE_HANDLE);
-    const handleHit = hits.find(h => h.object.userData.role === ROLE_HANDLE);
-    const bodyHit = hits.find(h => h.object.userData.role === ROLE_BODY);
+    const hits = raycastOverlays();
 
-    const selected = overlays.getSelected();
-    if (handleHit && handleHit.object.parent === selected) {
-      mode = 'resize';
-      const center = projectToScreen(selected.position);
-      const dx = e.clientX - center.x, dy = e.clientY - center.y;
-      resizeInitial = { dist: Math.hypot(dx, dy) || 1, sizeRad: selected.userData.sizeRad };
-    } else if (bodyHit) {
-      const o = bodyHit.object.parent;
-      if (selected !== o) { overlays.setSelected(o); onChange(); }
-      mode = 'move';
+    if (tool === TOOL_POI) {
+      const poiHit = hits.find(h => h.object.userData.role === ROLE_POI);
+      const bodyHit = hits.find(h => h.object.userData.role === ROLE_BODY);
+      if (poiHit) {
+        overlays.setSelectedPOI(poiHit.object);
+        draggingPOI = poiHit.object;
+        mode = 'poi-drag';
+      } else if (bodyHit) {
+        const o = bodyHit.object.parent;
+        const poi = overlays.addPOI(o, bodyHit.uv.x, bodyHit.uv.y);
+        draggingPOI = poi;
+        mode = 'poi-drag';
+      } else {
+        overlays.setSelectedPOI(null);
+        mode = 'pan';
+      }
     } else {
-      if (selected) { overlays.setSelected(null); onChange(); }
-      mode = 'pan';
+      const handleHit = hits.find(h => h.object.userData.role === ROLE_HANDLE);
+      const bodyHit = hits.find(h => h.object.userData.role === ROLE_BODY);
+      const selected = overlays.getSelected();
+      if (handleHit && handleHit.object.parent === selected) {
+        mode = 'resize';
+        const center = projectToScreen(selected.position);
+        const dx = e.clientX - center.x, dy = e.clientY - center.y;
+        resizeInitial = { dist: Math.hypot(dx, dy) || 1, sizeRad: selected.userData.sizeRad };
+      } else if (bodyHit) {
+        const o = bodyHit.object.parent;
+        if (selected !== o) { overlays.setSelected(o); onChange(); }
+        mode = 'move';
+      } else {
+        if (selected) { overlays.setSelected(null); onChange(); }
+        mode = 'pan';
+      }
     }
     lastX = e.clientX; lastY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
   });
 
-  const endDrag = () => { mode = null; resizeInitial = null; };
+  const endDrag = () => { mode = null; resizeInitial = null; draggingPOI = null; };
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
   canvas.addEventListener('lostpointercapture', endDrag);
@@ -79,6 +113,13 @@ export function attachInput({ viewer, overlays, onChange }) {
       const dist = Math.hypot(dx, dy);
       overlays.resizeSelectedTo(resizeInitial.sizeRad * (dist / resizeInitial.dist));
       onChange();
+    } else if (mode === 'poi-drag' && draggingPOI) {
+      ndcFromEvent(e);
+      raycaster.setFromCamera(ndc, camera);
+      // Re-raycast against the POI's parent overlay body to recompute UV.
+      const body = draggingPOI.userData.parentOverlay.userData.body;
+      const hit = raycaster.intersectObject(body)[0];
+      if (hit) overlays.movePOI(draggingPOI, hit.uv.x, hit.uv.y);
     }
   });
 
@@ -92,10 +133,16 @@ export function attachInput({ viewer, overlays, onChange }) {
   }, { passive: false });
 
   addEventListener('keydown', e => {
-    if ((e.key === 'Backspace' || e.key === 'Delete') && overlays.getSelected()) {
-      overlays.deleteSelected();
-      endDrag();
-      onChange();
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      if (tool === TOOL_POI && overlays.getSelectedPOI()) {
+        overlays.deleteSelectedPOI();
+        endDrag();
+        onChange();
+      } else if (overlays.getSelected()) {
+        overlays.deleteSelected();
+        endDrag();
+        onChange();
+      }
     }
   });
 
@@ -114,4 +161,9 @@ export function attachInput({ viewer, overlays, onChange }) {
       });
     }
   });
+
+  return {
+    setTool, getTool: () => tool,
+    onToolChange(cb) { toolChangeCb = cb; },
+  };
 }

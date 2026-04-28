@@ -40,51 +40,78 @@ export function createMapView({ container, onLocationChange }) {
   let marker = null;
   let cones = [];
   let coneLayers = [];
+  let pois = [];
+  let poiLayers = [];
+  let visible = false;
 
   const CONE_STYLE = { color: '#ffd84a', weight: 1, fillColor: '#ffd84a', fillOpacity: 0.18 };
+  const POI_STYLE = { color: '#ff5050', weight: 2, opacity: 0.8 };
+  const viewerAzToBearing = az => -az * 180 / Math.PI;
 
-  function redrawCones() {
-    if (!location || cones.length === 0) {
-      while (coneLayers.length) map.removeLayer(coneLayers.pop());
+  function screenDiagonalMeters() {
+    const s = map.getSize();
+    return pixelsToMeters(map, Math.hypot(s.x, s.y));
+  }
+
+  function syncLayerPool(items, layers, makeLayer, applyLatLngs) {
+    if (!location || items.length === 0) {
+      while (layers.length) map.removeLayer(layers.pop());
       return;
     }
-    // Reuse existing polygons in-place; only add/remove when overlay count changes.
-    while (coneLayers.length > cones.length) map.removeLayer(coneLayers.pop());
-    while (coneLayers.length < cones.length) {
-      coneLayers.push(L.polygon([[0, 0], [0, 0], [0, 0]], CONE_STYLE).addTo(map));
-    }
-    // Cone length = screen diagonal in pixels → guaranteed to reach the edge from any apex.
-    const size = map.getSize();
-    const distM = pixelsToMeters(map, Math.hypot(size.x, size.y));
-    for (let i = 0; i < cones.length; i++) {
-      // viewer azimuth (CCW from N) → compass bearing (CW from N)
-      const bL = -cones[i].azL * 180 / Math.PI;
-      const bR = -cones[i].azR * 180 / Math.PI;
-      const ptL = destination(location, bL, distM);
-      const ptR = destination(location, bR, distM);
-      coneLayers[i].setLatLngs([
-        [location.lat, location.lng],
-        [ptL.lat, ptL.lng],
-        [ptR.lat, ptR.lng],
-      ]);
-    }
+    while (layers.length > items.length) map.removeLayer(layers.pop());
+    while (layers.length < items.length) layers.push(makeLayer().addTo(map));
+    const distM = screenDiagonalMeters();
+    for (let i = 0; i < items.length; i++) applyLatLngs(layers[i], items[i], distM);
   }
+
+  function redrawCones() {
+    if (!visible) return;
+    syncLayerPool(cones, coneLayers,
+      () => L.polygon([[0, 0], [0, 0], [0, 0]], CONE_STYLE),
+      (layer, c, distM) => {
+        const ptL = destination(location, viewerAzToBearing(c.azL), distM);
+        const ptR = destination(location, viewerAzToBearing(c.azR), distM);
+        layer.setLatLngs([
+          [location.lat, location.lng],
+          [ptL.lat, ptL.lng],
+          [ptR.lat, ptR.lng],
+        ]);
+      });
+  }
+
+  function redrawPOIs() {
+    if (!visible) return;
+    syncLayerPool(pois, poiLayers,
+      () => L.polyline([[0, 0], [0, 0]], POI_STYLE),
+      (layer, p, distM) => {
+        const pt = destination(location, viewerAzToBearing(p.az), distM);
+        layer.setLatLngs([[location.lat, location.lng], [pt.lat, pt.lng]]);
+      });
+  }
+
+  function redrawAll() { redrawCones(); redrawPOIs(); }
 
   map.on('click', e => {
     location = { lat: e.latlng.lat, lng: e.latlng.lng };
     if (marker) marker.setLatLng(e.latlng);
     else marker = L.marker(e.latlng).addTo(map);
     onLocationChange?.(location);
-    redrawCones();
+    redrawAll();
   });
-  map.on('zoomend', redrawCones);
-  map.on('resize', redrawCones);
+  map.on('zoomend', redrawAll);
+  map.on('resize', redrawAll);
 
   return {
     getLocation: () => location,
     setOverlayCones(newCones) { cones = newCones; redrawCones(); },
-    // Leaflet computes tile dims from container size at construction; if hidden then,
-    // we must invalidate after the container becomes visible.
-    onShow() { map.invalidateSize(); },
+    setPOIBearings(newPOIs) { pois = newPOIs; redrawPOIs(); },
+    onShow() {
+      visible = true;
+      // Leaflet measures tile dims from container size at construction; if hidden
+      // then, we must invalidate after the container becomes visible.
+      map.invalidateSize();
+      redrawAll();
+    },
+    onHide() { visible = false; },
   };
 }

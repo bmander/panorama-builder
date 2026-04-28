@@ -8,6 +8,12 @@ export const SIZE_MAX = Math.PI * 0.9;              // 162°
 export const ROLE_BODY = 'body';
 export const ROLE_HANDLE = 'handle';
 export const ROLE_OUTLINE = 'outline';
+export const ROLE_POI = 'poi';
+
+const POI_COLOR = 0xff5050;
+const POI_COLOR_SELECTED = 0xffff66;
+// POI sphere radius = this fraction of the overlay's world width — scales with the photo.
+const POI_WIDTH_FRACTION = 0.012;
 
 const widthFromSizeRad = sr => 2 * OVERLAY_R * Math.tan(sr / 2);
 
@@ -22,6 +28,15 @@ export function createOverlayManager({ overlaysGroup, getAnisotropy, onMutate })
   const overlaySphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), OVERLAY_R);
   const notify = () => onMutate?.();
   let selected = null;
+  let selectedPOI = null;
+
+  // Returns viewer-azimuth (CCW from -Z) of a point given in an overlay's local frame.
+  const azScratch = new THREE.Vector3();
+  function azFromLocal(o, lx, ly, lz) {
+    o.updateMatrixWorld();
+    azScratch.set(lx, ly, lz).applyMatrix4(o.matrixWorld);
+    return Math.atan2(-azScratch.x, -azScratch.z);
+  }
 
   function makeOverlay(tex, aspect) {
     const o = new THREE.Group();
@@ -48,6 +63,14 @@ export function createOverlayManager({ overlaysGroup, getAnisotropy, onMutate })
       o.userData.handles.forEach((m, i) => {
         m.position.set(corners[i][0] * w, corners[i][1] * h, 0);
       });
+    }
+    if (o.userData.pois) {
+      const r = w * POI_WIDTH_FRACTION;
+      for (const poi of o.userData.pois) {
+        const { u, v } = poi.userData.uv;
+        poi.position.set((u - 0.5) * w, (v - 0.5) * h, 0);
+        poi.scale.setScalar(r);
+      }
     }
   }
 
@@ -133,26 +156,81 @@ export function createOverlayManager({ overlaysGroup, getAnisotropy, onMutate })
       if (!selected) return;
       const o = selected;
       this.setSelected(null);
+      // Drop selectedPOI if it lived on this overlay; bypass setSelectedPOI so we
+      // don't try to recolor a material that's about to be disposed.
+      if (selectedPOI?.userData.parentOverlay === o) selectedPOI = null;
       overlaysGroup.remove(o);
       o.userData.body.geometry.dispose();
       o.userData.body.material.map?.dispose();
       o.userData.body.material.dispose();
+      if (o.userData.pois) {
+        for (const p of o.userData.pois) { p.geometry.dispose(); p.material.dispose(); }
+      }
       notify();
+    },
+    addPOI(o, u, v) {
+      // Unit sphere; applySize() scales it per overlay width.
+      const poi = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 12, 8),
+        new THREE.MeshBasicMaterial({ color: POI_COLOR, depthTest: false, transparent: true }),
+      );
+      poi.userData.role = ROLE_POI;
+      poi.userData.uv = { u, v };
+      poi.userData.parentOverlay = o;
+      poi.renderOrder = 3;
+      o.add(poi);
+      (o.userData.pois ??= []).push(poi);
+      applySize(o);
+      this.setSelectedPOI(poi);
+      notify();
+      return poi;
+    },
+    movePOI(poi, u, v) {
+      poi.userData.uv.u = u;
+      poi.userData.uv.v = v;
+      applySize(poi.userData.parentOverlay);
+      notify();
+    },
+    deleteSelectedPOI() {
+      if (!selectedPOI) return;
+      const poi = selectedPOI;
+      this.setSelectedPOI(null);
+      const parent = poi.userData.parentOverlay;
+      parent.remove(poi);
+      const arr = parent.userData.pois;
+      const i = arr.indexOf(poi); if (i >= 0) arr.splice(i, 1);
+      poi.geometry.dispose();
+      poi.material.dispose();
+      notify();
+    },
+    getSelectedPOI: () => selectedPOI,
+    setSelectedPOI(poi) {
+      if (selectedPOI === poi) return;
+      if (selectedPOI) selectedPOI.material.color.setHex(POI_COLOR);
+      selectedPOI = poi;
+      if (selectedPOI) selectedPOI.material.color.setHex(POI_COLOR_SELECTED);
+    },
+    getPOIs() {
+      const result = [];
+      for (const o of overlaysGroup.children) {
+        if (!o.userData.pois) continue;
+        for (const poi of o.userData.pois) {
+          result.push({ az: azFromLocal(o, poi.position.x, poi.position.y, poi.position.z) });
+        }
+      }
+      return result;
     },
     getCones() {
       // Sample each vertical edge at its centerline (y=0). For tilted overlays the
       // local Y axis isn't purely world-vertical, so picking y=0 (the edge midpoint)
       // gives a stable bearing instead of biasing toward the bottom corner.
       const cones = [];
-      const v = new THREE.Vector3();
       for (const o of overlaysGroup.children) {
         const w = widthFromSizeRad(o.userData.sizeRad);
-        o.updateMatrixWorld();
-        v.set(-w / 2, 0, 0).applyMatrix4(o.matrixWorld);
-        const azL = Math.atan2(-v.x, -v.z);
-        v.set(+w / 2, 0, 0).applyMatrix4(o.matrixWorld);
-        const azR = Math.atan2(-v.x, -v.z);
-        cones.push({ azL, azR });
+        cones.push({
+          azL: azFromLocal(o, -w / 2, 0, 0),
+          azR: azFromLocal(o, +w / 2, 0, 0),
+        });
       }
       return cones;
     },

@@ -2,7 +2,7 @@ import { createViewer } from './viewer.js';
 import { createOverlayManager } from './overlay.js';
 import { createBaker } from './bake.js';
 import { attachInput } from './input.js';
-import { createHud, attachViewTabs, attachDownload } from './ui.js';
+import { createHud, attachViewTabs, attachDownload, attachToolPalette } from './ui.js';
 import { createMapView } from './map.js';
 
 const viewer = createViewer({ container: document.body });
@@ -10,10 +10,13 @@ const viewer = createViewer({ container: document.body });
 const overlays = createOverlayManager({
   overlaysGroup: viewer.overlaysGroup,
   getAnisotropy: () => viewer.renderer.capabilities.getMaxAnisotropy(),
-  onMutate: () => { baker.markDirty(); refreshCones(); },
+  onMutate: () => { baker.markDirty(); refreshMapAnnotations(); },
 });
 
-function refreshCones() { mapView.setOverlayCones(overlays.getCones()); }
+function refreshMapAnnotations() {
+  mapView.setOverlayCones(overlays.getCones());
+  mapView.setPOIBearings(overlays.getPOIs());
+}
 
 const baker = createBaker({
   renderer: viewer.renderer,
@@ -40,9 +43,10 @@ const mapView = createMapView({
   },
 });
 
-attachInput({ viewer, overlays, onChange: () => hud.refresh() });
+const input = attachInput({ viewer, overlays, onChange: () => hud.refresh() });
 attachViewTabs({ baker, viewer, hud, mapView });
 attachDownload({ baker });
+attachToolPalette({ input });
 
 hud.refresh();
 viewer.start();
