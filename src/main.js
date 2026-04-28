@@ -5,7 +5,7 @@ import { attachInput } from './input.js';
 import { createHud, attachViewTabs, attachDownload } from './ui.js';
 import { createMapView } from './map.js';
 
-const viewer = createViewer({ panoramaUrl: 'panorama.png', container: document.body });
+const viewer = createViewer({ container: document.body });
 
 const overlays = createOverlayManager({
   overlaysGroup: viewer.overlaysGroup,
