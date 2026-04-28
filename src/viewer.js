@@ -48,7 +48,10 @@ function makeGridTexture() {
 }
 
 export function createViewer({ container }) {
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  // preserveDrawingBuffer prevents the WebGL spec's implicit clear after each
+  // composite — required so dirty-driven rendering doesn't flash an empty canvas
+  // on frames where renderer.render() is skipped.
+  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(innerWidth, innerHeight);
   renderer.domElement.id = 'view';
@@ -68,6 +71,8 @@ export function createViewer({ container }) {
   scene.add(overlaysGroup);
 
   let azimuth = 0, altitude = 0;
+  let dirty = true;
+  let canvasVisible = true;
   const azAltScratch = { azimuth: 0, altitude: 0 };
 
   addEventListener('resize', () => {
@@ -75,13 +80,17 @@ export function createViewer({ container }) {
     camera.updateProjectionMatrix();
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(innerWidth, innerHeight);
+    dirty = true;
   });
 
   function start() {
     function frame() {
-      camera.rotation.y = azimuth;
-      camera.rotation.x = altitude;
-      renderer.render(scene, camera);
+      if (dirty && canvasVisible) {
+        camera.rotation.y = azimuth;
+        camera.rotation.x = altitude;
+        renderer.render(scene, camera);
+        dirty = false;
+      }
       requestAnimationFrame(frame);
     }
     frame();
@@ -89,6 +98,7 @@ export function createViewer({ container }) {
 
   return {
     renderer, scene, camera, overlaysGroup,
+    requestRender() { dirty = true; },
     getAzAlt() {
       azAltScratch.azimuth = azimuth;
       azAltScratch.altitude = altitude;
@@ -97,9 +107,12 @@ export function createViewer({ container }) {
     setAzAlt(az, alt) {
       azimuth = az;
       altitude = THREE.MathUtils.clamp(alt, -PITCH_LIMIT, PITCH_LIMIT);
+      dirty = true;
     },
     setCanvasVisible(visible) {
+      canvasVisible = visible;
       renderer.domElement.style.display = visible ? 'block' : 'none';
+      if (visible) dirty = true;
     },
     start,
   };

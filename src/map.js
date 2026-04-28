@@ -32,7 +32,7 @@ function pixelsToMeters(map, pixels) {
   return c.distanceTo(ll2);
 }
 
-export function createMapView({ container, onLocationChange, onPOIAnchorClick, onPOIAnchorDragged }) {
+export function createMapView({ container, onLocationChange, onPOIAnchorClick, onPOIAnchorDragged, onShowRefresh }) {
   const layers = {
     'Sanborn 1884': histLayer(1884),
     'Sanborn 1888': histLayer(1888),
@@ -181,7 +181,12 @@ export function createMapView({ container, onLocationChange, onPOIAnchorClick, o
     },
     setOverlayCones(newCones) { cones = newCones; redrawCones(); },
     setPOIBearings(newPOIs) { pois = newPOIs; redrawPOIs(); redrawAnchors(); },
+    isVisible: () => visible,
     onShow() {
+      // Pull fresh annotation data into our cone/POI caches first. The setters'
+      // redraws are gated on `visible`, so they're no-ops here — the redrawAll
+      // below paints once with up-to-date inputs.
+      onShowRefresh?.();
       visible = true;
       // Leaflet measures tile dims from container size at construction; if hidden
       // then, we must invalidate after the container becomes visible.

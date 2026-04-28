@@ -228,13 +228,14 @@ export function createOverlayManager({ overlaysGroup, getAnisotropy, onMutate })
       applySize(o);
       notify();
     },
+    beginBatch() { batching++; },
+    endBatch() {
+      batching--;
+      if (batching === 0 && batchedNotify) { batchedNotify = false; onMutate?.(); }
+    },
     withBatch(fn) {
-      batching++;
-      try { fn(); }
-      finally {
-        batching--;
-        if (batching === 0 && batchedNotify) { batchedNotify = false; onMutate?.(); }
-      }
+      this.beginBatch();
+      try { fn(); } finally { this.endBatch(); }
     },
     movePOI(poi, u, v) {
       poi.userData.uv.u = u;

@@ -41,10 +41,18 @@ export function attachInput({ viewer, overlays, onChange }) {
     toolChangeCb?.(tool);
   }
 
+  let batchOpen = false;
+  function openBatch() { if (!batchOpen) { overlays.beginBatch(); batchOpen = true; } }
+  function closeBatch() { if (batchOpen) { batchOpen = false; overlays.endBatch(); } }
+
   canvas.addEventListener('pointerdown', e => {
     ndcFromEvent(e);
     raycaster.setFromCamera(ndc, camera);
     const hits = raycastOverlays();
+
+    // Open a batch for the entire drag so per-pointermove mutations don't each
+    // re-fire the solver / map redraw / bake-dirty cascade. Closed in endDrag.
+    openBatch();
 
     if (tool === TOOL_POI) {
       const poiHit = hits.find(h => h.object.userData.role === ROLE_POI);
@@ -53,6 +61,7 @@ export function attachInput({ viewer, overlays, onChange }) {
         overlays.setSelectedPOI(poiHit.object);
         draggingPOI = poiHit.object;
         mode = 'poi-drag';
+        viewer.requestRender();
       } else if (bodyHit) {
         const o = bodyHit.object.parent;
         const poi = overlays.addPOI(o, bodyHit.uv.x, bodyHit.uv.y);
@@ -61,6 +70,7 @@ export function attachInput({ viewer, overlays, onChange }) {
       } else {
         overlays.setSelectedPOI(null);
         mode = 'pan';
+        viewer.requestRender();
       }
     } else {
       const handleHit = hits.find(h => h.object.userData.role === ROLE_HANDLE);
@@ -84,7 +94,10 @@ export function attachInput({ viewer, overlays, onChange }) {
     canvas.setPointerCapture(e.pointerId);
   });
 
-  const endDrag = () => { mode = null; resizeInitial = null; draggingPOI = null; };
+  const endDrag = () => {
+    mode = null; resizeInitial = null; draggingPOI = null;
+    closeBatch();
+  };
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
   canvas.addEventListener('lostpointercapture', endDrag);
@@ -104,6 +117,9 @@ export function attachInput({ viewer, overlays, onChange }) {
       raycaster.setFromCamera(ndc, camera);
       if (raycaster.ray.intersectSphere(overlays.overlaySphere, movePoint)) {
         overlays.moveSelectedTo(movePoint);
+        // Mutation is inside the drag batch, so onMutate (which would normally
+        // request a render) is queued. Request the render directly instead.
+        viewer.requestRender();
       }
     } else if (mode === 'resize' && resizeInitial) {
       const selected = overlays.getSelected();
@@ -119,7 +135,10 @@ export function attachInput({ viewer, overlays, onChange }) {
       // Re-raycast against the POI's parent overlay body to recompute UV.
       const body = draggingPOI.userData.parentOverlay.userData.body;
       const hit = raycaster.intersectObject(body)[0];
-      if (hit) overlays.movePOI(draggingPOI, hit.uv.x, hit.uv.y);
+      if (hit) {
+        overlays.movePOI(draggingPOI, hit.uv.x, hit.uv.y);
+        viewer.requestRender();
+      }
     }
   });
 

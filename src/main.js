@@ -13,8 +13,11 @@ const overlays = createOverlayManager({
   overlaysGroup: viewer.overlaysGroup,
   getAnisotropy: () => viewer.renderer.capabilities.getMaxAnisotropy(),
   onMutate: () => {
+    viewer.requestRender();
     baker.markDirty();
-    refreshMapAnnotations();
+    // Skip the map work entirely when the map tab isn't showing — getCones /
+    // getPOIs walk every overlay and dirty their world matrices for nothing.
+    if (mapView.isVisible()) refreshMapAnnotations();
     // Guard against the recursive notify that fires when the solver writes back poses.
     if (isSolving) return;
     isSolving = true;
@@ -76,6 +79,9 @@ function solveAllPhotos() {
 
 const mapView = createMapView({
   container: document.getElementById('map'),
+  // Force a refresh when the map tab becomes visible — onMutate skips the
+  // refresh while the map is hidden, so the caches may be stale here.
+  onShowRefresh: () => refreshMapAnnotations(),
   onLocationChange: loc => {
     coordsEl.textContent = `lat ${loc.lat.toFixed(5)}  lng ${loc.lng.toFixed(5)}`;
     if (isSolving) return;
@@ -93,7 +99,7 @@ const mapView = createMapView({
   },
 });
 
-const input = attachInput({ viewer, overlays, onChange: () => hud.refresh() });
+const input = attachInput({ viewer, overlays, onChange: () => { viewer.requestRender(); hud.refresh(); } });
 attachViewTabs({ baker, viewer, hud, mapView });
 attachDownload({ baker });
 attachToolPalette({ input });
