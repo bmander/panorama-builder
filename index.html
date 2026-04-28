@@ -19,56 +19,63 @@
   <script type="module">
     import * as THREE from 'three';
 
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 1000);
-
     const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(innerWidth, innerHeight);
     document.body.appendChild(renderer.domElement);
 
-    // Inside-out sphere with the equirectangular image as its texture.
-    const geo = new THREE.SphereGeometry(500, 60, 40);
-    geo.scale(-1, 1, 1);
-    const tex = new THREE.TextureLoader().load('panorama.png');
-    tex.colorSpace = THREE.SRGBColorSpace;
-    scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex })));
+    const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 1000);
+    camera.rotation.order = 'YXZ';
 
-    // Azimuth (yaw, around Y) and altitude (pitch, around X), in radians.
+    const tex = new THREE.TextureLoader().load('panorama.png');
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+    const scene = new THREE.Scene();
+    scene.background = tex;
+
     let azimuth = 0;
     let altitude = 0;
     const PITCH_LIMIT = Math.PI / 2 - 0.01;
 
-    // Drag to pan. Movement scaled so one screen-height drag ≈ vertical FOV.
+    const hud = document.getElementById('hud');
+    const deg = r => (r * 180 / Math.PI).toFixed(1);
+    const updateHud = () => {
+      hud.textContent = `azimuth ${deg(azimuth)}°  altitude ${deg(altitude)}°`;
+    };
+    updateHud();
+
     let dragging = false, lastX = 0, lastY = 0;
+    const endDrag = () => dragging = false;
     renderer.domElement.addEventListener('pointerdown', e => {
       dragging = true; lastX = e.clientX; lastY = e.clientY;
       renderer.domElement.setPointerCapture(e.pointerId);
     });
-    renderer.domElement.addEventListener('pointerup', () => dragging = false);
+    renderer.domElement.addEventListener('pointerup', endDrag);
+    renderer.domElement.addEventListener('pointercancel', endDrag);
     renderer.domElement.addEventListener('pointermove', e => {
       if (!dragging) return;
       const dx = e.clientX - lastX, dy = e.clientY - lastY;
       lastX = e.clientX; lastY = e.clientY;
+      // Drag distance scaled so one screen-height ≈ one vertical FOV.
       const radPerPx = (camera.fov * Math.PI / 180) / innerHeight;
-      azimuth  -= dx * radPerPx;
+      azimuth  += dx * radPerPx;
       altitude += dy * radPerPx;
       altitude = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, altitude));
+      updateHud();
     });
 
     addEventListener('resize', () => {
       camera.aspect = innerWidth / innerHeight;
       camera.updateProjectionMatrix();
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
       renderer.setSize(innerWidth, innerHeight);
     });
 
-    const hud = document.getElementById('hud');
-    const deg = r => (r * 180 / Math.PI).toFixed(1);
-
     function frame() {
-      camera.rotation.order = 'YXZ';
       camera.rotation.y = azimuth;
       camera.rotation.x = altitude;
-      hud.textContent = `azimuth ${deg(azimuth)}°  altitude ${deg(altitude)}°`;
       renderer.render(scene, camera);
       requestAnimationFrame(frame);
     }
