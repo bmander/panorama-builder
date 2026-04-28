@@ -49,14 +49,14 @@ export function createBaker({ renderer, scene, setVisualsVisible }: CreateBakerO
   let dirty = true;
 
   function bake(width = 2048): Baked {
-    if (!dirty && lastBake && lastBake.width === width) return lastBake;
+    if (!dirty && lastBake?.width === width) return lastBake;
     const height = width / 2;
     // Cube face = width / 4 matches the equirect's per-90° span at the equator,
     // so detail isn't bottlenecked at the cubemap when sampling for hi-res output.
     // Floor at 1024 keeps the small flat-preview path inexpensive.
     const cubeFaceSize = Math.max(1024, Math.ceil(width / 4));
     if (cubeRT.width !== cubeFaceSize) cubeRT.setSize(cubeFaceSize, cubeFaceSize);
-    setVisualsVisible?.(false);
+    setVisualsVisible(false);
     cubeCam.update(renderer, scene);
     if (equirectRT.width !== width) equirectRT.setSize(width, height);
     const prev = renderer.getRenderTarget();
@@ -65,7 +65,7 @@ export function createBaker({ renderer, scene, setVisualsVisible }: CreateBakerO
     renderer.setRenderTarget(prev);
     const pixels = new Uint8Array(width * height * 4);
     renderer.readRenderTargetPixels(equirectRT, 0, 0, width, height, pixels);
-    setVisualsVisible?.(true);
+    setVisualsVisible(true);
     lastBake = { pixels, width, height };
     dirty = false;
     return lastBake;

@@ -32,7 +32,7 @@ const widthFromSizeRad = (sr: number): number => 2 * OVERLAY_R * Math.tan(sr / 2
 
 // Corner offsets (in unit-rectangle coordinates) for the 4 selection handles,
 // matching the order produced by addSelectionVisuals.
-const HANDLE_CORNERS: ReadonlyArray<readonly [number, number]> = [
+const HANDLE_CORNERS: readonly (readonly [number, number])[] = [
   [-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5],
 ];
 
@@ -154,6 +154,8 @@ export function createOverlayManager(
     );
     (outline.userData as { role: Role }).role = ROLE_OUTLINE;
     outline.renderOrder = 1;
+    // Outlines are visual-only; opt out of raycaster hits.
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     outline.raycast = () => {};
     o.add(outline);
     overlayData(o).outline = outline;
@@ -357,7 +359,7 @@ export function createOverlayManager(
         const w = widthFromSizeRad(overlayData(o).sizeRad);
         cones.push({
           azL: azFromLocal(o, -w / 2, 0, 0),
-          azR: azFromLocal(o, +w / 2, 0, 0),
+          azR: azFromLocal(o, w / 2, 0, 0),
         });
       }
       return cones;
