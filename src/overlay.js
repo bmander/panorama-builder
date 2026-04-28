@@ -24,9 +24,22 @@ export function dirFromAzAlt(az, alt) {
   return v;
 }
 
+// Inverse of dirFromAzAlt for objects placed on the OVERLAY_R sphere via placeAt().
+function posToAzAlt(o) {
+  return {
+    az: Math.atan2(-o.position.x, -o.position.z),
+    alt: Math.asin(o.position.y / OVERLAY_R),
+  };
+}
+
 export function createOverlayManager({ overlaysGroup, getAnisotropy, onMutate }) {
   const overlaySphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), OVERLAY_R);
-  const notify = () => onMutate?.();
+  let batching = 0;
+  let batchedNotify = false;
+  const notify = () => {
+    if (batching > 0) { batchedNotify = true; return; }
+    onMutate?.();
+  };
   let selected = null;
   let selectedPOI = null;
 
@@ -36,6 +49,12 @@ export function createOverlayManager({ overlaysGroup, getAnisotropy, onMutate })
     o.updateMatrixWorld();
     azScratch.set(lx, ly, lz).applyMatrix4(o.matrixWorld);
     return Math.atan2(-azScratch.x, -azScratch.z);
+  }
+  // Returns elevation (asin(y/|v|)) of the same point — needed by the pose solver.
+  function elFromLocal(o, lx, ly, lz) {
+    o.updateMatrixWorld();
+    azScratch.set(lx, ly, lz).applyMatrix4(o.matrixWorld);
+    return Math.asin(azScratch.y / azScratch.length());
   }
 
   function makeOverlay(tex, aspect) {
@@ -177,6 +196,7 @@ export function createOverlayManager({ overlaysGroup, getAnisotropy, onMutate })
       poi.userData.role = ROLE_POI;
       poi.userData.uv = { u, v };
       poi.userData.parentOverlay = o;
+      poi.userData.mapAnchor = null;
       poi.renderOrder = 3;
       o.add(poi);
       (o.userData.pois ??= []).push(poi);
@@ -184,6 +204,37 @@ export function createOverlayManager({ overlaysGroup, getAnisotropy, onMutate })
       this.setSelectedPOI(poi);
       notify();
       return poi;
+    },
+    setPOIMapAnchor(poi, latlng) {
+      poi.userData.mapAnchor = latlng ? { lat: latlng.lat, lng: latlng.lng } : null;
+      notify();
+    },
+    listOverlays: () => overlaysGroup.children,
+    extractPose(o, camLoc) {
+      const { az, alt } = posToAzAlt(o);
+      return {
+        photoAz: az,
+        photoTilt: alt,                 // input only; solver does not modify
+        sizeRad: o.userData.sizeRad,
+        aspect: o.userData.aspect,
+        camLat: camLoc?.lat ?? 0,
+        camLng: camLoc?.lng ?? 0,
+      };
+    },
+    applyPose(o, pose) {
+      // photoTilt is preserved (solver doesn't touch it; pass it through).
+      placeAt(o, dirFromAzAlt(pose.photoAz, pose.photoTilt));
+      o.userData.sizeRad = THREE.MathUtils.clamp(pose.sizeRad, SIZE_MIN, SIZE_MAX);
+      applySize(o);
+      notify();
+    },
+    withBatch(fn) {
+      batching++;
+      try { fn(); }
+      finally {
+        batching--;
+        if (batching === 0 && batchedNotify) { batchedNotify = false; onMutate?.(); }
+      }
     },
     movePOI(poi, u, v) {
       poi.userData.uv.u = u;
@@ -215,7 +266,12 @@ export function createOverlayManager({ overlaysGroup, getAnisotropy, onMutate })
       for (const o of overlaysGroup.children) {
         if (!o.userData.pois) continue;
         for (const poi of o.userData.pois) {
-          result.push({ az: azFromLocal(o, poi.position.x, poi.position.y, poi.position.z) });
+          result.push({
+            handle: poi,
+            az: azFromLocal(o, poi.position.x, poi.position.y, poi.position.z),
+            uv: { ...poi.userData.uv },
+            mapAnchor: poi.userData.mapAnchor,
+          });
         }
       }
       return result;
