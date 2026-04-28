@@ -1,6 +1,19 @@
 import * as THREE from 'three';
+import type { Baked } from './types.js';
 
-export function createBaker({ renderer, scene, setVisualsVisible }) {
+export interface Baker {
+  bake(width?: number): Baked;
+  paintToCanvas(canvas: HTMLCanvasElement, baked: Baked): void;
+  markDirty(): void;
+}
+
+export interface CreateBakerOptions {
+  renderer: THREE.WebGLRenderer;
+  scene: THREE.Scene;
+  setVisualsVisible: (visible: boolean) => void;
+}
+
+export function createBaker({ renderer, scene, setVisualsVisible }: CreateBakerOptions): Baker {
   const cubeRT = new THREE.WebGLCubeRenderTarget(1024);
   const cubeCam = new THREE.CubeCamera(0.1, 1000, cubeRT);
   cubeCam.position.set(0, 0, 0);
@@ -32,10 +45,10 @@ export function createBaker({ renderer, scene, setVisualsVisible }) {
   equirectScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), equirectMat));
   const equirectRT = new THREE.WebGLRenderTarget(2048, 1024);
 
-  let lastBake = null;
+  let lastBake: Baked | null = null;
   let dirty = true;
 
-  function bake(width = 2048) {
+  function bake(width = 2048): Baked {
     if (!dirty && lastBake && lastBake.width === width) return lastBake;
     const height = width / 2;
     // Cube face = width / 4 matches the equirect's per-90° span at the equator,
@@ -58,10 +71,10 @@ export function createBaker({ renderer, scene, setVisualsVisible }) {
     return lastBake;
   }
 
-  function paintToCanvas(canvas, baked) {
+  function paintToCanvas(canvas: HTMLCanvasElement, baked: Baked): void {
     canvas.width = baked.width;
     canvas.height = baked.height;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d')!;
     const img = ctx.createImageData(baked.width, baked.height);
     const stride = baked.width * 4;
     // WebGL pixel buffer is bottom-up; flip Y when copying into ImageData.
