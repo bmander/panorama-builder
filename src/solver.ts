@@ -1,27 +1,34 @@
-// Photo-pose solver. Given a photo's current pose, anchored POIs, and a list of
-// free parameters, runs Gauss-Newton with finite-difference Jacobian to minimize
-// per-POI bearing residuals.
+// Joint photo-pose solver. Given many photos sharing a single panorama camera
+// location, runs Gauss-Newton with finite-difference Jacobian to minimize
+// per-POI bearing residuals across ALL photos at once. Camera location is a
+// shared free parameter; each photo's photoAz/sizeRad is local.
 //
-// Map anchors carry only lat/lng — no elevation. Each POI therefore yields ONE
-// equation (azimuth match); the photo's vertical tilt and the camera's height
-// are unobservable from this data and never enter the solve.
+// Map anchors carry only lat/lng — no elevation. Each POI therefore yields
+// ONE equation (azimuth match); the photos' vertical tilt and the camera's
+// height are unobservable from this data and never enter the solve.
 //
-// Pose shape: { photoAz, photoTilt, sizeRad, aspect, camLat, camLng }
-//   - photoAz:        viewer-azimuth (CCW from −Z) of overlay center — solved-for
+// Pose shape (per photo): { photoAz, photoTilt, sizeRad, aspect, camLat, camLng }
+//   - photoAz:        viewer-azimuth (CCW from −Z) of overlay center — local free
 //   - photoTilt:      altitude of overlay center — INPUT ONLY (used by projectPOI for
 //                     accurate azimuth at non-zero tilt; never modified)
-//   - sizeRad:        angular width (FOV) of the overlay — solved-for at N≥2
+//   - sizeRad:        angular width (FOV) of the overlay — local free at N≥2
 //   - aspect:         photo width/height (locked input)
-//   - camLat, camLng: panorama camera location — solved-for at N≥4
+//   - camLat, camLng: panorama camera location — GLOBAL free, shared across photos
 //
 // POI shape: { u, v, anchorLat, anchorLng }
 //   - u, v ∈ [0,1] image coords; anchor is the map POI's lat/lng.
 
 import { bearingFromLocation, bearingToViewerAz } from './geo.js';
-import type { Mutable, POIProjection, Pose, SolveResult, SolverParam } from './types.js';
+import type {
+  JointPhoto,
+  JointSolveResult,
+  LatLng,
+  LocalParam,
+  Mutable,
+  POIProjection,
+  Pose,
+} from './types.js';
 
-// The solver mutates a working copy of the pose in place. Public Pose is
-// readonly; this alias is the local mutable shape.
 type WorkingPose = Mutable<Pose>;
 
 const MAX_ITERS = 20;
@@ -29,91 +36,60 @@ const STEP_TOL = 1e-7;
 const RESIDUAL_TOL = 1e-5;
 const FD_EPS = 1e-5;
 
-// Box constraint to keep sizeRad away from the degenerate zero-FOV minimum.
-const PARAM_BOUNDS: Partial<Record<SolverParam, [number, number]>> = {
-  sizeRad: [Math.PI / 180 * 2, Math.PI * 0.95],   // 2°–171° matches overlay's SIZE_MIN/MAX
-};
+// Box constraints. sizeRad away from the degenerate zero-FOV minimum.
+const SIZE_RAD_MIN = Math.PI / 180 * 2;
+const SIZE_RAD_MAX = Math.PI * 0.95;
 
-function applyBounds(pose: WorkingPose): void {
-  for (const k of Object.keys(PARAM_BOUNDS) as SolverParam[]) {
-    const bounds = PARAM_BOUNDS[k];
-    if (!bounds) continue;
-    const [lo, hi] = bounds;
-    if (pose[k] < lo) pose[k] = lo;
-    else if (pose[k] > hi) pose[k] = hi;
-  }
+function clampSizeRad(p: WorkingPose): void {
+  if (p.sizeRad < SIZE_RAD_MIN) p.sizeRad = SIZE_RAD_MIN;
+  else if (p.sizeRad > SIZE_RAD_MAX) p.sizeRad = SIZE_RAD_MAX;
 }
 
-export function autoFreeParams(numPois: number): SolverParam[] {
+// Free-parameter slot in the joint state vector.
+type Slot =
+  | { kind: 'camLat' }
+  | { kind: 'camLng' }
+  | { kind: 'photo'; photoIndex: number; name: LocalParam };
+
+// Decides which photoAz/sizeRad are worth solving for given a photo's POI count.
+// Camera params are decided globally by the caller (see solveCamera flag).
+export function autoLocalFreeParams(numPois: number): LocalParam[] {
   if (numPois <= 0) return [];
   if (numPois === 1) return ['photoAz'];
-  // 4 POIs is the minimum to determine camera location from bearings (3 independent
-  // pairwise-bearing-difference equations vs. 3 unknowns: camLat, camLng, sizeRad).
-  if (numPois < 4)  return ['photoAz', 'sizeRad'];
-  return ['photoAz', 'sizeRad', 'camLat', 'camLng'];
+  return ['photoAz', 'sizeRad'];
 }
 
-// Forward model for a POI: returns the world (azimuth, elevation) that the photo's
-// pose places the POI direction in. Mirrors the math in overlay.ts's lookAt+local-XY
-// composition, but written in plain trig so the solver doesn't need Three.
-//
-// Pipeline:
-//   1. Photo center direction in world: (sin(az)·cos(alt), -sin(alt), -cos(az)·cos(alt))
-//      with (az=0, alt=0) ⇒ (0,0,-1) and the YXZ rotation order, matching dirFromAzAlt.
-//      (Note the sign on the y component: viewer-altitude positive means the camera
-//      pitches DOWN in our viewer's drag mapping, but the POI math just needs a
-//      consistent convention so we match what azFromLocal in overlay.ts produces.)
-//   2. Local +Y in world: rotate world up by the photo's rotation. For a flat photo
-//      facing the origin, local +Y stays in the world XY-plane projection.
-//   3. POI local offset: ((u-0.5)*W, (v-0.5)*H, 0) where W = 2·R·tan(sizeRad/2),
-//      H = W/aspect, R = 1 (we normalize at the end so distance cancels).
-//   4. POI world dir = center + (u-0.5)*W·localX + (v-0.5)*H·localY (since the photo's
-//      local +Z points toward the camera, the (u,v) plane is its tangent at distance R).
-//   5. Return (atan2(-x, -z), asin(y / |dir|)).
 function projectPOI(pose: Pose, u: number, v: number): { az: number; el: number } {
   const { photoAz: az, photoTilt: alt, sizeRad, aspect } = pose;
 
-  // Photo center direction (world). Matches dirFromAzAlt(az, alt) in overlay.ts.
+  // Photo center direction (world), matching dirFromAzAlt(az, alt) in overlay.ts:
+  // start (0,0,-1); rotate around X by alt; rotate around Y by az.
   const ca = Math.cos(alt), sa = Math.sin(alt);
   const caz = Math.cos(az), saz = Math.sin(az);
-  // dirFromAzAlt: start (0,0,-1); rotate around X by alt; rotate around Y by az.
-  // After X-rotation by alt: (0, sa, -ca).
-  // After Y-rotation by az:  (-ca·saz, sa, -ca·caz).
   const cx = -ca * saz;
   const cy = sa;
   const cz = -ca * caz;
 
-  // Local +X (right of photo) and local +Y (up) in world. With lookAt(0,0,0) the photo's
-  // local frame has +Z pointing toward the camera; +X is horizontal-perpendicular-to-radial.
-  // Derivation matches overlay.ts's lookAt swap convention.
-  // localZ = (camera origin − overlay position) normalized = -center (already unit).
-  // localX = up_world × localZ, normalized, where up_world = (0,1,0).
-  //   localX = (0,1,0) × (-cx, -cy, -cz) = (1·-cz − 0·-cy, 0·-cx − 0·-cz, 0·-cy − 1·-cx)
-  //          = (-cz, 0, cx).
-  // localY = localZ × localX
-  //        = (-cx, -cy, -cz) × (-cz, 0, cx)
-  //        = (-cy·cx − -cz·0, -cz·-cz − -cx·cx, -cx·0 − -cy·-cz)
-  //        = (-cy·cx, cz² + cx², -cy·cz).
-  // Note: when |center| in horizontal plane = sqrt(cx² + cz²) = ca (since ca·ca·(saz²+caz²)=ca²),
-  // we should still normalize for clean unit basis at non-zero alt.
-  const lxX = -cz, lxZ = cx;                 // localX (y component is 0)
+  // Local +X (right) and +Y (up) of the photo plane in world coords.
+  // localX = up_world × localZ; localY = localZ × localX. See overlay.ts.
+  const lxX = -cz, lxZ = cx;
   const lxLen = Math.hypot(lxX, lxZ) || 1;
-  const localXx = lxX / lxLen, localXy = 0, localXz = lxZ / lxLen;
+  const localXx = lxX / lxLen, localXz = lxZ / lxLen;
 
   const lyX = -cy * cx, lyY = cz * cz + cx * cx, lyZ = -cy * cz;
   const lyLen = Math.hypot(lyX, lyY, lyZ) || 1;
   const localYx = lyX / lyLen, localYy = lyY / lyLen, localYz = lyZ / lyLen;
 
-  // POI offset in plane-local coords. Use unit-radius photo plane (R=1) and scale by
-  // angular size; magnitude cancels in the atan2 / asin below.
+  // POI offset in plane-local coords. Unit-radius photo plane (R=1); magnitude
+  // cancels in the atan2 / asin below.
   const W = 2 * Math.tan(sizeRad / 2);
   const H = W / aspect;
   const dx = (u - 0.5) * W;
   const dy = (v - 0.5) * H;
 
-  // POI world position (relative to camera origin); plane is at distance 1 along center.
+  // localXy is 0, so localXy * dx is omitted from py.
   const px = cx + dx * localXx + dy * localYx;
-  const py = cy + dx * localXy + dy * localYy;
+  const py = cy + dy * localYy;
   const pz = cz + dx * localXz + dy * localYz;
 
   const len = Math.hypot(px, py, pz);
@@ -131,25 +107,21 @@ function targetBearingFor(
   return bearingToViewerAz(bearingFromLocation(camLoc, { lat: anchor.anchorLat, lng: anchor.anchorLng }));
 }
 
-const wrapPI = (a: number): number => ((a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+const wrapPI = (a: number): number =>
+  ((a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
 
-function residuals(pose: Pose, pois: POIProjection[]): number[] {
-  const r = new Array<number>(pois.length);
-  for (let i = 0; i < pois.length; i++) {
-    const poi = pois[i]!;
-    const img = projectPOI(pose, poi.u, poi.v);
-    r[i] = wrapPI(img.az - targetBearingFor(pose, poi));
-  }
-  return r;
+function poiResidual(pose: Pose, poi: POIProjection): number {
+  const img = projectPOI(pose, poi.u, poi.v);
+  return wrapPI(img.az - targetBearingFor(pose, poi));
 }
 
-function residualNorm(r: number[]): number {
+function residualNorm(r: readonly number[]): number {
   let s = 0;
   for (const v of r) s += v * v;
   return Math.sqrt(s);
 }
 
-// Solve K×K linear system A·x = b in place via Gaussian elimination. K ≤ 6 here.
+// Solve K×K linear system A·x = b via Gaussian elimination. K is small here.
 function solveLinear(A: number[][], b: number[]): number[] | null {
   const n = b.length;
   for (let i = 0; i < n; i++) {
@@ -178,35 +150,98 @@ function solveLinear(A: number[][], b: number[]): number[] | null {
   return x;
 }
 
-export function solvePose(options: {
-  pose: Pose;
-  pois: POIProjection[];
-  free: SolverParam[];
-}): SolveResult {
-  const { pose, pois, free } = options;
-  if (pois.length === 0 || free.length === 0) {
-    return { pose: { ...pose }, residualRMS: 0, iterations: 0, cameraMoved: false };
-  }
-  const x: WorkingPose = { ...pose };
+function emptyResult(camLoc: LatLng, photos: readonly JointPhoto[]): JointSolveResult {
+  return {
+    camLoc,
+    photos: photos.map(p => ({ pose: { ...p.pose } })),
+    residualRMS: 0,
+    iterations: 0,
+    cameraMoved: false,
+  };
+}
 
-  let r = residuals(x, pois);
+export function solveJointPose(options: {
+  readonly camLoc: LatLng;
+  readonly photos: readonly JointPhoto[];
+  readonly solveCamera: boolean;
+}): JointSolveResult {
+  const { camLoc, photos, solveCamera } = options;
+
+  // Build per-photo working poses, all sharing the starting camLoc.
+  const work: WorkingPose[] = photos.map(p => ({
+    ...p.pose,
+    camLat: camLoc.lat,
+    camLng: camLoc.lng,
+  }));
+  let camLat = camLoc.lat;
+  let camLng = camLoc.lng;
+
+  // Lay out the joint state vector. Order: camLat, camLng (if free), then for
+  // each photo, its free local params in declaration order. The per-slot kind
+  // tells us which working field to read/write.
+  const slots: Slot[] = [];
+  if (solveCamera) slots.push({ kind: 'camLat' }, { kind: 'camLng' });
+  photos.forEach((p, photoIndex) => {
+    for (const name of p.free) slots.push({ kind: 'photo', photoIndex, name });
+  });
+
+  const totalPois = photos.reduce((s, p) => s + p.pois.length, 0);
+  if (slots.length === 0 || totalPois === 0) return emptyResult(camLoc, photos);
+
+  function syncCamToPhotos(): void {
+    for (const p of work) { p.camLat = camLat; p.camLng = camLng; }
+  }
+
+  function applyState(state: readonly number[]): void {
+    for (let k = 0; k < slots.length; k++) {
+      const slot = slots[k]!;
+      const v = state[k]!;
+      if (slot.kind === 'camLat') camLat = v;
+      else if (slot.kind === 'camLng') camLng = v;
+      else work[slot.photoIndex]![slot.name] = v;
+    }
+    syncCamToPhotos();
+    for (const p of work) clampSizeRad(p);
+  }
+
+  function readState(): number[] {
+    return slots.map(slot => {
+      if (slot.kind === 'camLat') return camLat;
+      if (slot.kind === 'camLng') return camLng;
+      return work[slot.photoIndex]![slot.name];
+    });
+  }
+
+  function computeResiduals(): number[] {
+    const r: number[] = [];
+    for (let i = 0; i < photos.length; i++) {
+      const pose = work[i]!;
+      for (const poi of photos[i]!.pois) r.push(poiResidual(pose, poi));
+    }
+    return r;
+  }
+
+  let state = readState();
+  let r = computeResiduals();
   let prevNorm = residualNorm(r);
 
   let iters = 0;
   for (; iters < MAX_ITERS; iters++) {
     if (prevNorm < RESIDUAL_TOL) break;
 
-    // Numerical Jacobian: J[i][k] = ∂r_i/∂x_k via central difference.
-    const m = r.length, k = free.length;
+    // Numerical Jacobian via central difference: J[i][k] = ∂r_i/∂x_k.
+    const m = r.length, k = state.length;
     const J: number[][] = Array.from({ length: m }, () => new Array<number>(k).fill(0));
     for (let kk = 0; kk < k; kk++) {
-      const name = free[kk]!;
-      const orig = x[name];
-      x[name] = orig + FD_EPS;
-      const rp = residuals(x, pois);
-      x[name] = orig - FD_EPS;
-      const rn = residuals(x, pois);
-      x[name] = orig;
+      const orig = state[kk]!;
+      state[kk] = orig + FD_EPS;
+      applyState(state);
+      const rp = computeResiduals();
+      state[kk] = orig - FD_EPS;
+      applyState(state);
+      const rn = computeResiduals();
+      state[kk] = orig;
+      applyState(state);
       for (let i = 0; i < m; i++) J[i]![kk] = (rp[i]! - rn[i]!) / (2 * FD_EPS);
     }
 
@@ -228,40 +263,50 @@ export function solvePose(options: {
     const dx = solveLinear(JtJ, Jtr);
     if (!dx) break;
 
-    // Try the step; back off (halve) if residual norm rises. Bounds applied to trial.
+    // Backtracking step: halve alpha if the residual norm rises.
     let alpha = 1;
     let accepted = false;
     for (let attempt = 0; attempt < 5; attempt++) {
-      const trial: WorkingPose = { ...x };
-      for (let kk = 0; kk < k; kk++) {
-        const name = free[kk]!;
-        trial[name] = x[name] + alpha * dx[kk]!;
-      }
-      applyBounds(trial);
-      const rTrial = residuals(trial, pois);
+      const trial = state.map((s, kk) => s + alpha * dx[kk]!);
+      applyState(trial);
+      // applyState may have clamped sizeRad — re-read the actual state.
+      const realized = readState();
+      const rTrial = computeResiduals();
       const normTrial = residualNorm(rTrial);
       if (normTrial < prevNorm) {
-        for (let kk = 0; kk < k; kk++) {
-          const name = free[kk]!;
-          x[name] = trial[name];
-        }
+        state = realized;
         r = rTrial;
         accepted = true;
-        const stepSize = Math.sqrt(dx.reduce((s, v) => s + (alpha * v) ** 2, 0));
+        const stepSize = Math.sqrt(dx.reduce((acc, v) => acc + (alpha * v) ** 2, 0));
         prevNorm = normTrial;
         if (stepSize < STEP_TOL) { iters++; break; }
         break;
       }
       alpha *= 0.5;
     }
-    if (!accepted) break;
+    if (!accepted) {
+      // Restore working state to the last accepted iterate.
+      applyState(state);
+      break;
+    }
   }
 
+  const cameraMoved = solveCamera && (camLat !== camLoc.lat || camLng !== camLoc.lng);
   return {
-    pose: x,
+    camLoc: { lat: camLat, lng: camLng },
+    photos: work.map(p => ({
+      pose: {
+        photoAz: p.photoAz,
+        photoTilt: p.photoTilt,
+        sizeRad: p.sizeRad,
+        aspect: p.aspect,
+        camLat,
+        camLng,
+      },
+    })),
     residualRMS: residualNorm(r) / Math.sqrt(Math.max(r.length, 1)),
     iterations: iters,
-    cameraMoved: free.includes('camLat') || free.includes('camLng'),
+    cameraMoved,
   };
 }
 

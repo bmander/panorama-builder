@@ -53,16 +53,30 @@ export interface POIBearing {
   readonly mapAnchor: LatLng | null;
 }
 
-// Pose solver result.
-export interface SolveResult {
+// Pose-solver inputs and outputs. The solver works on ALL anchored photos
+// jointly — camera location is a shared parameter, per-photo orientation
+// (photoAz, sizeRad) is local. This is necessary so POIs from every photo
+// contribute evidence to the camera estimate.
+export interface JointPhoto {
   readonly pose: Pose;
+  readonly pois: readonly POIProjection[];
+  readonly free: readonly LocalParam[];
+}
+
+export interface JointSolveResult {
+  readonly camLoc: LatLng;
+  readonly photos: readonly { readonly pose: Pose }[];
   readonly residualRMS: number;
   readonly iterations: number;
   readonly cameraMoved: boolean;
 }
 
-// Free-parameter names accepted by the solver.
-export type SolverParam = 'photoAz' | 'sizeRad' | 'camLat' | 'camLng';
+// Per-photo free parameters. Camera params are global (see solveCamera flag).
+export type LocalParam = 'photoAz' | 'sizeRad';
+
+// Names of every parameter the solver can adjust — used by main.ts's lock
+// state. Includes the global camera params alongside the per-photo locals.
+export type SolverParam = LocalParam | 'camLat' | 'camLng';
 
 // Bake (pixel buffer + dimensions) returned by the equirect baker.
 export interface Baked {
