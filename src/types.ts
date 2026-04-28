@@ -1,12 +1,10 @@
-// Cross-cutting types shared by multiple modules. Workers MUST NOT modify
-// this file during the migration (avoiding merge conflicts across parallel
-// PRs). Add file-local types inside each module instead.
+// Cross-cutting types and small shared helpers.
 
 import type * as THREE from 'three';
 
 export interface LatLng {
-  lat: number;
-  lng: number;
+  readonly lat: number;
+  readonly lng: number;
 }
 
 // Photo pose, both as solver input and output.
@@ -16,51 +14,51 @@ export interface LatLng {
 //   aspect:         photo width/height
 //   camLat, camLng: panorama camera location
 export interface Pose {
-  photoAz: number;
-  photoTilt: number;
-  sizeRad: number;
-  aspect: number;
-  camLat: number;
-  camLng: number;
+  readonly photoAz: number;
+  readonly photoTilt: number;
+  readonly sizeRad: number;
+  readonly aspect: number;
+  readonly camLat: number;
+  readonly camLng: number;
 }
 
 // One anchored POI as seen by the solver.
 export interface POIProjection {
-  u: number;
-  v: number;
-  anchorLat: number;
-  anchorLng: number;
+  readonly u: number;
+  readonly v: number;
+  readonly anchorLat: number;
+  readonly anchorLng: number;
 }
 
 // Snapshot for the HUD readout.
 export interface AzAltSnapshot {
-  azimuth: number;
-  altitude: number;
-  fov: number;
-  selectedSizeRad: number | null;
+  readonly azimuth: number;
+  readonly altitude: number;
+  readonly fov: number;
+  readonly selectedSizeRad: number | null;
 }
 
 // Bearings of an overlay's left/right edges as viewer-azimuths.
 export interface Cone {
-  azL: number;
-  azR: number;
+  readonly azL: number;
+  readonly azR: number;
 }
 
 // Per-POI viewer bearing, paired with its scene-graph handle so the map view
 // can correlate clicks back to the POI it represents.
 export interface POIBearing {
-  handle: THREE.Mesh;
-  az: number;
-  uv: { u: number; v: number };
-  mapAnchor: LatLng | null;
+  readonly handle: THREE.Mesh;
+  readonly az: number;
+  readonly uv: { readonly u: number; readonly v: number };
+  readonly mapAnchor: LatLng | null;
 }
 
 // Pose solver result.
 export interface SolveResult {
-  pose: Pose;
-  residualRMS: number;
-  iterations: number;
-  cameraMoved: boolean;
+  readonly pose: Pose;
+  readonly residualRMS: number;
+  readonly iterations: number;
+  readonly cameraMoved: boolean;
 }
 
 // Free-parameter names accepted by the solver.
@@ -68,13 +66,13 @@ export type SolverParam = 'photoAz' | 'sizeRad' | 'camLat' | 'camLng';
 
 // Bake (pixel buffer + dimensions) returned by the equirect baker.
 export interface Baked {
-  pixels: Uint8Array;
-  width: number;
-  height: number;
+  readonly pixels: Uint8Array;
+  readonly width: number;
+  readonly height: number;
 }
 
-// userData payloads attached to scene-graph objects in overlay.js.
-// `THREE.Object3D.userData` is `any`, so consumers must cast.
+// userData payloads attached to scene-graph objects in overlay.ts.
+// Mutable on purpose: these are the live scene-graph state we mutate in place.
 export interface OverlayUserData {
   sizeRad: number;
   aspect: number;
@@ -91,11 +89,48 @@ export interface POIUserData {
   mapAnchor: LatLng | null;
 }
 
-// Roles tagged on every interactive scene-graph object so input.js can
+// Roles tagged on every interactive scene-graph object so input.ts can
 // dispatch by what the raycaster hit.
 export type Role = 'body' | 'handle' | 'outline' | 'poi';
 
 export interface RoleUserData {
   role: Role;
-  cornerIndex?: number;
 }
+
+// Removes `readonly` from every field of T. Use this for a local mutable
+// working copy of an otherwise-readonly value type (e.g., the solver's
+// in-place-updated pose).
+export type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
+// --- Shared scene-graph accessors ---
+// THREE.Object3D.userData is `any`, so consumers must cast. These helpers
+// centralize the cast so call sites stay terse.
+
+export const overlayData = (o: THREE.Group): OverlayUserData =>
+  o.userData as OverlayUserData;
+
+export const poiData = (poi: THREE.Mesh): POIUserData =>
+  poi.userData as POIUserData;
+
+// Every Mesh / LineSegments in this codebase is constructed with a single
+// MeshBasicMaterial / LineBasicMaterial, so this narrowing is safe.
+export const meshMat = (m: THREE.Mesh): THREE.MeshBasicMaterial =>
+  m.material as THREE.MeshBasicMaterial;
+
+export const lineMat = (l: THREE.LineSegments): THREE.LineBasicMaterial =>
+  l.material as THREE.LineBasicMaterial;
+
+// Read the role tag off any Object3D (returns undefined for un-tagged objects).
+export const getRole = (o: THREE.Object3D): Role | undefined =>
+  (o.userData as Partial<RoleUserData>).role;
+
+// --- DOM ---
+
+// Look up an element by id; throw with a clear message if it's missing.
+// Replaces the `document.getElementById('id')!` pattern with a single
+// failure mode that names the missing id.
+export const getElement = <T extends HTMLElement = HTMLElement>(id: string): T => {
+  const el = document.getElementById(id);
+  if (!el) throw new Error(`Missing required element #${id}`);
+  return el as T;
+};

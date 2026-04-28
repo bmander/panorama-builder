@@ -1,10 +1,14 @@
 import * as THREE from 'three';
+import {
+  lineMat,
+  meshMat,
+  overlayData,
+  poiData,
+} from './types.js';
 import type {
   Cone,
   LatLng,
-  OverlayUserData,
   POIBearing,
-  POIUserData,
   Pose,
   Role,
 } from './types.js';
@@ -46,14 +50,6 @@ function posToAzAlt(o: THREE.Object3D): { az: number; alt: number } {
     alt: Math.asin(o.position.y / OVERLAY_R),
   };
 }
-
-const overlayData = (o: THREE.Group): OverlayUserData => o.userData as OverlayUserData;
-const poiData = (poi: THREE.Mesh): POIUserData => poi.userData as POIUserData;
-// Every material in this module is constructed as a single MeshBasicMaterial
-// or LineBasicMaterial, so narrowing the union via cast is safe.
-const meshMat = (m: THREE.Mesh): THREE.MeshBasicMaterial => m.material as THREE.MeshBasicMaterial;
-const lineMat = (l: THREE.LineSegments): THREE.LineBasicMaterial =>
-  l.material as THREE.LineBasicMaterial;
 
 export interface OverlayManager {
   overlaySphere: THREE.Sphere;
@@ -167,9 +163,7 @@ export function createOverlayManager(
     const handles: THREE.Mesh[] = [];
     for (let i = 0; i < 4; i++) {
       const m = new THREE.Mesh(handleGeom, handleMat);
-      const ud = m.userData as { role: Role; cornerIndex: number };
-      ud.role = ROLE_HANDLE;
-      ud.cornerIndex = i;
+      (m.userData as { role: Role }).role = ROLE_HANDLE;
       m.renderOrder = 2;
       o.add(m);
       handles.push(m);

@@ -3,19 +3,21 @@ import { FOV_MIN, FOV_MAX } from './viewer.js';
 import type { Viewer } from './viewer.js';
 import { ROLE_BODY, ROLE_HANDLE, ROLE_POI, dirFromAzAlt } from './overlay.js';
 import type { OverlayManager } from './overlay.js';
-import type { OverlayUserData, POIUserData, RoleUserData } from './types.js';
+import { getRole, overlayData, poiData } from './types.js';
 
-export const TOOL_MOVE = 'move' as const;
-export const TOOL_POI = 'poi' as const;
+export type Tool = 'move' | 'poi';
+export const TOOL_MOVE = 'move' satisfies Tool;
+export const TOOL_POI = 'poi' satisfies Tool;
 
-export type Tool = typeof TOOL_MOVE | typeof TOOL_POI;
-
-type Mode = 'pan' | 'move' | 'resize' | 'poi-drag' | null;
-
-interface ResizeInitial {
-  dist: number;
-  sizeRad: number;
-}
+// Discriminated state machine for the active pointer drag. `null` = no drag in
+// progress. Each variant carries exactly the state its handler needs, so
+// pointermove can dispatch on `mode.type` and TS narrows the rest.
+type ModeState =
+  | { type: 'pan' }
+  | { type: 'move' }
+  | { type: 'resize'; dist: number; sizeRad: number }
+  | { type: 'poi-drag'; poi: THREE.Mesh }
+  | null;
 
 export interface InputController {
   setTool(newTool: Tool): void;
@@ -48,14 +50,12 @@ export function attachInput({ viewer, overlays, onChange }: AttachInputOptions):
   }
   function raycastOverlays(): THREE.Intersection[] {
     return raycaster.intersectObjects(overlaysGroup.children, true)
-      .filter(h => (h.object.userData as RoleUserData).role);
+      .filter(h => getRole(h.object) !== undefined);
   }
 
   let tool: Tool = TOOL_MOVE;
-  let mode: Mode = null;
+  let mode: ModeState = null;
   let lastX = 0, lastY = 0;
-  let resizeInitial: ResizeInitial | null = null;
-  let draggingPOI: THREE.Mesh | null = null;
   let toolChangeCb: ((tool: Tool) => void) | null = null;
 
   function setTool(newTool: Tool): void {
@@ -79,41 +79,41 @@ export function attachInput({ viewer, overlays, onChange }: AttachInputOptions):
     openBatch();
 
     if (tool === TOOL_POI) {
-      const poiHit = hits.find(h => (h.object.userData as RoleUserData).role === ROLE_POI);
-      const bodyHit = hits.find(h => (h.object.userData as RoleUserData).role === ROLE_BODY);
+      const poiHit = hits.find(h => getRole(h.object) === ROLE_POI);
+      const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
       if (poiHit) {
         const poiMesh = poiHit.object as THREE.Mesh;
         overlays.setSelectedPOI(poiMesh);
-        draggingPOI = poiMesh;
-        mode = 'poi-drag';
+        mode = { type: 'poi-drag', poi: poiMesh };
         viewer.requestRender();
       } else if (bodyHit && bodyHit.uv) {
         const o = bodyHit.object.parent as THREE.Group;
         const poi = overlays.addPOI(o, bodyHit.uv.x, bodyHit.uv.y);
-        draggingPOI = poi;
-        mode = 'poi-drag';
+        mode = { type: 'poi-drag', poi };
       } else {
         overlays.setSelectedPOI(null);
-        mode = 'pan';
+        mode = { type: 'pan' };
         viewer.requestRender();
       }
     } else {
-      const handleHit = hits.find(h => (h.object.userData as RoleUserData).role === ROLE_HANDLE);
-      const bodyHit = hits.find(h => (h.object.userData as RoleUserData).role === ROLE_BODY);
+      const handleHit = hits.find(h => getRole(h.object) === ROLE_HANDLE);
+      const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
       const selected = overlays.getSelected();
       if (handleHit && selected && handleHit.object.parent === selected) {
-        mode = 'resize';
         const center = projectToScreen(selected.position);
         const dx = e.clientX - center.x, dy = e.clientY - center.y;
-        const sizeRad = (selected.userData as OverlayUserData).sizeRad;
-        resizeInitial = { dist: Math.hypot(dx, dy) || 1, sizeRad };
+        mode = {
+          type: 'resize',
+          dist: Math.hypot(dx, dy) || 1,
+          sizeRad: overlayData(selected).sizeRad,
+        };
       } else if (bodyHit) {
         const o = bodyHit.object.parent as THREE.Group;
         if (selected !== o) { overlays.setSelected(o); onChange(); }
-        mode = 'move';
+        mode = { type: 'move' };
       } else {
         if (selected) { overlays.setSelected(null); onChange(); }
-        mode = 'pan';
+        mode = { type: 'pan' };
       }
     }
     lastX = e.clientX; lastY = e.clientY;
@@ -121,7 +121,7 @@ export function attachInput({ viewer, overlays, onChange }: AttachInputOptions):
   });
 
   const endDrag = (): void => {
-    mode = null; resizeInitial = null; draggingPOI = null;
+    mode = null;
     closeBatch();
   };
   canvas.addEventListener('pointerup', endDrag);
@@ -130,41 +130,49 @@ export function attachInput({ viewer, overlays, onChange }: AttachInputOptions):
 
   canvas.addEventListener('pointermove', (e: PointerEvent) => {
     if (!mode) return;
-    if (mode === 'pan') {
-      const dx = e.clientX - lastX, dy = e.clientY - lastY;
-      lastX = e.clientX; lastY = e.clientY;
-      // Drag distance scaled so one screen-height ≈ one vertical FOV.
-      const radPerPx = THREE.MathUtils.degToRad(camera.fov) / innerHeight;
-      const { azimuth, altitude } = viewer.getAzAlt();
-      viewer.setAzAlt(azimuth + dx * radPerPx, altitude + dy * radPerPx);
-      onChange();
-    } else if (mode === 'move') {
-      ndcFromEvent(e);
-      raycaster.setFromCamera(ndc, camera);
-      if (raycaster.ray.intersectSphere(overlays.overlaySphere, movePoint)) {
-        overlays.moveSelectedTo(movePoint);
-        // Mutation is inside the drag batch, so onMutate (which would normally
-        // request a render) is queued. Request the render directly instead.
-        viewer.requestRender();
+    switch (mode.type) {
+      case 'pan': {
+        const dx = e.clientX - lastX, dy = e.clientY - lastY;
+        lastX = e.clientX; lastY = e.clientY;
+        // Drag distance scaled so one screen-height ≈ one vertical FOV.
+        const radPerPx = THREE.MathUtils.degToRad(camera.fov) / innerHeight;
+        const { azimuth, altitude } = viewer.getAzAlt();
+        viewer.setAzAlt(azimuth + dx * radPerPx, altitude + dy * radPerPx);
+        onChange();
+        break;
       }
-    } else if (mode === 'resize' && resizeInitial) {
-      const selected = overlays.getSelected();
-      if (!selected) return;
-      const center = projectToScreen(selected.position);
-      const dx = e.clientX - center.x, dy = e.clientY - center.y;
-      const dist = Math.hypot(dx, dy);
-      overlays.resizeSelectedTo(resizeInitial.sizeRad * (dist / resizeInitial.dist));
-      onChange();
-    } else if (mode === 'poi-drag' && draggingPOI) {
-      ndcFromEvent(e);
-      raycaster.setFromCamera(ndc, camera);
-      // Re-raycast against the POI's parent overlay body to recompute UV.
-      const parentOverlay = (draggingPOI.userData as POIUserData).parentOverlay;
-      const body = (parentOverlay.userData as OverlayUserData).body;
-      const hit = raycaster.intersectObject(body)[0];
-      if (hit && hit.uv) {
-        overlays.movePOI(draggingPOI, hit.uv.x, hit.uv.y);
-        viewer.requestRender();
+      case 'move': {
+        ndcFromEvent(e);
+        raycaster.setFromCamera(ndc, camera);
+        if (raycaster.ray.intersectSphere(overlays.overlaySphere, movePoint)) {
+          overlays.moveSelectedTo(movePoint);
+          // Mutation is inside the drag batch, so onMutate (which would normally
+          // request a render) is queued. Request the render directly instead.
+          viewer.requestRender();
+        }
+        break;
+      }
+      case 'resize': {
+        const selected = overlays.getSelected();
+        if (!selected) return;
+        const center = projectToScreen(selected.position);
+        const dx = e.clientX - center.x, dy = e.clientY - center.y;
+        const dist = Math.hypot(dx, dy);
+        overlays.resizeSelectedTo(mode.sizeRad * (dist / mode.dist));
+        onChange();
+        break;
+      }
+      case 'poi-drag': {
+        ndcFromEvent(e);
+        raycaster.setFromCamera(ndc, camera);
+        // Re-raycast against the POI's parent overlay body to recompute UV.
+        const body = overlayData(poiData(mode.poi).parentOverlay).body;
+        const hit = raycaster.intersectObject(body)[0];
+        if (hit && hit.uv) {
+          overlays.movePOI(mode.poi, hit.uv.x, hit.uv.y);
+          viewer.requestRender();
+        }
+        break;
       }
     }
   });

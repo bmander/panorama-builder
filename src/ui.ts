@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { TOOL_MOVE, TOOL_POI, type InputController, type Tool } from './input.js';
+import { getElement } from './types.js';
 import type { AzAltSnapshot } from './types.js';
 import type { Baker } from './bake.js';
 import type { MapView } from './map.js';
@@ -13,7 +14,7 @@ export interface Hud {
 const deg = (r: number): string => THREE.MathUtils.radToDeg(r).toFixed(1);
 
 export function createHud(getSnapshot: () => AzAltSnapshot): Hud {
-  const el = document.getElementById('hud')!;
+  const el = getElement('hud');
   function refresh(): void {
     const s = getSnapshot();
     let text = `azimuth ${deg(s.azimuth)}°  altitude ${deg(s.altitude)}°  fov ${s.fov.toFixed(1)}°`;
@@ -34,13 +35,13 @@ export function attachViewTabs({ baker, viewer, hud, mapView }: {
   hud: Hud;
   mapView: MapView;
 }): void {
-  const flatCanvas = document.getElementById('flat') as HTMLCanvasElement;
-  const flatWrap = document.getElementById('flat-wrap')!;
-  const mapWrap = document.getElementById('map-wrap')!;
+  const flatCanvas = getElement<HTMLCanvasElement>('flat');
+  const flatWrap = getElement('flat-wrap');
+  const mapWrap = getElement('map-wrap');
   const tabs: Record<ViewMode, HTMLElement> = {
-    '360': document.getElementById('tab-360')!,
-    flat: document.getElementById('tab-flat')!,
-    map: document.getElementById('tab-map')!,
+    '360': getElement('tab-360'),
+    flat: getElement('tab-flat'),
+    map: getElement('tab-map'),
   };
 
   function setMode(mode: ViewMode): void {
@@ -60,8 +61,8 @@ export function attachViewTabs({ baker, viewer, hud, mapView }: {
 
 export function attachToolPalette({ input }: { input: InputController }): void {
   const buttons: Record<Tool, HTMLElement> = {
-    [TOOL_MOVE]: document.getElementById('tool-move')!,
-    [TOOL_POI]: document.getElementById('tool-poi')!,
+    [TOOL_MOVE]: getElement('tool-move'),
+    [TOOL_POI]: getElement('tool-poi'),
   };
   function refresh(): void {
     const cur = input.getTool();
@@ -75,7 +76,7 @@ export function attachToolPalette({ input }: { input: InputController }): void {
 }
 
 export function attachDownload({ baker }: { baker: Baker }): void {
-  document.getElementById('download')!.addEventListener('click', () => {
+  getElement('download').addEventListener('click', () => {
     const baked = baker.bake(8192);
     const c = document.createElement('canvas');
     baker.paintToCanvas(c, baked);
