@@ -5,9 +5,9 @@ import { createBaker } from './bake.js';
 import { attachInput } from './input.js';
 import { createHud, attachViewTabs, attachDownload, attachToolPalette } from './ui.js';
 import { createMapView } from './map.js';
-import { solvePose, autoFreeParams } from './solver.js';
+import { solveJointPose, autoLocalFreeParams } from './solver.js';
 import { getElement, overlayData, poiData } from './types.js';
-import type { LatLng, SolverParam } from './types.js';
+import type { JointPhoto, LatLng, SolverParam } from './types.js';
 import { openStore } from './persistence.js';
 import type { AppSnapshot, Store } from './persistence.js';
 
@@ -88,24 +88,27 @@ lockCameraEl.addEventListener('change', () => {
   save();
 });
 
-// Run the photo-pose solver for every overlay that has anchored POIs. The solver
-// adjusts each photo's pose (and, with ≥3 anchors, the shared camera location) so
-// each anchored POI's projected ray matches the bearing/depression to its anchor.
+// Run the joint photo-pose solver across every overlay with anchored POIs.
+// All photos share one camera location, so POIs from every photo contribute
+// evidence to it; each photo's photoAz/sizeRad is local. The solver decides
+// whether the camera is solvable (enough spare equations) and whether the
+// user has locked it.
 function solveAllPhotos(): void {
   const camLoc = mapView.getLocation();
   if (!camLoc) return;
-  // Holder object so the closure can record a value TS will see post-call.
-  // (TS doesn't narrow `let` mutations through callbacks; a wrapper does.)
-  const proposed: { camLoc: LatLng | null } = { camLoc: null };
-  overlays.withBatch(() => {
-    for (const photo of overlays.listOverlays() as THREE.Group[]) {
-      const anchored = (overlayData(photo).pois ?? []).filter(
-        p => poiData(p).mapAnchor,
-      );
-      if (anchored.length === 0) continue;
-      const pose = overlays.extractPose(photo, camLoc);
-      const result = solvePose({
-        pose,
+
+  interface PhotoEntry {
+    overlay: THREE.Group;
+    photo: JointPhoto;
+  }
+  const entries: PhotoEntry[] = [];
+  for (const o of overlays.listOverlays() as THREE.Group[]) {
+    const anchored = (overlayData(o).pois ?? []).filter(p => poiData(p).mapAnchor);
+    if (anchored.length === 0) continue;
+    entries.push({
+      overlay: o,
+      photo: {
+        pose: overlays.extractPose(o, camLoc),
         pois: anchored.map(p => {
           const pd = poiData(p);
           const anchor = pd.mapAnchor!;
@@ -114,13 +117,31 @@ function solveAllPhotos(): void {
             anchorLat: anchor.lat, anchorLng: anchor.lng,
           };
         }),
-        free: autoFreeParams(anchored.length).filter(p => !lockedParams.has(p)),
-      });
-      overlays.applyPose(photo, result.pose);
-      if (result.cameraMoved) {
-        proposed.camLoc = { lat: result.pose.camLat, lng: result.pose.camLng };
-      }
-    }
+        free: autoLocalFreeParams(anchored.length),
+      },
+    });
+  }
+  if (entries.length === 0) return;
+
+  // Solve camera only if not locked AND there are enough spare POIs after the
+  // local unknowns are accounted for. Camera has 2 DOF (camLat, camLng), so
+  // we need at least 2 more POIs than the sum of per-photo free params.
+  const totalPois = entries.reduce((s, e) => s + e.photo.pois.length, 0);
+  const localUnknowns = entries.reduce((s, e) => s + e.photo.free.length, 0);
+  const cameraLocked = lockedParams.has('camLat') || lockedParams.has('camLng');
+  const solveCamera = !cameraLocked && totalPois >= localUnknowns + 2;
+
+  // Holder object so the closure can record a value TS will see post-call.
+  // (TS doesn't narrow `let` mutations through callbacks; a wrapper does.)
+  const proposed: { camLoc: LatLng | null } = { camLoc: null };
+  overlays.withBatch(() => {
+    const result = solveJointPose({
+      camLoc,
+      photos: entries.map(e => e.photo),
+      solveCamera,
+    });
+    entries.forEach((e, i) => { overlays.applyPose(e.overlay, result.photos[i]!.pose); });
+    if (result.cameraMoved) proposed.camLoc = result.camLoc;
   });
   // Apply camera move outside the batch so the map's marker updates after pose writes settle.
   if (proposed.camLoc) mapView.setLocation(proposed.camLoc);
