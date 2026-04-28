@@ -1,11 +1,35 @@
 import * as THREE from 'three';
-import { PITCH_LIMIT, FOV_MIN, FOV_MAX } from './viewer.js';
+import { FOV_MIN, FOV_MAX } from './viewer.js';
+import type { Viewer } from './viewer.js';
 import { ROLE_BODY, ROLE_HANDLE, ROLE_POI, dirFromAzAlt } from './overlay.js';
+import type { OverlayManager } from './overlay.js';
+import type { OverlayUserData, POIUserData, RoleUserData } from './types.js';
 
-export const TOOL_MOVE = 'move';
-export const TOOL_POI = 'poi';
+export const TOOL_MOVE = 'move' as const;
+export const TOOL_POI = 'poi' as const;
 
-export function attachInput({ viewer, overlays, onChange }) {
+export type Tool = typeof TOOL_MOVE | typeof TOOL_POI;
+
+type Mode = 'pan' | 'move' | 'resize' | 'poi-drag' | null;
+
+interface ResizeInitial {
+  dist: number;
+  sizeRad: number;
+}
+
+export interface InputController {
+  setTool(newTool: Tool): void;
+  getTool(): Tool;
+  onToolChange(cb: (tool: Tool) => void): void;
+}
+
+export interface AttachInputOptions {
+  viewer: Viewer;
+  overlays: OverlayManager;
+  onChange: () => void;
+}
+
+export function attachInput({ viewer, overlays, onChange }: AttachInputOptions): InputController {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -15,26 +39,26 @@ export function attachInput({ viewer, overlays, onChange }) {
   const movePoint = new THREE.Vector3();
   const loader = new THREE.TextureLoader();
 
-  function ndcFromEvent(e) {
+  function ndcFromEvent(e: { clientX: number; clientY: number }): void {
     ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
   }
-  function projectToScreen(worldPos) {
+  function projectToScreen(worldPos: THREE.Vector3): { x: number; y: number } {
     tmpVec3.copy(worldPos).project(camera);
     return { x: (tmpVec3.x + 1) * 0.5 * innerWidth, y: (1 - tmpVec3.y) * 0.5 * innerHeight };
   }
-  function raycastOverlays() {
+  function raycastOverlays(): THREE.Intersection[] {
     return raycaster.intersectObjects(overlaysGroup.children, true)
-      .filter(h => h.object.userData.role);
+      .filter(h => (h.object.userData as RoleUserData).role);
   }
 
-  let tool = TOOL_MOVE;
-  let mode = null;          // 'pan' | 'move' | 'resize' | 'poi-drag' | null
+  let tool: Tool = TOOL_MOVE;
+  let mode: Mode = null;
   let lastX = 0, lastY = 0;
-  let resizeInitial = null;
-  let draggingPOI = null;
-  let toolChangeCb = null;
+  let resizeInitial: ResizeInitial | null = null;
+  let draggingPOI: THREE.Mesh | null = null;
+  let toolChangeCb: ((tool: Tool) => void) | null = null;
 
-  function setTool(newTool) {
+  function setTool(newTool: Tool): void {
     if (tool === newTool) return;
     tool = newTool;
     canvas.classList.toggle('tool-poi', tool === TOOL_POI);
@@ -42,10 +66,10 @@ export function attachInput({ viewer, overlays, onChange }) {
   }
 
   let batchOpen = false;
-  function openBatch() { if (!batchOpen) { overlays.beginBatch(); batchOpen = true; } }
-  function closeBatch() { if (batchOpen) { batchOpen = false; overlays.endBatch(); } }
+  function openBatch(): void { if (!batchOpen) { overlays.beginBatch(); batchOpen = true; } }
+  function closeBatch(): void { if (batchOpen) { batchOpen = false; overlays.endBatch(); } }
 
-  canvas.addEventListener('pointerdown', e => {
+  canvas.addEventListener('pointerdown', (e: PointerEvent) => {
     ndcFromEvent(e);
     raycaster.setFromCamera(ndc, camera);
     const hits = raycastOverlays();
@@ -55,15 +79,16 @@ export function attachInput({ viewer, overlays, onChange }) {
     openBatch();
 
     if (tool === TOOL_POI) {
-      const poiHit = hits.find(h => h.object.userData.role === ROLE_POI);
-      const bodyHit = hits.find(h => h.object.userData.role === ROLE_BODY);
+      const poiHit = hits.find(h => (h.object.userData as RoleUserData).role === ROLE_POI);
+      const bodyHit = hits.find(h => (h.object.userData as RoleUserData).role === ROLE_BODY);
       if (poiHit) {
-        overlays.setSelectedPOI(poiHit.object);
-        draggingPOI = poiHit.object;
+        const poiMesh = poiHit.object as THREE.Mesh;
+        overlays.setSelectedPOI(poiMesh);
+        draggingPOI = poiMesh;
         mode = 'poi-drag';
         viewer.requestRender();
-      } else if (bodyHit) {
-        const o = bodyHit.object.parent;
+      } else if (bodyHit && bodyHit.uv) {
+        const o = bodyHit.object.parent as THREE.Group;
         const poi = overlays.addPOI(o, bodyHit.uv.x, bodyHit.uv.y);
         draggingPOI = poi;
         mode = 'poi-drag';
@@ -73,16 +98,17 @@ export function attachInput({ viewer, overlays, onChange }) {
         viewer.requestRender();
       }
     } else {
-      const handleHit = hits.find(h => h.object.userData.role === ROLE_HANDLE);
-      const bodyHit = hits.find(h => h.object.userData.role === ROLE_BODY);
+      const handleHit = hits.find(h => (h.object.userData as RoleUserData).role === ROLE_HANDLE);
+      const bodyHit = hits.find(h => (h.object.userData as RoleUserData).role === ROLE_BODY);
       const selected = overlays.getSelected();
-      if (handleHit && handleHit.object.parent === selected) {
+      if (handleHit && selected && handleHit.object.parent === selected) {
         mode = 'resize';
         const center = projectToScreen(selected.position);
         const dx = e.clientX - center.x, dy = e.clientY - center.y;
-        resizeInitial = { dist: Math.hypot(dx, dy) || 1, sizeRad: selected.userData.sizeRad };
+        const sizeRad = (selected.userData as OverlayUserData).sizeRad;
+        resizeInitial = { dist: Math.hypot(dx, dy) || 1, sizeRad };
       } else if (bodyHit) {
-        const o = bodyHit.object.parent;
+        const o = bodyHit.object.parent as THREE.Group;
         if (selected !== o) { overlays.setSelected(o); onChange(); }
         mode = 'move';
       } else {
@@ -94,7 +120,7 @@ export function attachInput({ viewer, overlays, onChange }) {
     canvas.setPointerCapture(e.pointerId);
   });
 
-  const endDrag = () => {
+  const endDrag = (): void => {
     mode = null; resizeInitial = null; draggingPOI = null;
     closeBatch();
   };
@@ -102,7 +128,7 @@ export function attachInput({ viewer, overlays, onChange }) {
   canvas.addEventListener('pointercancel', endDrag);
   canvas.addEventListener('lostpointercapture', endDrag);
 
-  canvas.addEventListener('pointermove', e => {
+  canvas.addEventListener('pointermove', (e: PointerEvent) => {
     if (!mode) return;
     if (mode === 'pan') {
       const dx = e.clientX - lastX, dy = e.clientY - lastY;
@@ -133,16 +159,17 @@ export function attachInput({ viewer, overlays, onChange }) {
       ndcFromEvent(e);
       raycaster.setFromCamera(ndc, camera);
       // Re-raycast against the POI's parent overlay body to recompute UV.
-      const body = draggingPOI.userData.parentOverlay.userData.body;
+      const parentOverlay = (draggingPOI.userData as POIUserData).parentOverlay;
+      const body = (parentOverlay.userData as OverlayUserData).body;
       const hit = raycaster.intersectObject(body)[0];
-      if (hit) {
+      if (hit && hit.uv) {
         overlays.movePOI(draggingPOI, hit.uv.x, hit.uv.y);
         viewer.requestRender();
       }
     }
   });
 
-  canvas.addEventListener('wheel', e => {
+  canvas.addEventListener('wheel', (e: WheelEvent) => {
     e.preventDefault();
     // Normalize deltaY to pixels: Firefox mouse wheels report LINE (≈ ±3); Chrome PIXEL (≈ ±100).
     const pxDelta = e.deltaMode === 1 ? e.deltaY * 30 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
@@ -151,7 +178,7 @@ export function attachInput({ viewer, overlays, onChange }) {
     onChange();
   }, { passive: false });
 
-  addEventListener('keydown', e => {
+  addEventListener('keydown', (e: KeyboardEvent) => {
     if (e.key === 'Backspace' || e.key === 'Delete') {
       if (tool === TOOL_POI && overlays.getSelectedPOI()) {
         overlays.deleteSelectedPOI();
@@ -165,14 +192,17 @@ export function attachInput({ viewer, overlays, onChange }) {
     }
   });
 
-  addEventListener('dragover', e => e.preventDefault());
-  addEventListener('drop', e => {
+  addEventListener('dragover', (e: DragEvent) => e.preventDefault());
+  addEventListener('drop', (e: DragEvent) => {
     e.preventDefault();
+    if (!e.dataTransfer) return;
     for (const file of e.dataTransfer.files) {
       if (!file.type.startsWith('image/')) continue;
       const url = URL.createObjectURL(file);
       loader.load(url, tex => {
-        const aspect = tex.image.naturalWidth / tex.image.naturalHeight;
+        const img = tex.image as HTMLImageElement | undefined;
+        if (!img) return;
+        const aspect = img.naturalWidth / img.naturalHeight;
         const { azimuth, altitude } = viewer.getAzAlt();
         overlays.addOverlay(tex, aspect, dirFromAzAlt(azimuth, altitude));
         onChange();
@@ -183,6 +213,6 @@ export function attachInput({ viewer, overlays, onChange }) {
 
   return {
     setTool, getTool: () => tool,
-    onToolChange(cb) { toolChangeCb = cb; },
+    onToolChange(cb: (tool: Tool) => void): void { toolChangeCb = cb; },
   };
 }
