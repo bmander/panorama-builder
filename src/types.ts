@@ -128,7 +128,10 @@ export const getRole = (o: THREE.Object3D): Role | undefined =>
 
 // Look up an element by id; throw with a clear message if it's missing.
 // Replaces the `document.getElementById('id')!` pattern with a single
-// failure mode that names the missing id.
+// failure mode that names the missing id. The generic is for the
+// caller's convenience (e.g. `getElement<HTMLCanvasElement>('flat')`)
+// rather than narrowing — the function just casts.
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
 export const getElement = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Missing required element #${id}`);

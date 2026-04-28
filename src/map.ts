@@ -81,7 +81,7 @@ export function createMapView({
   const coneLayers: L.Polygon[] = [];
   let pois: POIBearing[] = [];
   const poiLayers: L.Polyline[] = [];
-  const anchorMarkers: Map<THREE.Mesh, L.Marker> = new Map();
+  const anchorMarkers = new Map<THREE.Mesh, L.Marker>();
   let visible = false;
 
   const CONE_STYLE: L.PolylineOptions = { color: '#ffd84a', weight: 1, fillColor: '#ffd84a', fillOpacity: 0.18 };
@@ -160,7 +160,7 @@ export function createMapView({
 
   function redrawAnchors(): void {
     if (!visible) return;
-    const wanted: Map<THREE.Mesh, LatLng> = new Map();
+    const wanted = new Map<THREE.Mesh, LatLng>();
     for (const p of pois) {
       if (p.mapAnchor) wanted.set(p.handle, p.mapAnchor);
     }

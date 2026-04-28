@@ -55,7 +55,7 @@ export function attachViewTabs({ baker, viewer, hud, mapView }: {
     else mapView.onHide();
   }
 
-  for (const [mode, btn] of Object.entries(tabs)) btn.addEventListener('click', () => setMode(mode as ViewMode));
+  for (const [mode, btn] of Object.entries(tabs)) btn.addEventListener('click', () => { setMode(mode as ViewMode); });
   setMode('360');
 }
 
@@ -69,7 +69,7 @@ export function attachToolPalette({ input }: { input: InputController }): void {
     for (const [name, btn] of Object.entries(buttons)) btn.classList.toggle('active', name === cur);
   }
   for (const [name, btn] of Object.entries(buttons)) {
-    btn.addEventListener('click', () => input.setTool(name as Tool));
+    btn.addEventListener('click', () => { input.setTool(name as Tool); });
   }
   input.onToolChange(refresh);
   refresh();
@@ -86,7 +86,7 @@ export function attachDownload({ baker }: { baker: Baker }): void {
       a.href = URL.createObjectURL(blob);
       a.download = 'panorama-composite.png';
       a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      setTimeout(() => { URL.revokeObjectURL(a.href); }, 1000);
     });
   });
 }

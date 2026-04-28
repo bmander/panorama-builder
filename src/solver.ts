@@ -134,7 +134,7 @@ function targetBearingFor(
 const wrapPI = (a: number): number => ((a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
 
 function residuals(pose: Pose, pois: POIProjection[]): number[] {
-  const r: number[] = new Array(pois.length);
+  const r = new Array<number>(pois.length);
   for (let i = 0; i < pois.length; i++) {
     const poi = pois[i]!;
     const img = projectPOI(pose, poi.u, poi.v);
@@ -168,7 +168,7 @@ function solveLinear(A: number[][], b: number[]): number[] | null {
       b[r] = b[r]! - f * b[i]!;
     }
   }
-  const x: number[] = new Array(n);
+  const x = new Array<number>(n);
   for (let i = n - 1; i >= 0; i--) {
     const Ai = A[i]!;
     let s = b[i]!;
@@ -184,7 +184,7 @@ export function solvePose(options: {
   free: SolverParam[];
 }): SolveResult {
   const { pose, pois, free } = options;
-  if (!pois || pois.length === 0 || !free || free.length === 0) {
+  if (pois.length === 0 || free.length === 0) {
     return { pose: { ...pose }, residualRMS: 0, iterations: 0, cameraMoved: false };
   }
   const x: WorkingPose = { ...pose };
@@ -198,7 +198,7 @@ export function solvePose(options: {
 
     // Numerical Jacobian: J[i][k] = ∂r_i/∂x_k via central difference.
     const m = r.length, k = free.length;
-    const J: number[][] = Array.from({ length: m }, () => new Array(k).fill(0));
+    const J: number[][] = Array.from({ length: m }, () => new Array<number>(k).fill(0));
     for (let kk = 0; kk < k; kk++) {
       const name = free[kk]!;
       const orig = x[name];
@@ -212,8 +212,8 @@ export function solvePose(options: {
 
     // Normal equations: (JᵀJ + λI) Δx = -Jᵀ r. Tiny LM damping for stability.
     const lambda = 1e-6;
-    const JtJ: number[][] = Array.from({ length: k }, () => new Array(k).fill(0));
-    const Jtr: number[] = new Array(k).fill(0);
+    const JtJ: number[][] = Array.from({ length: k }, () => new Array<number>(k).fill(0));
+    const Jtr = new Array<number>(k).fill(0);
     for (let kk = 0; kk < k; kk++) {
       for (let jj = 0; jj < k; jj++) {
         let s = 0;

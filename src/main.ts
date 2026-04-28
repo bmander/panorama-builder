@@ -42,7 +42,7 @@ function refreshMapAnnotations(): void {
 const baker = createBaker({
   renderer: viewer.renderer,
   scene: viewer.scene,
-  setVisualsVisible: overlays.setVisualsVisible,
+  setVisualsVisible: visible => { overlays.setVisualsVisible(visible); },
 });
 
 const hud = createHud(() => {
@@ -86,7 +86,9 @@ lockCameraEl.addEventListener('change', () => {
 function solveAllPhotos(): void {
   const camLoc = mapView.getLocation();
   if (!camLoc) return;
-  let proposedCamLoc: LatLng | null = null;
+  // Holder object so the closure can record a value TS will see post-call.
+  // (TS doesn't narrow `let` mutations through callbacks; a wrapper does.)
+  const proposed: { camLoc: LatLng | null } = { camLoc: null };
   overlays.withBatch(() => {
     for (const photo of overlays.listOverlays() as THREE.Group[]) {
       const anchored = (overlayData(photo).pois ?? []).filter(
@@ -107,18 +109,20 @@ function solveAllPhotos(): void {
         free: autoFreeParams(anchored.length).filter(p => !lockedParams.has(p)),
       });
       overlays.applyPose(photo, result.pose);
-      if (result.cameraMoved) proposedCamLoc = { lat: result.pose.camLat, lng: result.pose.camLng };
+      if (result.cameraMoved) {
+        proposed.camLoc = { lat: result.pose.camLat, lng: result.pose.camLng };
+      }
     }
   });
   // Apply camera move outside the batch so the map's marker updates after pose writes settle.
-  if (proposedCamLoc) mapView.setLocation(proposedCamLoc);
+  if (proposed.camLoc) mapView.setLocation(proposed.camLoc);
 }
 
 const mapView = createMapView({
   container: getElement('map'),
   // Force a refresh when the map tab becomes visible — onMutate skips the
   // refresh while the map is hidden, so the caches may be stale here.
-  onShowRefresh: () => refreshMapAnnotations(),
+  onShowRefresh: () => { refreshMapAnnotations(); },
   onLocationChange: loc => {
     coordsEl.textContent = `lat ${loc.lat.toFixed(5)}  lng ${loc.lng.toFixed(5)}`;
     runSolve();

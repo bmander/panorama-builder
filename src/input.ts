@@ -86,7 +86,7 @@ export function attachInput({ viewer, overlays, onChange }: AttachInputOptions):
         overlays.setSelectedPOI(poiMesh);
         mode = { type: 'poi-drag', poi: poiMesh };
         viewer.requestRender();
-      } else if (bodyHit && bodyHit.uv) {
+      } else if (bodyHit?.uv) {
         const o = bodyHit.object.parent as THREE.Group;
         const poi = overlays.addPOI(o, bodyHit.uv.x, bodyHit.uv.y);
         mode = { type: 'poi-drag', poi };
@@ -168,7 +168,7 @@ export function attachInput({ viewer, overlays, onChange }: AttachInputOptions):
         // Re-raycast against the POI's parent overlay body to recompute UV.
         const body = overlayData(poiData(mode.poi).parentOverlay).body;
         const hit = raycaster.intersectObject(body)[0];
-        if (hit && hit.uv) {
+        if (hit?.uv) {
           overlays.movePOI(mode.poi, hit.uv.x, hit.uv.y);
           viewer.requestRender();
         }
@@ -200,7 +200,7 @@ export function attachInput({ viewer, overlays, onChange }: AttachInputOptions):
     }
   });
 
-  addEventListener('dragover', (e: DragEvent) => e.preventDefault());
+  addEventListener('dragover', (e: DragEvent) => { e.preventDefault(); });
   addEventListener('drop', (e: DragEvent) => {
     e.preventDefault();
     if (!e.dataTransfer) return;
