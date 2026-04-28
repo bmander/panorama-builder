@@ -4,11 +4,23 @@ export const PITCH_LIMIT = Math.PI / 2 - 0.01;
 export const FOV_MIN = 15;
 export const FOV_MAX = 100;
 
-function makeGridTexture() {
+export interface Viewer {
+  renderer: THREE.WebGLRenderer;
+  scene: THREE.Scene;
+  camera: THREE.PerspectiveCamera;
+  overlaysGroup: THREE.Group;
+  requestRender(): void;
+  getAzAlt(): { azimuth: number; altitude: number };
+  setAzAlt(az: number, alt: number): void;
+  setCanvasVisible(visible: boolean): void;
+  start(): void;
+}
+
+function makeGridTexture(): HTMLCanvasElement {
   const W = 2048, H = 1024;
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d')!;
   ctx.fillStyle = '#1a1a1a';
   ctx.fillRect(0, 0, W, H);
   // Minor lines every 15°.
@@ -39,7 +51,7 @@ function makeGridTexture() {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const yLabel = (90 - (-75)) / 180 * H;
-  for (const [label, u] of [['N', 0.25], ['E', 0.5], ['S', 0.75], ['W', 0]]) {
+  for (const [label, u] of [['N', 0.25], ['E', 0.5], ['S', 0.75], ['W', 0]] as const) {
     ctx.fillText(label, u * W, yLabel);
   }
   ctx.fillText('W', W, yLabel); // wraparound copy so W at u=0 isn't half-clipped
@@ -47,7 +59,7 @@ function makeGridTexture() {
   return canvas;
 }
 
-export function createViewer({ container }) {
+export function createViewer({ container }: { container: HTMLElement }): Viewer {
   // preserveDrawingBuffer prevents the WebGL spec's implicit clear after each
   // composite — required so dirty-driven rendering doesn't flash an empty canvas
   // on frames where renderer.render() is skipped.
@@ -83,8 +95,8 @@ export function createViewer({ container }) {
     dirty = true;
   });
 
-  function start() {
-    function frame() {
+  function start(): void {
+    function frame(): void {
       if (dirty && canvasVisible) {
         camera.rotation.y = azimuth;
         camera.rotation.x = altitude;
@@ -104,12 +116,12 @@ export function createViewer({ container }) {
       azAltScratch.altitude = altitude;
       return azAltScratch;
     },
-    setAzAlt(az, alt) {
+    setAzAlt(az: number, alt: number) {
       azimuth = az;
       altitude = THREE.MathUtils.clamp(alt, -PITCH_LIMIT, PITCH_LIMIT);
       dirty = true;
     },
-    setCanvasVisible(visible) {
+    setCanvasVisible(visible: boolean) {
       canvasVisible = visible;
       renderer.domElement.style.display = visible ? 'block' : 'none';
       if (visible) dirty = true;
