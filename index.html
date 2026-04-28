@@ -9,9 +9,16 @@
     canvas:active { cursor: grabbing; }
     #hud { position: fixed; top: 8px; left: 10px; color: #fff;
            font: 12px monospace; text-shadow: 0 0 3px #000; }
+    #flat { position: fixed; inset: 0; width: 100%; height: 100%;
+            object-fit: contain; background: #000; display: none; }
+    #toggle { position: fixed; top: 8px; right: 8px; padding: 6px 10px;
+              background: rgba(0,0,0,0.5); color: #fff; border: 1px solid #fff;
+              font: 12px monospace; cursor: pointer; }
   </style>
 </head>
 <body>
+  <img id="flat" src="panorama.png" alt="">
+  <button id="toggle">flat view</button>
   <div id="hud"></div>
   <script type="importmap">
     { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
@@ -81,6 +88,17 @@
       camera.updateProjectionMatrix();
       renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
       renderer.setSize(innerWidth, innerHeight);
+    });
+
+    const flat = document.getElementById('flat');
+    const toggle = document.getElementById('toggle');
+    let showingFlat = false;
+    toggle.addEventListener('click', () => {
+      showingFlat = !showingFlat;
+      flat.style.display = showingFlat ? 'block' : 'none';
+      renderer.domElement.style.display = showingFlat ? 'none' : 'block';
+      hud.style.display = showingFlat ? 'none' : 'block';
+      toggle.textContent = showingFlat ? '360° view' : 'flat view';
     });
 
     function frame() {
