@@ -5,6 +5,8 @@ import { attachInput } from './input.js';
 import { createHud, attachViewTabs, attachDownload, attachToolPalette } from './ui.js';
 import { createMapView } from './map.js';
 import { solvePose, autoFreeParams } from './solver.js';
+import type * as THREE from 'three';
+import type { LatLng, OverlayUserData, POIUserData } from './types.js';
 
 const viewer = createViewer({ container: document.body });
 
@@ -25,7 +27,7 @@ const overlays = createOverlayManager({
   },
 });
 
-function refreshMapAnnotations() {
+function refreshMapAnnotations(): void {
   mapView.setOverlayCones(overlays.getCones());
   mapView.setPOIBearings(overlays.getPOIs());
 }
@@ -42,31 +44,37 @@ const hud = createHud(() => {
   return {
     azimuth, altitude,
     fov: viewer.camera.fov,
-    selectedSizeRad: sel ? sel.userData.sizeRad : null,
+    selectedSizeRad: sel ? (sel.userData as OverlayUserData).sizeRad : null,
   };
 });
 
-const coordsEl = document.getElementById('map-coords');
+const coordsEl = document.getElementById('map-coords')!;
 coordsEl.textContent = 'no location set — click map to set';
 
 // Run the photo-pose solver for every overlay that has anchored POIs. The solver
 // adjusts each photo's pose (and, with ≥3 anchors, the shared camera location) so
 // each anchored POI's projected ray matches the bearing/depression to its anchor.
-function solveAllPhotos() {
+function solveAllPhotos(): void {
   const camLoc = mapView.getLocation();
   if (!camLoc) return;
-  let proposedCamLoc = null;
+  let proposedCamLoc: LatLng | null = null;
   overlays.withBatch(() => {
-    for (const photo of overlays.listOverlays()) {
-      const anchored = (photo.userData.pois || []).filter(p => p.userData.mapAnchor);
+    for (const photo of overlays.listOverlays() as THREE.Group[]) {
+      const anchored = ((photo.userData as OverlayUserData).pois ?? []).filter(
+        p => (p.userData as POIUserData).mapAnchor,
+      );
       if (anchored.length === 0) continue;
       const pose = overlays.extractPose(photo, camLoc);
       const result = solvePose({
         pose,
-        pois: anchored.map(p => ({
-          u: p.userData.uv.u, v: p.userData.uv.v,
-          anchorLat: p.userData.mapAnchor.lat, anchorLng: p.userData.mapAnchor.lng,
-        })),
+        pois: anchored.map(p => {
+          const pd = p.userData as POIUserData;
+          const anchor = pd.mapAnchor!;
+          return {
+            u: pd.uv.u, v: pd.uv.v,
+            anchorLat: anchor.lat, anchorLng: anchor.lng,
+          };
+        }),
         free: autoFreeParams(anchored.length),
       });
       overlays.applyPose(photo, result.pose);
@@ -78,7 +86,7 @@ function solveAllPhotos() {
 }
 
 const mapView = createMapView({
-  container: document.getElementById('map'),
+  container: document.getElementById('map')!,
   // Force a refresh when the map tab becomes visible — onMutate skips the
   // refresh while the map is hidden, so the caches may be stale here.
   onShowRefresh: () => refreshMapAnnotations(),
