@@ -1,10 +1,11 @@
-// DEM-driven terrain ghost for the 360° viewer.
+// DEM-driven terrain reference for the 360° viewer.
 //
 // Fetches AWS Open Data Terrain Tiles (Terrarium PNG encoding) around a camera
 // location, decodes elevations, builds a Three.js mesh in real-world meters
-// centered on the camera, and renders it as a wireframe ghost behind the photo
-// overlays. Used as a manual-alignment aid; future passes can layer
-// auto-matching on top.
+// centered on the camera, and renders it in one of three modes:
+//   - 'off'       — no mesh
+//   - 'wireframe' — translucent blue wireframe (alignment ghost)
+//   - 'shaded'    — opaque surface lit by a directional sun
 //
 // Tile source: https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png
 // Encoding:    elevation_meters = R * 256 + G + B / 256 - 32768
@@ -20,16 +21,25 @@ import {
   tileXToLng,
   tileYToLat,
 } from './dem.js';
+import { sunDirection } from './solar.js';
 
 const ZOOM = 11;
 const RADIUS_TILES = 2;             // 5×5 = (2*R+1)^2 tiles around centre
 const SAMPLE_STRIDE = 2;             // every other DEM pixel → ~110 m spacing at zoom 11
-const COLOR = 0x88aaff;
-const OPACITY = 0.35;
+const WIREFRAME_COLOR = 0x88aaff;
+const WIREFRAME_OPACITY = 0.35;
+const SHADED_COLOR = 0xb0a890;
+const DIR_LIGHT_INTENSITY = 1.4;
+const AMBIENT_LIGHT_INTENSITY = 0.35;
+// Far enough that direction is the only thing that matters; lambert ignores
+// magnitude but Three.js still uses the position vector to build the direction.
+const DIR_LIGHT_DISTANCE = 1000;
 
 // Local-tangent-plane approximation: meters per degree latitude is roughly
 // constant (Earth is round); per-degree longitude scales by cos(lat).
 const M_PER_DEG_LAT = 111320;
+
+export type TerrainMode = 'off' | 'wireframe' | 'shaded';
 
 // Sample elevation at fractional pixel coords within a tile (nearest-neighbor).
 function sampleTile(elev: Float32Array, px: number, py: number): number {
@@ -40,9 +50,13 @@ function sampleTile(elev: Float32Array, px: number, py: number): number {
 
 export interface TerrainView {
   setLocation(camLoc: LatLng | null): void;
-  setEnabled(enabled: boolean): void;
+  setMode(mode: TerrainMode): void;
+  getMode(): TerrainMode;
   setBakeVisible(visible: boolean): void;
-  isEnabled(): boolean;
+  // Sun direction for the 'shaded' mode. Azimuth is radians from north
+  // clockwise; altitude is radians above the horizon. Negative altitudes are
+  // accepted (sun below horizon → terrain falls into ambient-only).
+  setSunDirection(az: number, alt: number): void;
   // Camera height above local ground in meters. Implemented as a mesh y-offset
   // (`mesh.position.y = -h`) — the panorama camera stays at the scene origin so
   // photo overlays continue to wrap correctly around it.
@@ -57,13 +71,55 @@ export interface CreateTerrainViewOptions {
   requestRender: () => void;
 }
 
+function makeMaterial(mode: Exclude<TerrainMode, 'off'>): THREE.Material {
+  if (mode === 'wireframe') {
+    return new THREE.MeshBasicMaterial({
+      color: WIREFRAME_COLOR,
+      wireframe: true,
+      transparent: true,
+      opacity: WIREFRAME_OPACITY,
+      depthWrite: false,
+    });
+  }
+  return new THREE.MeshLambertMaterial({
+    color: SHADED_COLOR,
+    side: THREE.DoubleSide,
+  });
+}
+
 export function createTerrainView({ scene, requestRender }: CreateTerrainViewOptions): TerrainView {
-  let enabled = false;
+  let mode: TerrainMode = 'off';
   let bakeHidden = false;
   let location: LatLng | null = null;
   let mesh: THREE.Mesh | null = null;
   let buildId = 0;
   let cameraHeight = 0;
+  let sunAz = Math.PI;       // default: due south
+  let sunAlt = Math.PI / 4;  // default: 45° up
+
+  // Lights are added on first transition out of 'off' and stay in the scene
+  // afterwards. MeshBasicMaterial (wireframe + photo overlays) ignores lights,
+  // so leaving them on permanently is harmless.
+  let dirLight: THREE.DirectionalLight | null = null;
+  let ambientLight: THREE.AmbientLight | null = null;
+
+  function ensureLights(): void {
+    if (dirLight) return;
+    dirLight = new THREE.DirectionalLight(0xffffff, DIR_LIGHT_INTENSITY);
+    ambientLight = new THREE.AmbientLight(0xffffff, AMBIENT_LIGHT_INTENSITY);
+    scene.add(dirLight);
+    scene.add(ambientLight);
+    applySunDirection();
+  }
+
+  function applySunDirection(): void {
+    if (!dirLight) return;
+    const d = sunDirection(sunAz, sunAlt);
+    dirLight.position.set(d.x * DIR_LIGHT_DISTANCE, d.y * DIR_LIGHT_DISTANCE, d.z * DIR_LIGHT_DISTANCE);
+    // Below-horizon: kill direct light so only ambient remains. Otherwise the
+    // sun illuminates the underside of terrain, which looks like moonlight.
+    dirLight.intensity = sunAlt > 0 ? DIR_LIGHT_INTENSITY : 0;
+  }
 
   function applyCameraHeight(): void {
     if (mesh) mesh.position.y = -cameraHeight;
@@ -78,10 +134,19 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
   }
 
   function applyVisibility(): void {
-    if (mesh) mesh.visible = enabled && !bakeHidden;
+    if (mesh) mesh.visible = mode !== 'off' && !bakeHidden;
   }
 
-  async function rebuild(camLoc: LatLng): Promise<void> {
+  // Swap the active mesh's material in place — used when toggling between
+  // wireframe and shaded without regenerating the (expensive) geometry.
+  function swapMaterial(toMode: Exclude<TerrainMode, 'off'>): void {
+    if (!mesh) return;
+    const old = mesh.material as THREE.Material;
+    mesh.material = makeMaterial(toMode);
+    old.dispose();
+  }
+
+  async function rebuild(camLoc: LatLng, buildMode: Exclude<TerrainMode, 'off'>): Promise<void> {
     const myBuildId = ++buildId;
 
     const cxFrac = lngToTileX(camLoc.lng, ZOOM);
@@ -186,15 +251,12 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+    // Normals required for Lambert lighting; cheap enough to always compute so
+    // wireframe→shaded swaps don't need a rebuild.
+    geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
 
-    const material = new THREE.MeshBasicMaterial({
-      color: COLOR,
-      wireframe: true,
-      transparent: true,
-      opacity: OPACITY,
-      depthWrite: false,
-    });
+    const material = makeMaterial(buildMode);
 
     if (myBuildId !== buildId) {
       geometry.dispose();
@@ -205,6 +267,9 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
     disposeMesh();
     mesh = new THREE.Mesh(geometry, material);
     mesh.frustumCulled = false; // bounding sphere is huge; we always want it on screen
+    // Always draw before photo overlays (which use depthTest:false to stay on
+    // top regardless of whether they physically intersect terrain).
+    mesh.renderOrder = -1;
     applyVisibility();
     applyCameraHeight();
     scene.add(mesh);
@@ -212,12 +277,12 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
   }
 
   function maybeRebuild(): void {
-    if (!enabled || !location) {
+    if (mode === 'off' || !location) {
       disposeMesh();
       requestRender();
       return;
     }
-    void rebuild(location);
+    void rebuild(location, mode);
   }
 
   return {
@@ -225,16 +290,33 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       location = camLoc;
       maybeRebuild();
     },
-    setEnabled(value) {
-      if (enabled === value) return;
-      enabled = value;
-      maybeRebuild();
+    setMode(value) {
+      if (mode === value) return;
+      const prev = mode;
+      mode = value;
+      if (value !== 'off') ensureLights();
+      // Wireframe↔shaded with a live mesh: just swap material, keep geometry.
+      // Anything involving 'off' (or starting from no mesh) goes through rebuild.
+      if (mesh && prev !== 'off' && value !== 'off') {
+        swapMaterial(value);
+        applyVisibility();
+        requestRender();
+      } else {
+        maybeRebuild();
+      }
     },
+    getMode: () => mode,
     setBakeVisible(visible) {
       bakeHidden = !visible;
       applyVisibility();
     },
-    isEnabled: () => enabled,
+    setSunDirection(az, alt) {
+      if (sunAz === az && sunAlt === alt) return;
+      sunAz = az;
+      sunAlt = alt;
+      applySunDirection();
+      if (mode === 'shaded') requestRender();
+    },
     setCameraHeight(meters) {
       if (cameraHeight === meters) return false;
       cameraHeight = meters;

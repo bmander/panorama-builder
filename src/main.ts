@@ -11,6 +11,8 @@ import type { JointPhoto, LatLng, SolverParam } from './types.js';
 import { openStore } from './persistence.js';
 import type { AppSnapshot, Store } from './persistence.js';
 import { createTerrainView } from './terrain.js';
+import type { TerrainMode } from './terrain.js';
+import { solarAzAlt } from './solar.js';
 
 // Open IDB before building UI; null on private mode / unsupported.
 const store: Store | null = await openStore();
@@ -82,6 +84,7 @@ coordsEl.textContent = 'no location set — click "Set location"';
 function applyCameraLocation(loc: LatLng): void {
   coordsEl.textContent = `lat ${loc.lat.toFixed(5)}  lng ${loc.lng.toFixed(5)}`;
   terrain.setLocation(loc);
+  refreshSunDirection();
 }
 
 // User-configurable solver locks. When a parameter is locked, autoFreeParams's
@@ -107,9 +110,34 @@ lockCameraEl.addEventListener('change', () => {
   save();
 });
 
-const terrainToggleEl = getElement<HTMLInputElement>('terrain-toggle');
-terrainToggleEl.addEventListener('change', () => {
-  terrain.setEnabled(terrainToggleEl.checked);
+const terrainModeEl = getElement<HTMLSelectElement>('terrain-mode');
+const sunDateTimeEl = getElement<HTMLInputElement>('sun-datetime');
+
+// Default the sun picker to "now" so shaded mode is meaningful immediately.
+sunDateTimeEl.value = formatLocalDateTime(new Date());
+
+function pad2(n: number): string { return String(n).padStart(2, '0'); }
+function formatLocalDateTime(d: Date): string {
+  return `${d.getFullYear().toString()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function refreshSunDirection(): void {
+  const camLoc = mapView.getLocation();
+  if (!camLoc || !sunDateTimeEl.value) return;
+  // <input type="datetime-local"> values have no timezone — Date() parses them
+  // as local civil time, which is what the picker shows.
+  const date = new Date(sunDateTimeEl.value);
+  if (Number.isNaN(date.getTime())) return;
+  const { az, alt } = solarAzAlt(date, camLoc.lat, camLoc.lng);
+  terrain.setSunDirection(az, alt);
+}
+
+terrainModeEl.addEventListener('change', () => {
+  terrain.setMode(terrainModeEl.value as TerrainMode);
+  save();
+});
+sunDateTimeEl.addEventListener('change', () => {
+  refreshSunDirection();
   save();
 });
 
@@ -252,7 +280,8 @@ function getSnapshot(): AppSnapshot {
     tab: viewTabs.getMode(),
     tool: input.getTool(),
     lockCamera: lockCameraEl.checked,
-    terrainEnabled: terrainToggleEl.checked,
+    terrainMode: terrain.getMode(),
+    sunDateTime: sunDateTimeEl.value,
     cameraHeight: terrain.getCameraHeight(),
     overlays: overlaysSnap,
   };
@@ -270,6 +299,9 @@ let restoring = false;
 if (persisted) {
   restoring = true;
   const { snapshot, blobs } = persisted;
+  // Sun datetime restored before camLoc so applyCameraLocation's sun refresh
+  // sees the saved time rather than the default "now".
+  if (snapshot.sunDateTime !== undefined) sunDateTimeEl.value = snapshot.sunDateTime;
   if (snapshot.camLoc) {
     mapView.setLocation(snapshot.camLoc);
     applyCameraLocation(snapshot.camLoc);
@@ -280,10 +312,10 @@ if (persisted) {
   applyCameraLock(snapshot.lockCamera);
   input.setTool(snapshot.tool);
   if (snapshot.cameraHeight !== undefined) terrain.setCameraHeight(snapshot.cameraHeight);
-  if (snapshot.terrainEnabled) {
-    terrainToggleEl.checked = true;
-    terrain.setEnabled(true);
-  }
+  const restoredMode: TerrainMode =
+    snapshot.terrainMode ?? (snapshot.terrainEnabled ? 'wireframe' : 'off');
+  terrainModeEl.value = restoredMode;
+  terrain.setMode(restoredMode);
 
   const loader = new THREE.TextureLoader();
   await Promise.all(snapshot.overlays.map(snap => new Promise<void>(resolve => {

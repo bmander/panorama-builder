@@ -30,9 +30,13 @@ export interface AppSnapshot {
   tab: '360' | 'flat' | 'map';
   tool: 'move' | 'poi';
   lockCamera: boolean;
-  // Optional for backward compat: snapshots written before this field existed
-  // load with terrain off.
+  // Legacy boolean — superseded by terrainMode. Kept readable for back-compat
+  // so old snapshots restore as 'wireframe' if true.
   terrainEnabled?: boolean;
+  terrainMode?: 'off' | 'wireframe' | 'shaded';
+  // ISO datetime string (no timezone — interpreted as local civil time, matching
+  // the <input type="datetime-local"> value format).
+  sunDateTime?: string;
   // Camera height above local ground (terrain feature). Optional for back-compat.
   cameraHeight?: number;
   overlays: OverlaySnapshot[];
