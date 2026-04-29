@@ -9,7 +9,8 @@ import { sunDirection } from './solar.js';
 // outermost terrain ring (~525 km half-width at lat 47.6). Standard depth
 // testing then naturally hides the sun behind any nearer peak.
 const SUN_RADIUS_M = 800_000;
-const SUN_ANGULAR_DIAMETER_RAD = Math.PI / 180; // 1° — larger than reality (~0.5°) but readable
+// Real sun angular diameter averages ~0.53° (varies ±1.7% over the year).
+const SUN_ANGULAR_DIAMETER_RAD = Math.PI / 180 * 0.53;
 const SUN_COLOR = 0xfff2cc;
 
 export interface SunMarker {
