@@ -112,7 +112,10 @@ export function createOverlayManager(
     const o = new THREE.Group();
     const body = new THREE.Mesh(
       new THREE.PlaneGeometry(1, 1),
-      new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide }),
+      // depthTest: false keeps photos in front of terrain regardless of
+      // whether the photo plane physically intersects it. Photo↔photo order
+      // is handled by Three.js's transparent back-to-front sort.
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide, depthTest: false }),
     );
     (body.userData as { role: Role }).role = ROLE_BODY;
     o.add(body);

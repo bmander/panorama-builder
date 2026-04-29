@@ -2,6 +2,7 @@ import * as L from 'leaflet';
 import type * as THREE from 'three';
 import { R_EARTH, bearingFromLocation, viewerAzToBearing, bearingToViewerAz } from './geo.js';
 import type { Cone, LatLng, POIBearing } from './types.js';
+import { TILE_PX, fetchTileElevations, tileYToLat } from './dem.js';
 
 export interface MapView {
   getLocation(): LatLng | null;
@@ -29,6 +30,78 @@ const histLayer = (year: number, opts: L.TileLayerOptions = {}): L.TileLayer => 
   `https://storage.googleapis.com/seatimemap/${year}/{z}/{x}/{y}.png`,
   { minZoom: 12, maxZoom: 20, attribution: HIST_ATTR, ...opts },
 );
+
+// Client-side hillshade rendered from the same Terrarium PNG tiles the 3D
+// terrain mesh uses. Sun NW (azimuth 315°) at 45° elevation — the standard
+// cartographic convention.
+const SUN_AZ_RAD = 315 * Math.PI / 180;
+const SUN_ALT_RAD = 45 * Math.PI / 180;
+const SUN_E = Math.sin(SUN_AZ_RAD) * Math.cos(SUN_ALT_RAD);
+const SUN_N = Math.cos(SUN_AZ_RAD) * Math.cos(SUN_ALT_RAD);
+const SUN_U = Math.sin(SUN_ALT_RAD);
+
+function metersPerWebMercatorPixel(lat: number, z: number): number {
+  return 156543.03 * Math.cos(lat * Math.PI / 180) / 2 ** z;
+}
+
+function renderHillshade(elev: Float32Array, cellSize: number): ImageData {
+  const img = new ImageData(TILE_PX, TILE_PX);
+  for (let y = 0; y < TILE_PX; y++) {
+    for (let x = 0; x < TILE_PX; x++) {
+      const xm = x === 0 ? x : x - 1;
+      const xp = x === TILE_PX - 1 ? x : x + 1;
+      const ym = y === 0 ? y : y - 1;
+      const yp = y === TILE_PX - 1 ? y : y + 1;
+      const dzdE = (elev[y * TILE_PX + xp]! - elev[y * TILE_PX + xm]!) / (2 * cellSize);
+      // Image y increases southward, so dz/dN = −dz/d(image_y).
+      const dzdN = -(elev[yp * TILE_PX + x]! - elev[ym * TILE_PX + x]!) / (2 * cellSize);
+      const nE = -dzdE;
+      const nN = -dzdN;
+      const dot = nE * SUN_E + nN * SUN_N + SUN_U;
+      const norm = Math.sqrt(nE * nE + nN * nN + 1);
+      const shade = Math.max(0, dot / norm);
+      const gray = Math.min(255, Math.round(255 * shade));
+      const o = (y * TILE_PX + x) * 4;
+      img.data[o] = gray;
+      img.data[o + 1] = gray;
+      img.data[o + 2] = gray;
+      img.data[o + 3] = 255;
+    }
+  }
+  return img;
+}
+
+const HillshadeCtor = L.GridLayer.extend({
+  createTile(this: L.GridLayer, coords: L.Coords, done: L.DoneCallback): HTMLElement {
+    const canvas = document.createElement('canvas');
+    canvas.width = TILE_PX;
+    canvas.height = TILE_PX;
+    void (async (): Promise<void> => {
+      const elev = await fetchTileElevations(coords.z, coords.x, coords.y);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { done(undefined, canvas); return; }
+      if (!elev) {
+        ctx.fillStyle = '#101010';
+        ctx.fillRect(0, 0, TILE_PX, TILE_PX);
+        done(undefined, canvas);
+        return;
+      }
+      const tileLat = tileYToLat(coords.y + 0.5, coords.z);
+      const cellSize = metersPerWebMercatorPixel(tileLat, coords.z);
+      ctx.putImageData(renderHillshade(elev, cellSize), 0, 0);
+      done(undefined, canvas);
+    })();
+    return canvas;
+  },
+}) as unknown as new (opts?: L.GridLayerOptions) => L.GridLayer;
+
+function createHillshadeLayer(): L.GridLayer {
+  return new HillshadeCtor({
+    minZoom: 8,
+    maxZoom: 14,
+    attribution: 'Elevation: <a href="https://registry.opendata.aws/terrain-tiles/">AWS Terrain Tiles</a>',
+  });
+}
 
 function destination(loc: LatLng, bearingDeg: number, distM: number): LatLng {
   const bRad = bearingDeg * Math.PI / 180;
@@ -63,7 +136,7 @@ export function createMapView({
   onShowRefresh,
   onArmedChange,
 }: CreateMapViewOptions): MapView {
-  const layers: Record<string, L.TileLayer> = {
+  const layers: Record<string, L.Layer> = {
     'Sanborn 1884': histLayer(1884),
     'Sanborn 1888': histLayer(1888),
     'Sanborn 1893': histLayer(1893),
@@ -71,6 +144,7 @@ export function createMapView({
     'OpenStreetMap': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19, attribution: '© OpenStreetMap contributors',
     }),
+    'Hillshade': createHillshadeLayer(),
   };
 
   const baseLayer = layers['Sanborn 1893']!;

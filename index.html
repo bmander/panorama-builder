@@ -26,6 +26,14 @@
   </div>
   <div id="locks">
     <label class="lock"><input type="checkbox" id="lock-camera"> Lock camera position</label>
+    <label class="lock">Terrain
+      <select id="terrain-mode">
+        <option value="off">off</option>
+        <option value="wireframe">wireframe</option>
+        <option value="shaded">shaded</option>
+      </select>
+    </label>
+    <label class="lock">Sun <input type="datetime-local" id="sun-datetime" step="60"></label>
   </div>
   <script type="importmap">
     {

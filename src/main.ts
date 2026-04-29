@@ -10,6 +10,9 @@ import { getElement, overlayData, poiData } from './types.js';
 import type { JointPhoto, LatLng, SolverParam } from './types.js';
 import { openStore } from './persistence.js';
 import type { AppSnapshot, Store } from './persistence.js';
+import { createTerrainView } from './terrain.js';
+import type { TerrainMode } from './terrain.js';
+import { solarAzAlt } from './solar.js';
 
 // Open IDB before building UI; null on private mode / unsupported.
 const store: Store | null = await openStore();
@@ -46,10 +49,18 @@ function refreshMapAnnotations(): void {
   mapView.setPOIBearings(overlays.getPOIs());
 }
 
+const terrain = createTerrainView({
+  scene: viewer.scene,
+  requestRender: () => { viewer.requestRender(); },
+});
+
 const baker = createBaker({
   renderer: viewer.renderer,
   scene: viewer.scene,
-  setVisualsVisible: visible => { overlays.setVisualsVisible(visible); },
+  setVisualsVisible: visible => {
+    overlays.setVisualsVisible(visible);
+    terrain.setBakeVisible(visible);
+  },
 });
 
 const hud = createHud(() => {
@@ -59,11 +70,22 @@ const hud = createHud(() => {
     azimuth, altitude,
     fov: viewer.camera.fov,
     selectedSizeRad: sel ? overlayData(sel).sizeRad : null,
+    cameraHeight: terrain.getCameraHeight(),
   };
 });
 
 const coordsEl = getElement('map-coords');
 coordsEl.textContent = 'no location set — click "Set location"';
+
+// Side-effects that apply both to interactive map clicks AND programmatic
+// camera moves (solver, restore). mapView.setLocation deliberately doesn't
+// fire onLocationChange (to avoid feedback loops in the solver), so callers
+// that move the camera must propagate to terrain + coords themselves.
+function applyCameraLocation(loc: LatLng): void {
+  coordsEl.textContent = `lat ${loc.lat.toFixed(5)}  lng ${loc.lng.toFixed(5)}`;
+  terrain.setLocation(loc);
+  refreshSunDirection();
+}
 
 // User-configurable solver locks. When a parameter is locked, autoFreeParams's
 // suggestion is filtered down so the solver leaves it fixed. Locking the camera
@@ -85,6 +107,37 @@ lockCameraEl.addEventListener('change', () => {
   viewer.requestRender();
   if (mapView.isVisible()) refreshMapAnnotations();
   hud.refresh();
+  save();
+});
+
+const terrainModeEl = getElement<HTMLSelectElement>('terrain-mode');
+const sunDateTimeEl = getElement<HTMLInputElement>('sun-datetime');
+
+// Default the sun picker to "now" so shaded mode is meaningful immediately.
+sunDateTimeEl.value = formatLocalDateTime(new Date());
+
+function pad2(n: number): string { return String(n).padStart(2, '0'); }
+function formatLocalDateTime(d: Date): string {
+  return `${d.getFullYear().toString()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function refreshSunDirection(): void {
+  const camLoc = mapView.getLocation();
+  if (!camLoc || !sunDateTimeEl.value) return;
+  // <input type="datetime-local"> values have no timezone — Date() parses them
+  // as local civil time, which is what the picker shows.
+  const date = new Date(sunDateTimeEl.value);
+  if (Number.isNaN(date.getTime())) return;
+  const { az, alt } = solarAzAlt(date, camLoc.lat, camLoc.lng);
+  terrain.setSunDirection(az, alt);
+}
+
+terrainModeEl.addEventListener('change', () => {
+  terrain.setMode(terrainModeEl.value as TerrainMode);
+  save();
+});
+sunDateTimeEl.addEventListener('change', () => {
+  refreshSunDirection();
   save();
 });
 
@@ -144,7 +197,10 @@ function solveAllPhotos(): void {
     if (result.cameraMoved) proposed.camLoc = result.camLoc;
   });
   // Apply camera move outside the batch so the map's marker updates after pose writes settle.
-  if (proposed.camLoc) mapView.setLocation(proposed.camLoc);
+  if (proposed.camLoc) {
+    mapView.setLocation(proposed.camLoc);
+    applyCameraLocation(proposed.camLoc);
+  }
 }
 
 const setLocationBtn = getElement('set-location');
@@ -154,7 +210,7 @@ const mapView = createMapView({
   // refresh while the map is hidden, so the caches may be stale here.
   onShowRefresh: () => { refreshMapAnnotations(); },
   onLocationChange: loc => {
-    coordsEl.textContent = `lat ${loc.lat.toFixed(5)}  lng ${loc.lng.toFixed(5)}`;
+    applyCameraLocation(loc);
     runSolve();
     save();
   },
@@ -174,12 +230,22 @@ const mapView = createMapView({
 });
 setLocationBtn.addEventListener('click', () => { mapView.toggleSetLocationArmed(); });
 
+// Shift-wheel adjusts terrain camera height. ~5 m per 100-px wheel tick;
+// scroll-up (negative deltaY) raises the camera, matching the "altitude up"
+// mental model.
+const SHIFT_WHEEL_M_PER_PX = 0.05;
+
 const input = attachInput({
   viewer,
   overlays,
   onChange: () => { viewer.requestRender(); hud.refresh(); save(); },
   onOverlayAdded: (overlay, blob) => {
     void store?.saveBlob(overlayData(overlay).id, blob);
+  },
+  onShiftWheel: deltaPx => {
+    if (!terrain.setCameraHeight(terrain.getCameraHeight() - deltaPx * SHIFT_WHEEL_M_PER_PX)) return;
+    hud.refresh();
+    save();
   },
 });
 const viewTabs = attachViewTabs({ baker, viewer, hud, mapView });
@@ -214,6 +280,9 @@ function getSnapshot(): AppSnapshot {
     tab: viewTabs.getMode(),
     tool: input.getTool(),
     lockCamera: lockCameraEl.checked,
+    terrainMode: terrain.getMode(),
+    sunDateTime: sunDateTimeEl.value,
+    cameraHeight: terrain.getCameraHeight(),
     overlays: overlaysSnap,
   };
 }
@@ -230,12 +299,23 @@ let restoring = false;
 if (persisted) {
   restoring = true;
   const { snapshot, blobs } = persisted;
-  if (snapshot.camLoc) mapView.setLocation(snapshot.camLoc);
+  // Sun datetime restored before camLoc so applyCameraLocation's sun refresh
+  // sees the saved time rather than the default "now".
+  if (snapshot.sunDateTime !== undefined) sunDateTimeEl.value = snapshot.sunDateTime;
+  if (snapshot.camLoc) {
+    mapView.setLocation(snapshot.camLoc);
+    applyCameraLocation(snapshot.camLoc);
+  }
   viewer.setAzAlt(snapshot.azimuth, snapshot.altitude);
   viewer.setFov(snapshot.fov);
   lockCameraEl.checked = snapshot.lockCamera;
   applyCameraLock(snapshot.lockCamera);
   input.setTool(snapshot.tool);
+  if (snapshot.cameraHeight !== undefined) terrain.setCameraHeight(snapshot.cameraHeight);
+  const restoredMode: TerrainMode =
+    snapshot.terrainMode ?? (snapshot.terrainEnabled ? 'wireframe' : 'off');
+  terrainModeEl.value = restoredMode;
+  terrain.setMode(restoredMode);
 
   const loader = new THREE.TextureLoader();
   await Promise.all(snapshot.overlays.map(snap => new Promise<void>(resolve => {

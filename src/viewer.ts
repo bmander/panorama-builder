@@ -70,7 +70,9 @@ export function createViewer({ container }: { container: HTMLElement }): Viewer 
   renderer.domElement.id = 'view';
   container.appendChild(renderer.domElement);
 
-  const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 1000);
+  // far is bumped beyond the natural overlay-sphere radius so the terrain
+  // ghost (which extends up to ~35 km in real-world meters) renders unclipped.
+  const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 200000);
   camera.rotation.order = 'YXZ';
 
   const baseTex = new THREE.CanvasTexture(makeGridTexture());

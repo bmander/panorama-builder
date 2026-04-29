@@ -36,6 +36,7 @@ export interface AzAltSnapshot {
   readonly altitude: number;
   readonly fov: number;
   readonly selectedSizeRad: number | null;
+  readonly cameraHeight: number;
 }
 
 // Bearings of an overlay's left/right edges as viewer-azimuths.
