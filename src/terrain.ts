@@ -36,24 +36,34 @@ interface RingSpec {
   zoom: number;
   radiusTiles: number;
   stride: number;
-  // When true, the central tile of this ring is omitted from the index buffer
-  // (a 1×1 hole). Inner rings already cover that area at higher resolution; the
-  // hole prevents z-fighting and saves indices.
-  skipCentralTile: boolean;
 }
 
-// Each successive ring drops 2 zoom levels (4× spacing, 4× tile width). With
-// RADIUS_TILES=2 + central-tile skip, ring N's outer half-distance equals
-// ring N+1's inner half-distance (2.5 × tile_N = 0.5 × tile_{N+1}).
+// Each successive ring drops 2 zoom levels (4× spacing, 4× tile width). The
+// rebuild orchestrator threads each ring's outer half-width to the next so
+// outer rings carve a hole exactly matching the inner ring's coverage —
+// otherwise their meshes z-fight in the overlap band.
 const RINGS: readonly RingSpec[] = [
-  { zoom: 11, radiusTiles: 2, stride: 2, skipCentralTile: false },
-  { zoom:  9, radiusTiles: 2, stride: 2, skipCentralTile: true  },
-  { zoom:  7, radiusTiles: 2, stride: 2, skipCentralTile: true  },
+  { zoom: 11, radiusTiles: 2, stride: 2 },
+  { zoom:  9, radiusTiles: 2, stride: 2 },
+  { zoom:  7, radiusTiles: 2, stride: 2 },
 ];
+
+// World-meter coverage rectangle of a ring relative to the camera. Asymmetric
+// because the camera generally isn't centered within its tile.
+interface RingBounds {
+  readonly xMin: number;
+  readonly xMax: number;
+  readonly zMin: number;
+  readonly zMax: number;
+}
 
 const WIREFRAME_COLOR = 0x88aaff;
 const WIREFRAME_OPACITY = 0.35;
-const SHADED_COLOR = 0xb0a890;
+// Per-vertex shaded coloring: water at/below sea level (DEM elevation ≤ 0),
+// land everywhere else. Rough by design — inland lakes that sit above 0 m
+// fall into the land bucket; that's fine for a reference layer.
+const WATER_COLOR: readonly [number, number, number] = [0x40, 0x80, 0xa0];
+const LAND_COLOR: readonly [number, number, number] = [0xb0, 0xa8, 0x90];
 const DIR_LIGHT_INTENSITY = 1.4;
 const AMBIENT_LIGHT_INTENSITY = 0.35;
 // Far enough that direction is the only thing that matters; lambert ignores
@@ -96,7 +106,15 @@ export interface CreateTerrainViewOptions {
   requestRender: () => void;
 }
 
-function makeMaterial(mode: Exclude<TerrainMode, 'off'>): THREE.Material {
+// `ringIndex` 0 is the innermost ring; outer rings get a polygon-offset bias
+// so they lose the depth test against any inner ring drawn at the same world
+// position. The skip rule lets outer rings extend one quad into the inner
+// ring's coverage to avoid gaps, and this offset prevents z-fighting in that
+// overlap band.
+function makeMaterial(mode: Exclude<TerrainMode, 'off'>, ringIndex: number): THREE.Material {
+  const polygonOffset = ringIndex > 0;
+  const polygonOffsetFactor = ringIndex;
+  const polygonOffsetUnits = ringIndex;
   if (mode === 'wireframe') {
     return new THREE.MeshBasicMaterial({
       color: WIREFRAME_COLOR,
@@ -104,24 +122,39 @@ function makeMaterial(mode: Exclude<TerrainMode, 'off'>): THREE.Material {
       transparent: true,
       opacity: WIREFRAME_OPACITY,
       depthWrite: false,
+      polygonOffset,
+      polygonOffsetFactor,
+      polygonOffsetUnits,
     });
   }
   return new THREE.MeshLambertMaterial({
-    color: SHADED_COLOR,
+    vertexColors: true,
     side: THREE.DoubleSide,
+    polygonOffset,
+    polygonOffsetFactor,
+    polygonOffsetUnits,
   });
 }
 
-// Build one ring's geometry. `sharedGroundElev`, when supplied, forces the
-// ring to use a shared ground reference (so adjacent rings line up at the
-// boundary); otherwise the ring samples its own central tile. Returns both the
-// geometry and the ground elevation it used so the caller can plumb it onward.
+interface RingResult {
+  geometry: THREE.BufferGeometry;
+  camGroundElev: number;
+  bounds: RingBounds;
+}
+
+// Build one ring's geometry. When `prev` is supplied (every ring except the
+// innermost), the ring reuses the inner ring's ground elevation so meshes line
+// up at boundaries, and skips quads whose bounding box is fully contained in
+// the inner ring's coverage rectangle. The "fully contained" rule lets outer
+// quads extend one cell into the inner ring's coverage — that overlap gets
+// resolved by per-ring polygonOffset (see makeMaterial) so the inner ring
+// always wins the depth test there, no gap, no z-fighting.
 async function buildRing(
   camLoc: LatLng,
   spec: RingSpec,
-  sharedGroundElev?: number,
-): Promise<{ geometry: THREE.BufferGeometry; camGroundElev: number }> {
-  const { zoom, radiusTiles, stride, skipCentralTile } = spec;
+  prev?: { camGroundElev: number; bounds: RingBounds },
+): Promise<RingResult> {
+  const { zoom, radiusTiles, stride } = spec;
 
   const cxFrac = lngToTileX(camLoc.lng, zoom);
   const cyFrac = latToTileY(camLoc.lat, zoom);
@@ -145,7 +178,7 @@ async function buildRing(
   }
 
   const centerTile = tileMap.get(tileKey(zoom, cx, cy));
-  const camGroundElev = sharedGroundElev ?? (centerTile
+  const camGroundElev = prev?.camGroundElev ?? (centerTile
     ? sampleTile(centerTile, (cxFrac - cx) * TILE_PX, (cyFrac - cy) * TILE_PX)
     : 0);
 
@@ -156,6 +189,7 @@ async function buildRing(
   const ny = samplesPerTile * (radiusTiles * 2 + 1) + 1;
 
   const positions = new Float32Array(nx * ny * 3);
+  const colors = new Uint8Array(nx * ny * 3);
   const cosLat = Math.cos(camLoc.lat * Math.PI / 180);
 
   // Precompute per-row and per-column geometry once. Each row's tile + sub-pixel
@@ -201,23 +235,36 @@ async function buildRing(
       positions[idx] = colWx[i]!;
       positions[idx + 1] = elev - camGroundElev;
       positions[idx + 2] = wz;
+      const c = elev <= 0 ? WATER_COLOR : LAND_COLOR;
+      colors[idx]     = c[0];
+      colors[idx + 1] = c[1];
+      colors[idx + 2] = c[2];
     }
   }
 
-  // Triangle indices. (nx-1)*(ny-1) quads, two triangles each. When skipping
-  // the central tile, omit quads whose i,j fall in the central tile's vertex
-  // range so the inner ring fills that area without z-fighting.
-  const skipMin = samplesPerTile * radiusTiles;
-  const skipMax = samplesPerTile * (radiusTiles + 1);
+  // Skip quads fully inside the inner ring's bounds. Quads that straddle the
+  // boundary stay (one cell of overlap with the inner ring), which makes the
+  // boundary seamless; polygonOffset on the outer ring's material biases its
+  // depth so the inner ring wins the overlap.
+  const ixMin = prev?.bounds.xMin ?? 0;
+  const ixMax = prev?.bounds.xMax ?? 0;
+  const izMin = prev?.bounds.zMin ?? 0;
+  const izMax = prev?.bounds.zMax ?? 0;
   const quadCount = (nx - 1) * (ny - 1);
-  // Use Uint32Array since vertex count can exceed 65535. Slight over-allocation
-  // when skipping; trimmed via setIndex(BufferAttribute) on the actual k value.
+  // Uint32 since vertex count can exceed 65535. Over-allocated when skipping;
+  // trimmed below via slice() so the unused tail is GC-eligible.
   const indices = new Uint32Array(quadCount * 6);
   let k = 0;
   for (let j = 0; j < ny - 1; j++) {
-    const inSkipJ = j >= skipMin && j < skipMax;
+    const wzA = rowWz[j]!, wzB = rowWz[j + 1]!;
+    const zMin = Math.min(wzA, wzB);
+    const zMax = Math.max(wzA, wzB);
+    const zInside = zMin >= izMin && zMax <= izMax;
     for (let i = 0; i < nx - 1; i++) {
-      if (skipCentralTile && inSkipJ && i >= skipMin && i < skipMax) continue;
+      if (prev && zInside) {
+        const wxA = colWx[i]!, wxB = colWx[i + 1]!;
+        if (Math.min(wxA, wxB) >= ixMin && Math.max(wxA, wxB) <= ixMax) continue;
+      }
       const a = j * nx + i;
       const b = a + 1;
       const c = a + nx;
@@ -229,14 +276,21 @@ async function buildRing(
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  // Slice down to the quads we actually emitted (relevant when skipping).
-  geometry.setIndex(new THREE.BufferAttribute(indices.subarray(0, k), 1));
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3, true));
+  // slice() (not subarray) so the over-allocation isn't retained via the view.
+  geometry.setIndex(new THREE.BufferAttribute(indices.slice(0, k), 1));
   // Normals required for Lambert lighting; cheap enough to always compute so
   // wireframe→shaded swaps don't need a rebuild.
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
 
-  return { geometry, camGroundElev };
+  const bounds: RingBounds = {
+    xMin: colWx[0]!,
+    xMax: colWx[nx - 1]!,
+    zMin: Math.min(rowWz[0]!, rowWz[ny - 1]!),
+    zMax: Math.max(rowWz[0]!, rowWz[ny - 1]!),
+  };
+  return { geometry, camGroundElev, bounds };
 }
 
 export function createTerrainView({ scene, requestRender }: CreateTerrainViewOptions): TerrainView {
@@ -294,41 +348,56 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
   // Swap each mesh's material in place — used when toggling between wireframe
   // and shaded without regenerating the (expensive) geometry.
   function swapMaterials(toMode: Exclude<TerrainMode, 'off'>): void {
-    for (const m of meshes) {
+    meshes.forEach((m, ringIndex) => {
       const old = m.material as THREE.Material;
-      m.material = makeMaterial(toMode);
+      m.material = makeMaterial(toMode, ringIndex);
       old.dispose();
-    }
+    });
   }
 
   async function rebuild(camLoc: LatLng, buildMode: Exclude<TerrainMode, 'off'>): Promise<void> {
     const myBuildId = ++buildId;
 
-    // Build inner ring first to fix camGroundElev; outer rings reuse it so the
-    // meshes line up cleanly at boundaries despite their differing zoom levels.
-    const built: THREE.BufferGeometry[] = [];
-    let sharedGroundElev: number | undefined;
+    // Kick off every ring's tile fetches before awaiting any: dem.ts dedupes
+    // via its inflight map, so this just warms the cache so the outer rings'
+    // network round-trips overlap with the inner ring's geometry build instead
+    // of running serially after it.
     for (const spec of RINGS) {
-      const result = await buildRing(camLoc, spec, sharedGroundElev);
+      const cx = Math.floor(lngToTileX(camLoc.lng, spec.zoom));
+      const cy = Math.floor(latToTileY(camLoc.lat, spec.zoom));
+      for (let dy = -spec.radiusTiles; dy <= spec.radiusTiles; dy++) {
+        for (let dx = -spec.radiusTiles; dx <= spec.radiusTiles; dx++) {
+          void fetchTileElevations(spec.zoom, cx + dx, cy + dy);
+        }
+      }
+    }
+
+    // Build inner ring first to fix camGroundElev; outer rings reuse it so the
+    // meshes line up cleanly at boundaries. Each ring's outer coverage is
+    // passed to the next so it can carve a matching hole and avoid z-fighting.
+    const built: THREE.BufferGeometry[] = [];
+    let prev: { camGroundElev: number; bounds: RingBounds } | undefined;
+    for (const spec of RINGS) {
+      const result = await buildRing(camLoc, spec, prev);
       if (myBuildId !== buildId) {
         for (const g of built) g.dispose();
         result.geometry.dispose();
         return;
       }
-      sharedGroundElev = result.camGroundElev;
+      prev = { camGroundElev: result.camGroundElev, bounds: result.bounds };
       built.push(result.geometry);
     }
 
     disposeMeshes();
-    for (const geometry of built) {
-      const mesh = new THREE.Mesh(geometry, makeMaterial(buildMode));
+    built.forEach((geometry, ringIndex) => {
+      const mesh = new THREE.Mesh(geometry, makeMaterial(buildMode, ringIndex));
       mesh.frustumCulled = false; // bounding sphere is huge; we always want it on screen
       // Always draw before photo overlays (which use depthTest:false to stay on
       // top regardless of whether they physically intersect terrain).
       mesh.renderOrder = -1;
       scene.add(mesh);
       meshes.push(mesh);
-    }
+    });
     applyVisibility();
     applyCameraHeight();
     requestRender();
