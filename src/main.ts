@@ -230,10 +230,11 @@ const mapView = createMapView({
 });
 setLocationBtn.addEventListener('click', () => { mapView.toggleSetLocationArmed(); });
 
-// Shift-wheel adjusts terrain camera height. ~5 m per 100-px wheel tick;
-// scroll-up (negative deltaY) raises the camera, matching the "altitude up"
-// mental model.
-const SHIFT_WHEEL_M_PER_PX = 0.05;
+// Shift-wheel adjusts terrain camera height in signed-log space so a single
+// tick is fine near 0 (≈0.65 m at h=0) and grows with altitude (≈3 m at 5 m,
+// ≈65 m at 100 m, ≈650 m at 1000 m). Increment in log-space, transform back.
+// Scroll-up (negative deltaY) raises the camera.
+const SHIFT_WHEEL_LOG_PER_PX = 0.005;
 
 const input = attachInput({
   viewer,
@@ -243,7 +244,10 @@ const input = attachInput({
     void store?.saveBlob(overlayData(overlay).id, blob);
   },
   onShiftWheel: deltaPx => {
-    if (!terrain.setCameraHeight(terrain.getCameraHeight() - deltaPx * SHIFT_WHEEL_M_PER_PX)) return;
+    const h = terrain.getCameraHeight();
+    const s = Math.sign(h) * Math.log1p(Math.abs(h)) - deltaPx * SHIFT_WHEEL_LOG_PER_PX;
+    const next = Math.sign(s) * Math.expm1(Math.abs(s));
+    if (!terrain.setCameraHeight(next)) return;
     hud.refresh();
     save();
   },
