@@ -70,9 +70,10 @@ export function createViewer({ container }: { container: HTMLElement }): Viewer 
   renderer.domElement.id = 'view';
   container.appendChild(renderer.domElement);
 
-  // far is bumped beyond the natural overlay-sphere radius so the terrain
-  // ghost (which extends up to ~35 km in real-world meters) renders unclipped.
-  const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 200000);
+  // far is bumped beyond the natural overlay-sphere radius so the outermost
+  // terrain LOD ring (which reaches ~525 km at lat 47.6, larger nearer the
+  // equator) renders unclipped.
+  const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 1000000);
   camera.rotation.order = 'YXZ';
 
   const baseTex = new THREE.CanvasTexture(makeGridTexture());
