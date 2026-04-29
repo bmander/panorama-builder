@@ -6,29 +6,17 @@
 // Tile source: https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png
 // Encoding:    elevation_meters = R * 256 + G + B / 256 - 32768
 
+import { createTileCache } from './tile-cache.js';
+
 export const TILE_PX = 256;
 
 const TILE_URL = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium';
 
-// LRU eviction caps memory across wide pans (each tile is 256 KB; 128 entries
-// ≈ 32 MB). Map's insertion order doubles as recency: re-inserting moves to
-// the end, so deleting the first key drops the oldest.
-const MAX_CACHED_TILES = 128;
-const cache = new Map<string, Float32Array>();
-const inflight = new Map<string, Promise<Float32Array | null>>();
+// 128 entries × 256 KB per decoded tile ≈ 32 MB cap.
+const cache = createTileCache<Float32Array>(128);
 
 export function tileKey(z: number, x: number, y: number): string {
   return `${z.toString()}/${x.toString()}/${y.toString()}`;
-}
-
-function touchCache(k: string, value: Float32Array): void {
-  cache.delete(k);
-  cache.set(k, value);
-  while (cache.size > MAX_CACHED_TILES) {
-    const oldest = cache.keys().next().value;
-    if (oldest === undefined) break;
-    cache.delete(oldest);
-  }
 }
 
 export function fetchTileElevations(
@@ -37,15 +25,7 @@ export function fetchTileElevations(
   y: number,
 ): Promise<Float32Array | null> {
   const k = tileKey(z, x, y);
-  const cached = cache.get(k);
-  if (cached) {
-    touchCache(k, cached); // refresh recency
-    return Promise.resolve(cached);
-  }
-  const pending = inflight.get(k);
-  if (pending) return pending;
-
-  const job = (async (): Promise<Float32Array | null> => {
+  return cache.fetch(k, async () => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     try {
@@ -73,12 +53,8 @@ export function fetchTileElevations(
       const b = pixels[i * 4 + 2]!;
       elev[i] = r * 256 + g + b / 256 - 32768;
     }
-    touchCache(k, elev);
     return elev;
-  })();
-  inflight.set(k, job);
-  void job.finally(() => { inflight.delete(k); });
-  return job;
+  });
 }
 
 // --- Web-Mercator tile-coordinate helpers ---
