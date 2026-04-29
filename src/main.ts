@@ -10,6 +10,7 @@ import { getElement, overlayData, poiData } from './types.js';
 import type { JointPhoto, LatLng, SolverParam } from './types.js';
 import { openStore } from './persistence.js';
 import type { AppSnapshot, Store } from './persistence.js';
+import { createTerrainView } from './terrain.js';
 
 // Open IDB before building UI; null on private mode / unsupported.
 const store: Store | null = await openStore();
@@ -46,10 +47,18 @@ function refreshMapAnnotations(): void {
   mapView.setPOIBearings(overlays.getPOIs());
 }
 
+const terrain = createTerrainView({
+  scene: viewer.scene,
+  requestRender: () => { viewer.requestRender(); },
+});
+
 const baker = createBaker({
   renderer: viewer.renderer,
   scene: viewer.scene,
-  setVisualsVisible: visible => { overlays.setVisualsVisible(visible); },
+  setVisualsVisible: visible => {
+    overlays.setVisualsVisible(visible);
+    terrain.setBakeVisible(visible);
+  },
 });
 
 const hud = createHud(() => {
@@ -85,6 +94,12 @@ lockCameraEl.addEventListener('change', () => {
   viewer.requestRender();
   if (mapView.isVisible()) refreshMapAnnotations();
   hud.refresh();
+  save();
+});
+
+const terrainToggleEl = getElement<HTMLInputElement>('terrain-toggle');
+terrainToggleEl.addEventListener('change', () => {
+  terrain.setEnabled(terrainToggleEl.checked);
   save();
 });
 
@@ -155,6 +170,7 @@ const mapView = createMapView({
   onShowRefresh: () => { refreshMapAnnotations(); },
   onLocationChange: loc => {
     coordsEl.textContent = `lat ${loc.lat.toFixed(5)}  lng ${loc.lng.toFixed(5)}`;
+    terrain.setLocation(loc);
     runSolve();
     save();
   },
@@ -214,6 +230,7 @@ function getSnapshot(): AppSnapshot {
     tab: viewTabs.getMode(),
     tool: input.getTool(),
     lockCamera: lockCameraEl.checked,
+    terrainEnabled: terrainToggleEl.checked,
     overlays: overlaysSnap,
   };
 }
@@ -236,6 +253,10 @@ if (persisted) {
   lockCameraEl.checked = snapshot.lockCamera;
   applyCameraLock(snapshot.lockCamera);
   input.setTool(snapshot.tool);
+  if (snapshot.terrainEnabled) {
+    terrainToggleEl.checked = true;
+    terrain.setEnabled(true);
+  }
 
   const loader = new THREE.TextureLoader();
   await Promise.all(snapshot.overlays.map(snap => new Promise<void>(resolve => {

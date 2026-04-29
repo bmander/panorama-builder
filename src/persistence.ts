@@ -30,6 +30,9 @@ export interface AppSnapshot {
   tab: '360' | 'flat' | 'map';
   tool: 'move' | 'poi';
   lockCamera: boolean;
+  // Optional for backward compat: snapshots written before this field existed
+  // load with terrain off.
+  terrainEnabled?: boolean;
   overlays: OverlaySnapshot[];
 }
 
