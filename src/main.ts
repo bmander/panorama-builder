@@ -74,6 +74,15 @@ const hud = createHud(() => {
 const coordsEl = getElement('map-coords');
 coordsEl.textContent = 'no location set — click "Set location"';
 
+// Side-effects that apply both to interactive map clicks AND programmatic
+// camera moves (solver, restore). mapView.setLocation deliberately doesn't
+// fire onLocationChange (to avoid feedback loops in the solver), so callers
+// that move the camera must propagate to terrain + coords themselves.
+function applyCameraLocation(loc: LatLng): void {
+  coordsEl.textContent = `lat ${loc.lat.toFixed(5)}  lng ${loc.lng.toFixed(5)}`;
+  terrain.setLocation(loc);
+}
+
 // User-configurable solver locks. When a parameter is locked, autoFreeParams's
 // suggestion is filtered down so the solver leaves it fixed. Locking the camera
 // position (camLat + camLng) turns 4+ POI fits into a least-squares solve over
@@ -159,7 +168,10 @@ function solveAllPhotos(): void {
     if (result.cameraMoved) proposed.camLoc = result.camLoc;
   });
   // Apply camera move outside the batch so the map's marker updates after pose writes settle.
-  if (proposed.camLoc) mapView.setLocation(proposed.camLoc);
+  if (proposed.camLoc) {
+    mapView.setLocation(proposed.camLoc);
+    applyCameraLocation(proposed.camLoc);
+  }
 }
 
 const setLocationBtn = getElement('set-location');
@@ -169,8 +181,7 @@ const mapView = createMapView({
   // refresh while the map is hidden, so the caches may be stale here.
   onShowRefresh: () => { refreshMapAnnotations(); },
   onLocationChange: loc => {
-    coordsEl.textContent = `lat ${loc.lat.toFixed(5)}  lng ${loc.lng.toFixed(5)}`;
-    terrain.setLocation(loc);
+    applyCameraLocation(loc);
     runSolve();
     save();
   },
@@ -247,7 +258,10 @@ let restoring = false;
 if (persisted) {
   restoring = true;
   const { snapshot, blobs } = persisted;
-  if (snapshot.camLoc) mapView.setLocation(snapshot.camLoc);
+  if (snapshot.camLoc) {
+    mapView.setLocation(snapshot.camLoc);
+    applyCameraLocation(snapshot.camLoc);
+  }
   viewer.setAzAlt(snapshot.azimuth, snapshot.altitude);
   viewer.setFov(snapshot.fov);
   lockCameraEl.checked = snapshot.lockCamera;
