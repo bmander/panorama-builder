@@ -63,6 +63,10 @@ export interface OverlayManager {
   setSelected(o: THREE.Group | null): void;
   moveSelectedTo(point: THREE.Vector3): void;
   resizeSelectedTo(sizeRad: number): void;
+  // In-plane roll (radians, CCW positive). Re-applies position + lookAt so the
+  // rotation lands on top of a clean orientation (otherwise rotateZ would
+  // accumulate against whatever the previous quaternion happened to be).
+  setSelectedRoll(roll: number): void;
   deleteSelected(): void;
   // Per-photo body opacity in [0, 1]. Touches only the material — caller is
   // responsible for the cheap render/save sequence (no full onMutate, since
@@ -128,6 +132,7 @@ export function createOverlayManager(
     data.id = id ?? crypto.randomUUID();
     data.sizeRad = DEFAULT_SIZE_RAD;
     data.aspect = aspect;
+    data.photoRoll = 0;
     data.body = body;
     applySize(o);
     return o;
@@ -156,9 +161,10 @@ export function createOverlayManager(
     }
   }
 
-  function placeAt(o: THREE.Object3D, dir: THREE.Vector3): void {
+  function placeAt(o: THREE.Object3D, dir: THREE.Vector3, roll = 0): void {
     o.position.copy(dir).normalize().multiplyScalar(OVERLAY_R);
     o.lookAt(0, 0, 0);
+    if (roll !== 0) o.rotateZ(roll);
   }
 
   function addSelectionVisuals(o: THREE.Group): void {
@@ -227,7 +233,8 @@ export function createOverlayManager(
       tex.anisotropy = getAnisotropy();
       const o = makeOverlay(tex, snapshot.aspect, snapshot.id);
       overlayData(o).sizeRad = THREE.MathUtils.clamp(snapshot.sizeRad, SIZE_MIN, SIZE_MAX);
-      placeAt(o, dirFromAzAlt(snapshot.photoAz, snapshot.photoTilt));
+      overlayData(o).photoRoll = snapshot.photoRoll ?? 0;
+      placeAt(o, dirFromAzAlt(snapshot.photoAz, snapshot.photoTilt), overlayData(o).photoRoll);
       applySize(o);
       if (snapshot.opacity !== undefined) {
         meshMat(overlayData(o).body).opacity = snapshot.opacity;
@@ -263,14 +270,23 @@ export function createOverlayManager(
     },
     moveSelectedTo(point) {
       if (!selected) return;
-      selected.position.copy(point);
-      selected.lookAt(0, 0, 0);
+      placeAt(selected, point, overlayData(selected).photoRoll);
       notify();
     },
     resizeSelectedTo(sizeRad) {
       if (!selected) return;
       overlayData(selected).sizeRad = THREE.MathUtils.clamp(sizeRad, SIZE_MIN, SIZE_MAX);
       applySize(selected);
+      notify();
+    },
+    setSelectedRoll(roll) {
+      if (!selected) return;
+      if (overlayData(selected).photoRoll === roll) return;
+      overlayData(selected).photoRoll = roll;
+      // Re-derive direction from current position so this works mid-drag,
+      // before any move-event has called placeAt on this overlay.
+      const dir = new THREE.Vector3().copy(selected.position).normalize();
+      placeAt(selected, dir, roll);
       notify();
     },
     deleteSelected() {
@@ -331,6 +347,7 @@ export function createOverlayManager(
       return {
         photoAz: az,
         photoTilt: alt,                 // input only; solver does not modify
+        photoRoll: data.photoRoll,      // input only; solver does not modify
         sizeRad: data.sizeRad,
         aspect: data.aspect,
         camLat: camLoc?.lat ?? 0,
@@ -338,8 +355,9 @@ export function createOverlayManager(
       };
     },
     applyPose(o, pose) {
-      // photoTilt is preserved (solver doesn't touch it; pass it through).
-      placeAt(o, dirFromAzAlt(pose.photoAz, pose.photoTilt));
+      // photoTilt and photoRoll are preserved (solver doesn't touch them).
+      overlayData(o).photoRoll = pose.photoRoll;
+      placeAt(o, dirFromAzAlt(pose.photoAz, pose.photoTilt), pose.photoRoll);
       overlayData(o).sizeRad = THREE.MathUtils.clamp(pose.sizeRad, SIZE_MIN, SIZE_MAX);
       applySize(o);
       notify();

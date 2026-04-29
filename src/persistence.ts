@@ -18,6 +18,8 @@ export interface OverlaySnapshot {
   aspect: number;
   photoAz: number;
   photoTilt: number;
+  // In-plane roll (radians). Optional for back-compat; missing → 0.
+  photoRoll?: number;
   // Body opacity in [0, 1]. Optional for back-compat with snapshots written
   // before the per-photo opacity slider existed; missing → fully opaque.
   opacity?: number;

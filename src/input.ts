@@ -16,6 +16,7 @@ type ModeState =
   | { type: 'pan' }
   | { type: 'move' }
   | { type: 'resize'; dist: number; sizeRad: number }
+  | { type: 'rotate'; cx: number; cy: number; startAngle: number; startRoll: number }
   | { type: 'poi-drag'; poi: THREE.Mesh }
   | null;
 
@@ -117,7 +118,18 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShif
       } else if (bodyHit) {
         const o = bodyHit.object.parent as THREE.Group;
         if (selected !== o) { overlays.setSelected(o); onChange(); }
-        mode = { type: 'move' };
+        if (e.shiftKey) {
+          const center = projectToScreen(o.position);
+          mode = {
+            type: 'rotate',
+            cx: center.x,
+            cy: center.y,
+            startAngle: Math.atan2(e.clientY - center.y, e.clientX - center.x),
+            startRoll: overlayData(o).photoRoll,
+          };
+        } else {
+          mode = { type: 'move' };
+        }
       } else {
         if (selected) { overlays.setSelected(null); onChange(); }
         mode = { type: 'pan' };
@@ -167,6 +179,16 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShif
         const dist = Math.hypot(dx, dy);
         overlays.resizeSelectedTo(mode.sizeRad * (dist / mode.dist));
         onChange();
+        break;
+      }
+      case 'rotate': {
+        // Pointer atan2 with screen-Y-down: a CW pointer sweep gives a positive
+        // delta. The overlay's local +Z points away from camera, so o.rotateZ
+        // with positive roll appears CCW to the viewer — flip the sign so a CW
+        // drag rotates the photo CW.
+        const currentAngle = Math.atan2(e.clientY - mode.cy, e.clientX - mode.cx);
+        overlays.setSelectedRoll(mode.startRoll - (currentAngle - mode.startAngle));
+        viewer.requestRender();
         break;
       }
       case 'poi-drag': {

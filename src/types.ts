@@ -10,12 +10,16 @@ export interface LatLng {
 // Photo pose, both as solver input and output.
 //   photoAz:        viewer-azimuth (CCW from −Z) of overlay center
 //   photoTilt:      altitude of overlay center (input only; never modified)
+//   photoRoll:      in-plane rotation around the overlay's center axis,
+//                   radians, CCW positive (input only; never modified —
+//                   not observable from azimuth-only POI residuals)
 //   sizeRad:        angular width (FOV) of the overlay
 //   aspect:         photo width/height
 //   camLat, camLng: panorama camera location
 export interface Pose {
   readonly photoAz: number;
   readonly photoTilt: number;
+  readonly photoRoll: number;
   readonly sizeRad: number;
   readonly aspect: number;
   readonly camLat: number;
@@ -94,6 +98,10 @@ export interface OverlayUserData {
   id: string;
   sizeRad: number;
   aspect: number;
+  // In-plane roll around the overlay's center axis (radians, CCW positive).
+  // 0 means the photo's local +Y is in the world's vertical plane through the
+  // overlay center.
+  photoRoll: number;
   body: THREE.Mesh;
   outline?: THREE.LineSegments;
   handles?: THREE.Mesh[];
