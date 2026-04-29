@@ -1,19 +1,16 @@
 // DEM-driven terrain reference for the 360° viewer.
 //
-// Fetches AWS Open Data Terrain Tiles (Terrarium PNG encoding) around a camera
-// location, decodes elevations, builds Three.js meshes in real-world meters
-// centered on the camera, and renders them in one of three modes:
+// Fetches AWS Open Data Terrain Tiles (Terrarium PNG encoding) and Esri World
+// Imagery tiles around a camera location, builds Three.js meshes in real-world
+// meters centered on the camera, and renders them in one of three modes:
 //   - 'off'       — no meshes
 //   - 'wireframe' — translucent blue wireframe (alignment ghost)
-//   - 'shaded'    — opaque surface lit by a directional sun
+//   - 'shaded'    — Lambert-lit satellite imagery draped over the DEM
 //
 // Coverage is layered as concentric rings of progressively coarser zoom so
 // distant features (e.g. peaks 100+ km away) appear without paying full
 // inner-ring resolution everywhere. Ring sizing is driven by a target angular
-// pitch per vertex — see TARGET_PITCH_RAD and the RINGS table.
-//
-// Tile source: https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png
-// Encoding:    elevation_meters = R * 256 + G + B / 256 - 32768
+// pitch per vertex — see the comment on RingSpec and the RINGS table.
 
 import * as THREE from 'three';
 import type { LatLng } from './types.js';
@@ -26,6 +23,7 @@ import {
   tileXToLng,
   tileYToLat,
 } from './dem.js';
+import { fetchImageryTile } from './imagery.js';
 import { sunDirection } from './solar.js';
 
 // Outer-edge angular-pitch target driving the ring layout below: ~5 mrad
@@ -59,11 +57,8 @@ interface RingBounds {
 
 const WIREFRAME_COLOR = 0x88aaff;
 const WIREFRAME_OPACITY = 0.35;
-// Per-vertex shaded coloring: water at/below sea level (DEM elevation ≤ 0),
-// land everywhere else. Rough by design — inland lakes that sit above 0 m
-// fall into the land bucket; that's fine for a reference layer.
-const WATER_COLOR: readonly [number, number, number] = [0x40, 0x80, 0xa0];
-const LAND_COLOR: readonly [number, number, number] = [0xb0, 0xa8, 0x90];
+// Fallback fill for the imagery canvas when individual tiles fail to load.
+const IMAGERY_FALLBACK = '#888';
 const DIR_LIGHT_INTENSITY = 1.4;
 const AMBIENT_LIGHT_INTENSITY = 0.35;
 // Far enough that direction is the only thing that matters; lambert ignores
@@ -111,7 +106,11 @@ export interface CreateTerrainViewOptions {
 // position. The skip rule lets outer rings extend one quad into the inner
 // ring's coverage to avoid gaps, and this offset prevents z-fighting in that
 // overlap band.
-function makeMaterial(mode: Exclude<TerrainMode, 'off'>, ringIndex: number): THREE.Material {
+function makeMaterial(
+  mode: Exclude<TerrainMode, 'off'>,
+  ringIndex: number,
+  texture: THREE.Texture | null,
+): THREE.Material {
   const polygonOffset = ringIndex > 0;
   const polygonOffsetFactor = ringIndex;
   const polygonOffsetUnits = ringIndex;
@@ -127,17 +126,36 @@ function makeMaterial(mode: Exclude<TerrainMode, 'off'>, ringIndex: number): THR
       polygonOffsetUnits,
     });
   }
-  return new THREE.MeshLambertMaterial({
-    vertexColors: true,
+  const lambert = new THREE.MeshLambertMaterial({
+    map: texture,
     side: THREE.DoubleSide,
     polygonOffset,
     polygonOffsetFactor,
     polygonOffsetUnits,
   });
+  // Heightfield normals all point ~up, so distant peaks above the camera
+  // render via the back face — and Three.js samples the same UV from both
+  // sides, which looks horizontally mirrored to the viewer. Flip UV.x on
+  // back-facing fragments so the imagery reads correctly looking up.
+  lambert.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <map_fragment>',
+      `#ifdef USE_MAP
+        vec2 _terrainUv = gl_FrontFacing ? vMapUv : vec2(1.0 - vMapUv.x, vMapUv.y);
+        vec4 sampledDiffuseColor = texture2D( map, _terrainUv );
+        diffuseColor *= sampledDiffuseColor;
+      #endif`,
+    );
+  };
+  // Stable cache key so Three.js shares one compiled program across all our
+  // ring materials instead of recompiling per instance.
+  lambert.customProgramCacheKey = (): string => 'terrain-backface-uv-flip';
+  return lambert;
 }
 
 interface RingResult {
   geometry: THREE.BufferGeometry;
+  texture: THREE.Texture;
   camGroundElev: number;
   bounds: RingBounds;
 }
@@ -161,16 +179,21 @@ async function buildRing(
   const cx = Math.floor(cxFrac);
   const cy = Math.floor(cyFrac);
 
-  // Fetch the (2R+1)×(2R+1) window in parallel.
-  const tilePromises: Promise<{ tx: number; ty: number; data: Float32Array | null }>[] = [];
+  // Fetch DEM and imagery for the (2R+1)×(2R+1) window in parallel.
+  const demPromises: Promise<{ tx: number; ty: number; data: Float32Array | null }>[] = [];
+  const imageryPromises: Promise<{ tx: number; ty: number; img: HTMLImageElement | null }>[] = [];
   for (let dy = -radiusTiles; dy <= radiusTiles; dy++) {
     for (let dx = -radiusTiles; dx <= radiusTiles; dx++) {
       const tx = cx + dx;
       const ty = cy + dy;
-      tilePromises.push(fetchTileElevations(zoom, tx, ty).then(data => ({ tx, ty, data })));
+      demPromises.push(fetchTileElevations(zoom, tx, ty).then(data => ({ tx, ty, data })));
+      imageryPromises.push(fetchImageryTile(zoom, tx, ty).then(img => ({ tx, ty, img })));
     }
   }
-  const tiles = await Promise.all(tilePromises);
+  const [tiles, imageryTiles] = await Promise.all([
+    Promise.all(demPromises),
+    Promise.all(imageryPromises),
+  ]);
 
   const tileMap = new Map<string, Float32Array>();
   for (const t of tiles) {
@@ -189,7 +212,7 @@ async function buildRing(
   const ny = samplesPerTile * (radiusTiles * 2 + 1) + 1;
 
   const positions = new Float32Array(nx * ny * 3);
-  const colors = new Uint8Array(nx * ny * 3);
+  const uvs = new Float32Array(nx * ny * 2);
   const cosLat = Math.cos(camLoc.lat * Math.PI / 180);
 
   // Precompute per-row and per-column geometry once. Each row's tile + sub-pixel
@@ -235,10 +258,9 @@ async function buildRing(
       positions[idx] = colWx[i]!;
       positions[idx + 1] = elev - camGroundElev;
       positions[idx + 2] = wz;
-      const c = elev <= 0 ? WATER_COLOR : LAND_COLOR;
-      colors[idx]     = c[0];
-      colors[idx + 1] = c[1];
-      colors[idx + 2] = c[2];
+      const uvIdx = (j * nx + i) * 2;
+      uvs[uvIdx] = i / (nx - 1);
+      uvs[uvIdx + 1] = j / (ny - 1);
     }
   }
 
@@ -276,7 +298,7 @@ async function buildRing(
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3, true));
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
   // slice() (not subarray) so the over-allocation isn't retained via the view.
   geometry.setIndex(new THREE.BufferAttribute(indices.slice(0, k), 1));
   // Normals required for Lambert lighting; cheap enough to always compute so
@@ -290,7 +312,32 @@ async function buildRing(
     zMin: Math.min(rowWz[0]!, rowWz[ny - 1]!),
     zMax: Math.max(rowWz[0]!, rowWz[ny - 1]!),
   };
-  return { geometry, camGroundElev, bounds };
+
+  // Stitch the (2R+1)² imagery tiles into a single square canvas. Tile (cx-R,
+  // cy-R) lands at the canvas's top-left, matching how UVs are assigned above
+  // (UV.y=0 → vertex j=0 → northernmost row → top of canvas).
+  const canvasSize = TILE_PX * (radiusTiles * 2 + 1);
+  const canvas = document.createElement('canvas');
+  canvas.width = canvasSize;
+  canvas.height = canvasSize;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = IMAGERY_FALLBACK;
+  ctx.fillRect(0, 0, canvasSize, canvasSize);
+  for (const t of imageryTiles) {
+    if (!t.img) continue;
+    const ox = (t.tx - (cx - radiusTiles)) * TILE_PX;
+    const oy = (t.ty - (cy - radiusTiles)) * TILE_PX;
+    ctx.drawImage(t.img, ox, oy);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  // The canvas is drawn with north at y=0 already, so disable the default
+  // flip so UV.y = j/(ny-1) lines up directly: j=0 (north vertex) → UV.y=0
+  // → canvas top → north tile.
+  texture.flipY = false;
+
+  return { geometry, texture, camGroundElev, bounds };
 }
 
 export function createTerrainView({ scene, requestRender }: CreateTerrainViewOptions): TerrainView {
@@ -298,6 +345,10 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
   let bakeHidden = false;
   let location: LatLng | null = null;
   let meshes: THREE.Mesh[] = [];
+  // Parallel to `meshes`. Kept separately so swapMaterials (wireframe ↔ shaded)
+  // can rebuild a Lambert material with the same imagery `map` without going
+  // back to the network.
+  let textures: THREE.Texture[] = [];
   let buildId = 0;
   let cameraHeight = 0;
   let sunAz = Math.PI;       // default: due south
@@ -337,7 +388,9 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       m.geometry.dispose();
       (m.material as THREE.Material).dispose();
     }
+    for (const t of textures) t.dispose();
     meshes = [];
+    textures = [];
   }
 
   function applyVisibility(): void {
@@ -350,7 +403,7 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
   function swapMaterials(toMode: Exclude<TerrainMode, 'off'>): void {
     meshes.forEach((m, ringIndex) => {
       const old = m.material as THREE.Material;
-      m.material = makeMaterial(toMode, ringIndex);
+      m.material = makeMaterial(toMode, ringIndex, textures[ringIndex] ?? null);
       old.dispose();
     });
   }
@@ -358,16 +411,17 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
   async function rebuild(camLoc: LatLng, buildMode: Exclude<TerrainMode, 'off'>): Promise<void> {
     const myBuildId = ++buildId;
 
-    // Kick off every ring's tile fetches before awaiting any: dem.ts dedupes
-    // via its inflight map, so this just warms the cache so the outer rings'
-    // network round-trips overlap with the inner ring's geometry build instead
-    // of running serially after it.
+    // Kick off every ring's DEM and imagery fetches before awaiting any: the
+    // dem/imagery modules dedupe via their inflight maps, so this just warms
+    // the caches so outer rings' network round-trips overlap with the inner
+    // ring's geometry build instead of running serially after it.
     for (const spec of RINGS) {
       const cx = Math.floor(lngToTileX(camLoc.lng, spec.zoom));
       const cy = Math.floor(latToTileY(camLoc.lat, spec.zoom));
       for (let dy = -spec.radiusTiles; dy <= spec.radiusTiles; dy++) {
         for (let dx = -spec.radiusTiles; dx <= spec.radiusTiles; dx++) {
           void fetchTileElevations(spec.zoom, cx + dx, cy + dy);
+          void fetchImageryTile(spec.zoom, cx + dx, cy + dy);
         }
       }
     }
@@ -375,28 +429,34 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
     // Build inner ring first to fix camGroundElev; outer rings reuse it so the
     // meshes line up cleanly at boundaries. Each ring's outer coverage is
     // passed to the next so it can carve a matching hole and avoid z-fighting.
-    const built: THREE.BufferGeometry[] = [];
+    const builtGeometries: THREE.BufferGeometry[] = [];
+    const builtTextures: THREE.Texture[] = [];
     let prev: { camGroundElev: number; bounds: RingBounds } | undefined;
     for (const spec of RINGS) {
       const result = await buildRing(camLoc, spec, prev);
       if (myBuildId !== buildId) {
-        for (const g of built) g.dispose();
+        for (const g of builtGeometries) g.dispose();
+        for (const t of builtTextures) t.dispose();
         result.geometry.dispose();
+        result.texture.dispose();
         return;
       }
       prev = { camGroundElev: result.camGroundElev, bounds: result.bounds };
-      built.push(result.geometry);
+      builtGeometries.push(result.geometry);
+      builtTextures.push(result.texture);
     }
 
     disposeMeshes();
-    built.forEach((geometry, ringIndex) => {
-      const mesh = new THREE.Mesh(geometry, makeMaterial(buildMode, ringIndex));
+    builtGeometries.forEach((geometry, ringIndex) => {
+      const texture = builtTextures[ringIndex]!;
+      const mesh = new THREE.Mesh(geometry, makeMaterial(buildMode, ringIndex, texture));
       mesh.frustumCulled = false; // bounding sphere is huge; we always want it on screen
       // Always draw before photo overlays (which use depthTest:false to stay on
       // top regardless of whether they physically intersect terrain).
       mesh.renderOrder = -1;
       scene.add(mesh);
       meshes.push(mesh);
+      textures.push(texture);
     });
     applyVisibility();
     applyCameraHeight();
