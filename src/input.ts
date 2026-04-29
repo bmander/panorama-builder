@@ -33,9 +33,12 @@ export interface AttachInputOptions {
   // original dropped File so persistence can stash it before the URL is
   // revoked. Optional — the app works without it.
   onOverlayAdded?: (overlay: THREE.Group, blob: Blob) => void;
+  // Fired on shift+wheel with the same normalized px-delta the FOV path uses.
+  // Routed out so the host module decides what shift-wheel does.
+  onShiftWheel?: (deltaPx: number) => void;
 }
 
-export function attachInput({ viewer, overlays, onChange, onOverlayAdded }: AttachInputOptions): InputController {
+export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShiftWheel }: AttachInputOptions): InputController {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -183,8 +186,16 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded }: Atta
 
   canvas.addEventListener('wheel', (e: WheelEvent) => {
     e.preventDefault();
-    // Normalize deltaY to pixels: Firefox mouse wheels report LINE (≈ ±3); Chrome PIXEL (≈ ±100).
-    const pxDelta = e.deltaMode === 1 ? e.deltaY * 30 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+    // Chrome/Firefox translate Shift+vertical-wheel into horizontal scroll, so
+    // when shift is held the value lands in deltaX, not deltaY. Fall back so
+    // shift-wheel works regardless.
+    const rawDelta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+    // Normalize to pixels: Firefox mouse wheels report LINE (≈ ±3); Chrome PIXEL (≈ ±100).
+    const pxDelta = e.deltaMode === 1 ? rawDelta * 30 : e.deltaMode === 2 ? rawDelta * 400 : rawDelta;
+    if (e.shiftKey && onShiftWheel) {
+      onShiftWheel(pxDelta);
+      return;
+    }
     camera.fov = THREE.MathUtils.clamp(camera.fov * Math.exp(pxDelta * 0.001), FOV_MIN, FOV_MAX);
     camera.updateProjectionMatrix();
     onChange();

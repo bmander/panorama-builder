@@ -33,6 +33,8 @@ export interface AppSnapshot {
   // Optional for backward compat: snapshots written before this field existed
   // load with terrain off.
   terrainEnabled?: boolean;
+  // Camera height above local ground (terrain feature). Optional for back-compat.
+  cameraHeight?: number;
   overlays: OverlaySnapshot[];
 }
 

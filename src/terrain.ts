@@ -43,6 +43,13 @@ export interface TerrainView {
   setEnabled(enabled: boolean): void;
   setBakeVisible(visible: boolean): void;
   isEnabled(): boolean;
+  // Camera height above local ground in meters. Implemented as a mesh y-offset
+  // (`mesh.position.y = -h`) — the panorama camera stays at the scene origin so
+  // photo overlays continue to wrap correctly around it.
+  // Returns true if the value actually changed; lets callers skip downstream
+  // refresh/save work when wheel events repeat the same height.
+  setCameraHeight(meters: number): boolean;
+  getCameraHeight(): number;
 }
 
 export interface CreateTerrainViewOptions {
@@ -56,6 +63,11 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
   let location: LatLng | null = null;
   let mesh: THREE.Mesh | null = null;
   let buildId = 0;
+  let cameraHeight = 0;
+
+  function applyCameraHeight(): void {
+    if (mesh) mesh.position.y = -cameraHeight;
+  }
 
   function disposeMesh(): void {
     if (!mesh) return;
@@ -194,6 +206,7 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
     mesh = new THREE.Mesh(geometry, material);
     mesh.frustumCulled = false; // bounding sphere is huge; we always want it on screen
     applyVisibility();
+    applyCameraHeight();
     scene.add(mesh);
     requestRender();
   }
@@ -222,5 +235,13 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       applyVisibility();
     },
     isEnabled: () => enabled,
+    setCameraHeight(meters) {
+      if (cameraHeight === meters) return false;
+      cameraHeight = meters;
+      applyCameraHeight();
+      requestRender();
+      return true;
+    },
+    getCameraHeight: () => cameraHeight,
   };
 }

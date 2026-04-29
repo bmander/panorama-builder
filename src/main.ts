@@ -68,6 +68,7 @@ const hud = createHud(() => {
     azimuth, altitude,
     fov: viewer.camera.fov,
     selectedSizeRad: sel ? overlayData(sel).sizeRad : null,
+    cameraHeight: terrain.getCameraHeight(),
   };
 });
 
@@ -201,12 +202,22 @@ const mapView = createMapView({
 });
 setLocationBtn.addEventListener('click', () => { mapView.toggleSetLocationArmed(); });
 
+// Shift-wheel adjusts terrain camera height. ~5 m per 100-px wheel tick;
+// scroll-up (negative deltaY) raises the camera, matching the "altitude up"
+// mental model.
+const SHIFT_WHEEL_M_PER_PX = 0.05;
+
 const input = attachInput({
   viewer,
   overlays,
   onChange: () => { viewer.requestRender(); hud.refresh(); save(); },
   onOverlayAdded: (overlay, blob) => {
     void store?.saveBlob(overlayData(overlay).id, blob);
+  },
+  onShiftWheel: deltaPx => {
+    if (!terrain.setCameraHeight(terrain.getCameraHeight() - deltaPx * SHIFT_WHEEL_M_PER_PX)) return;
+    hud.refresh();
+    save();
   },
 });
 const viewTabs = attachViewTabs({ baker, viewer, hud, mapView });
@@ -242,6 +253,7 @@ function getSnapshot(): AppSnapshot {
     tool: input.getTool(),
     lockCamera: lockCameraEl.checked,
     terrainEnabled: terrainToggleEl.checked,
+    cameraHeight: terrain.getCameraHeight(),
     overlays: overlaysSnap,
   };
 }
@@ -267,6 +279,7 @@ if (persisted) {
   lockCameraEl.checked = snapshot.lockCamera;
   applyCameraLock(snapshot.lockCamera);
   input.setTool(snapshot.tool);
+  if (snapshot.cameraHeight !== undefined) terrain.setCameraHeight(snapshot.cameraHeight);
   if (snapshot.terrainEnabled) {
     terrainToggleEl.checked = true;
     terrain.setEnabled(true);
