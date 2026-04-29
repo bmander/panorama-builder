@@ -13,6 +13,7 @@ import type { AppSnapshot, Store } from './persistence.js';
 import { createTerrainView } from './terrain.js';
 import type { TerrainMode } from './terrain.js';
 import { solarAzAlt } from './solar.js';
+import { createSunMarker } from './sun-marker.js';
 
 // Open IDB before building UI; null on private mode / unsupported.
 const store: Store | null = await openStore();
@@ -54,12 +55,18 @@ const terrain = createTerrainView({
   requestRender: () => { viewer.requestRender(); },
 });
 
+const sunMarker = createSunMarker({
+  scene: viewer.scene,
+  requestRender: () => { viewer.requestRender(); },
+});
+
 const baker = createBaker({
   renderer: viewer.renderer,
   scene: viewer.scene,
   setVisualsVisible: visible => {
     overlays.setVisualsVisible(visible);
     terrain.setBakeVisible(visible);
+    sunMarker.setBakeVisible(visible);
   },
 });
 
@@ -130,6 +137,7 @@ function refreshSunDirection(): void {
   if (Number.isNaN(date.getTime())) return;
   const { az, alt } = solarAzAlt(date, camLoc.lat, camLoc.lng);
   terrain.setSunDirection(az, alt);
+  sunMarker.setDirection(az, alt);
 }
 
 terrainModeEl.addEventListener('change', () => {
