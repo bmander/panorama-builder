@@ -32,6 +32,7 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   background: rgba(255,255,255,0.1); color: #fff; border: 1px solid #888;
   font: 12px monospace; padding: 1px 3px;
 }
+.lock input[type="range"] { width: 120px; accent-color: #fff; }
 #view.tool-poi { cursor: crosshair; }
 .poi-anchor-marker { background: #ff5050; border: 2px solid white; border-radius: 50%;
                      box-shadow: 0 0 3px rgba(0,0,0,0.5); }

@@ -18,6 +18,9 @@ export interface OverlaySnapshot {
   aspect: number;
   photoAz: number;
   photoTilt: number;
+  // Body opacity in [0, 1]. Optional for back-compat with snapshots written
+  // before the per-photo opacity slider existed; missing → fully opaque.
+  opacity?: number;
   pois: { u: number; v: number; mapAnchor: LatLng | null }[];
 }
 
