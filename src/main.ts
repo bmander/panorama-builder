@@ -6,7 +6,7 @@ import { attachInput } from './input.js';
 import { createHud, attachViewTabs, attachDownload, attachToolPalette } from './ui.js';
 import { createMapView } from './map.js';
 import { solveJointPose, autoLocalFreeParams } from './solver.js';
-import { getElement, overlayData, poiData } from './types.js';
+import { getElement, meshMat, overlayData, poiData } from './types.js';
 import type { JointPhoto, LatLng, SolverParam } from './types.js';
 import { openStore } from './persistence.js';
 import type { AppSnapshot, Store } from './persistence.js';
@@ -236,10 +236,30 @@ setLocationBtn.addEventListener('click', () => { mapView.toggleSetLocationArmed(
 // Scroll-up (negative deltaY) raises the camera.
 const SHIFT_WHEEL_LOG_PER_PX = 0.005;
 
+const opacityRowEl = getElement('overlay-opacity-row');
+const opacitySliderEl = getElement<HTMLInputElement>('overlay-opacity');
+
+function refreshSelectionUI(): void {
+  const opacity = overlays.getSelectedOpacity();
+  if (opacity === null) {
+    opacityRowEl.style.display = 'none';
+    return;
+  }
+  opacityRowEl.style.display = '';
+  opacitySliderEl.value = String(Math.round(opacity * 100));
+}
+
+opacitySliderEl.addEventListener('input', () => {
+  overlays.setSelectedOpacity(parseFloat(opacitySliderEl.value) / 100);
+  viewer.requestRender();
+  baker.markDirty();
+  save();
+});
+
 const input = attachInput({
   viewer,
   overlays,
-  onChange: () => { viewer.requestRender(); hud.refresh(); save(); },
+  onChange: () => { viewer.requestRender(); hud.refresh(); refreshSelectionUI(); save(); },
   onOverlayAdded: (overlay, blob) => {
     void store?.saveBlob(overlayData(overlay).id, blob);
   },
@@ -268,6 +288,7 @@ function getSnapshot(): AppSnapshot {
       aspect: pose.aspect,
       photoAz: pose.photoAz,
       photoTilt: pose.photoTilt,
+      opacity: meshMat(data.body).opacity,
       pois: (data.pois ?? []).map(p => {
         const pd = poiData(p);
         return { u: pd.uv.u, v: pd.uv.v, mapAnchor: pd.mapAnchor };
@@ -343,4 +364,5 @@ if (persisted) {
 }
 
 hud.refresh();
+refreshSelectionUI();
 viewer.start();

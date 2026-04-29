@@ -64,6 +64,11 @@ export interface OverlayManager {
   moveSelectedTo(point: THREE.Vector3): void;
   resizeSelectedTo(sizeRad: number): void;
   deleteSelected(): void;
+  // Per-photo body opacity in [0, 1]. Touches only the material — caller is
+  // responsible for the cheap render/save sequence (no full onMutate, since
+  // opacity doesn't affect the solver, map cones, or POIs).
+  setSelectedOpacity(opacity: number): void;
+  getSelectedOpacity(): number | null;
   addPOI(o: THREE.Group, u: number, v: number): THREE.Mesh;
   setPOIMapAnchor(poi: THREE.Mesh, latlng: LatLng | null): void;
   listOverlays(): THREE.Object3D[];
@@ -224,6 +229,9 @@ export function createOverlayManager(
       overlayData(o).sizeRad = THREE.MathUtils.clamp(snapshot.sizeRad, SIZE_MIN, SIZE_MAX);
       placeAt(o, dirFromAzAlt(snapshot.photoAz, snapshot.photoTilt));
       applySize(o);
+      if (snapshot.opacity !== undefined) {
+        meshMat(overlayData(o).body).opacity = snapshot.opacity;
+      }
       overlaysGroup.add(o);
       for (const p of snapshot.pois) {
         // addPOI assumes selection visuals; bypass it here and add directly.
@@ -286,6 +294,11 @@ export function createOverlayManager(
       }
       notify();
     },
+    setSelectedOpacity(opacity) {
+      if (!selected) return;
+      meshMat(overlayData(selected).body).opacity = THREE.MathUtils.clamp(opacity, 0, 1);
+    },
+    getSelectedOpacity: () => selected ? meshMat(overlayData(selected).body).opacity : null,
     addPOI(o, u, v) {
       // Unit sphere; applySize() scales it per overlay width.
       const poi = new THREE.Mesh(
