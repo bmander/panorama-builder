@@ -11,9 +11,9 @@
 
 import * as THREE from 'three';
 import type { LatLng } from './types.js';
+import { TILE_PX, fetchTileElevations } from './dem.js';
 
 const ZOOM = 11;
-const TILE_PX = 256;
 const RADIUS_TILES = 2;             // 5×5 = (2*R+1)^2 tiles around centre
 const SAMPLE_STRIDE = 2;             // every other DEM pixel → ~110 m spacing at zoom 11
 const COLOR = 0x88aaff;
@@ -24,45 +24,6 @@ const M_PER_DEG_LAT = 111320;
 
 function tileKey(z: number, x: number, y: number): string {
   return `${z.toString()}/${x.toString()}/${y.toString()}`;
-}
-
-const tileCache = new Map<string, Float32Array>();
-
-async function fetchTile(z: number, x: number, y: number): Promise<Float32Array | null> {
-  const key = tileKey(z, x, y);
-  const cached = tileCache.get(key);
-  if (cached) return cached;
-
-  const url = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z.toString()}/${x.toString()}/${y.toString()}.png`;
-  const img = new Image();
-  img.crossOrigin = 'anonymous';
-  try {
-    await new Promise<void>((resolve, reject) => {
-      img.onload = (): void => { resolve(); };
-      img.onerror = (): void => { reject(new Error(`Failed to load ${url}`)); };
-      img.src = url;
-    });
-  } catch (err) {
-    console.warn('[terrain] tile fetch failed:', err);
-    return null;
-  }
-
-  const canvas = document.createElement('canvas');
-  canvas.width = TILE_PX;
-  canvas.height = TILE_PX;
-  const ctx = canvas.getContext('2d')!;
-  ctx.drawImage(img, 0, 0);
-  const pixels = ctx.getImageData(0, 0, TILE_PX, TILE_PX).data;
-
-  const elev = new Float32Array(TILE_PX * TILE_PX);
-  for (let i = 0; i < elev.length; i++) {
-    const r = pixels[i * 4]!;
-    const g = pixels[i * 4 + 1]!;
-    const b = pixels[i * 4 + 2]!;
-    elev[i] = r * 256 + g + b / 256 - 32768;
-  }
-  tileCache.set(key, elev);
-  return elev;
 }
 
 function lngToTileX(lng: number, z: number): number {
@@ -135,7 +96,7 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       for (let dx = -RADIUS_TILES; dx <= RADIUS_TILES; dx++) {
         const tx = cx + dx;
         const ty = cy + dy;
-        tilePromises.push(fetchTile(ZOOM, tx, ty).then(data => ({ tx, ty, data })));
+        tilePromises.push(fetchTileElevations(ZOOM, tx, ty).then(data => ({ tx, ty, data })));
       }
     }
     const tiles = await Promise.all(tilePromises);
