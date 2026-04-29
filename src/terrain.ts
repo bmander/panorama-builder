@@ -11,7 +11,15 @@
 
 import * as THREE from 'three';
 import type { LatLng } from './types.js';
-import { TILE_PX, fetchTileElevations } from './dem.js';
+import {
+  TILE_PX,
+  fetchTileElevations,
+  latToTileY,
+  lngToTileX,
+  tileKey,
+  tileXToLng,
+  tileYToLat,
+} from './dem.js';
 
 const ZOOM = 11;
 const RADIUS_TILES = 2;             // 5×5 = (2*R+1)^2 tiles around centre
@@ -19,30 +27,9 @@ const SAMPLE_STRIDE = 2;             // every other DEM pixel → ~110 m spacing
 const COLOR = 0x88aaff;
 const OPACITY = 0.35;
 
-// Earth-flattening constants for the local-tangent-plane approximation.
+// Local-tangent-plane approximation: meters per degree latitude is roughly
+// constant (Earth is round); per-degree longitude scales by cos(lat).
 const M_PER_DEG_LAT = 111320;
-
-function tileKey(z: number, x: number, y: number): string {
-  return `${z.toString()}/${x.toString()}/${y.toString()}`;
-}
-
-function lngToTileX(lng: number, z: number): number {
-  return ((lng + 180) / 360) * 2 ** z;
-}
-
-function latToTileY(lat: number, z: number): number {
-  const sinLat = Math.sin(lat * Math.PI / 180);
-  return (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * 2 ** z;
-}
-
-function tileYToLat(tileY: number, z: number): number {
-  const n = Math.PI - 2 * Math.PI * tileY / 2 ** z;
-  return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
-}
-
-function tileXToLng(tileX: number, z: number): number {
-  return (tileX / 2 ** z) * 360 - 180;
-}
 
 // Sample elevation at fractional pixel coords within a tile (nearest-neighbor).
 function sampleTile(elev: Float32Array, px: number, py: number): number {
@@ -122,32 +109,48 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
     const positions = new Float32Array(nx * ny * 3);
     const cosLat = Math.cos(camLoc.lat * Math.PI / 180);
 
+    // Precompute per-row and per-column geometry once. Each row's tile + sub-pixel
+    // depends only on j; each column's depends only on i; and the world-meters
+    // wx / wz follow from those. Pulls 410k function calls out of the inner loop.
+    const rowTy = new Int32Array(ny);
+    const rowPy = new Int32Array(ny);
+    const rowWz = new Float64Array(ny);
     for (let j = 0; j < ny; j++) {
-      // Map row j across the window: which tile, which pixel within it.
       const tileJ = Math.floor(j / samplesPerTile);
       const subJ = j - tileJ * samplesPerTile;
       const ty = cy - RADIUS_TILES + tileJ;
       const py = (subJ === samplesPerTile) ? TILE_PX - 1 : subJ * SAMPLE_STRIDE;
-      const tileFracY = ty + py / TILE_PX;
-      const lat = tileYToLat(tileFracY, ZOOM);
-      const wz = -(lat - camLoc.lat) * M_PER_DEG_LAT;
+      const lat = tileYToLat(ty + py / TILE_PX, ZOOM);
+      rowTy[j] = ty;
+      rowPy[j] = py;
+      rowWz[j] = -(lat - camLoc.lat) * M_PER_DEG_LAT;
+    }
+    const colTx = new Int32Array(nx);
+    const colPx = new Int32Array(nx);
+    const colWx = new Float64Array(nx);
+    for (let i = 0; i < nx; i++) {
+      const tileI = Math.floor(i / samplesPerTile);
+      const subI = i - tileI * samplesPerTile;
+      const tx = cx - RADIUS_TILES + tileI;
+      const px = (subI === samplesPerTile) ? TILE_PX - 1 : subI * SAMPLE_STRIDE;
+      const lng = tileXToLng(tx + px / TILE_PX, ZOOM);
+      colTx[i] = tx;
+      colPx[i] = px;
+      colWx[i] = (lng - camLoc.lng) * M_PER_DEG_LAT * cosLat;
+    }
 
+    for (let j = 0; j < ny; j++) {
+      const ty = rowTy[j]!;
+      const py = rowPy[j]!;
+      const wz = rowWz[j]!;
       for (let i = 0; i < nx; i++) {
-        const tileI = Math.floor(i / samplesPerTile);
-        const subI = i - tileI * samplesPerTile;
-        const tx = cx - RADIUS_TILES + tileI;
-        const px = (subI === samplesPerTile) ? TILE_PX - 1 : subI * SAMPLE_STRIDE;
-        const tileFracX = tx + px / TILE_PX;
-        const lng = tileXToLng(tileFracX, ZOOM);
-        const wx = (lng - camLoc.lng) * M_PER_DEG_LAT * cosLat;
-
+        const tx = colTx[i]!;
+        const px = colPx[i]!;
         const tile = tileMap.get(tileKey(ZOOM, tx, ty));
         const elev = tile ? tile[py * TILE_PX + px]! : 0;
-        const wy = elev - camGroundElev;
-
         const idx = (j * nx + i) * 3;
-        positions[idx] = wx;
-        positions[idx + 1] = wy;
+        positions[idx] = colWx[i]!;
+        positions[idx + 1] = elev - camGroundElev;
         positions[idx + 2] = wz;
       }
     }

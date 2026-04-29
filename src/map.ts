@@ -2,7 +2,7 @@ import * as L from 'leaflet';
 import type * as THREE from 'three';
 import { R_EARTH, bearingFromLocation, viewerAzToBearing, bearingToViewerAz } from './geo.js';
 import type { Cone, LatLng, POIBearing } from './types.js';
-import { TILE_PX, fetchTileElevations } from './dem.js';
+import { TILE_PX, fetchTileElevations, tileYToLat } from './dem.js';
 
 export interface MapView {
   getLocation(): LatLng | null;
@@ -40,10 +40,6 @@ const SUN_E = Math.sin(SUN_AZ_RAD) * Math.cos(SUN_ALT_RAD);
 const SUN_N = Math.cos(SUN_AZ_RAD) * Math.cos(SUN_ALT_RAD);
 const SUN_U = Math.sin(SUN_ALT_RAD);
 
-function tileYToLat(tileY: number, z: number): number {
-  const n = Math.PI - 2 * Math.PI * tileY / 2 ** z;
-  return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
-}
 function metersPerWebMercatorPixel(lat: number, z: number): number {
   return 156543.03 * Math.cos(lat * Math.PI / 180) / 2 ** z;
 }
