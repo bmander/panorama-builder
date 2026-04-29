@@ -69,6 +69,17 @@ const DIR_LIGHT_DISTANCE = 1000;
 // constant (Earth is round); per-degree longitude scales by cos(lat).
 const M_PER_DEG_LAT = 111320;
 
+// Curvature + standard atmospheric refraction. The geometric drop below the
+// tangent plane at distance d from the camera is d²/(2R) (small-angle
+// approximation; correct to <0.2 % at 525 km). Light refracts back toward
+// Earth, raising apparent positions by k·d²/(2R); the surveyor's k = 0.14
+// (the "0.0675 d² km" rule of thumb) cancels part of the drop. Net y-offset:
+// −(1 − k) · d² / (2R), which reaches 73 m at 33 km, 608 m at 95 km, and
+// 18.6 km at the outer ring's 525 km horizon.
+const EARTH_RADIUS_M = 6371000;
+const SURVEY_REFRACTION_K = 0.14;
+const CURVATURE_DROP_FACTOR = (1 - SURVEY_REFRACTION_K) / (2 * EARTH_RADIUS_M);
+
 export type TerrainMode = 'off' | 'wireframe' | 'shaded';
 
 // Sample elevation at fractional pixel coords within a tile (nearest-neighbor).
@@ -255,8 +266,10 @@ async function buildRing(
       const tile = tileMap.get(tileKey(zoom, tx, ty));
       const elev = tile ? tile[py * TILE_PX + px]! : 0;
       const idx = (j * nx + i) * 3;
-      positions[idx] = colWx[i]!;
-      positions[idx + 1] = elev - camGroundElev;
+      const wx = colWx[i]!;
+      const drop = CURVATURE_DROP_FACTOR * (wx * wx + wz * wz);
+      positions[idx] = wx;
+      positions[idx + 1] = elev - camGroundElev - drop;
       positions[idx + 2] = wz;
       const uvIdx = (j * nx + i) * 2;
       uvs[uvIdx] = i / (nx - 1);
