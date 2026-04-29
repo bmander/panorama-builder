@@ -7,10 +7,13 @@
 // ONE equation (azimuth match); the photos' vertical tilt and the camera's
 // height are unobservable from this data and never enter the solve.
 //
-// Pose shape (per photo): { photoAz, photoTilt, sizeRad, aspect, camLat, camLng }
+// Pose shape (per photo): { photoAz, photoTilt, photoRoll, sizeRad, aspect, camLat, camLng }
 //   - photoAz:        viewer-azimuth (CCW from −Z) of overlay center — local free
 //   - photoTilt:      altitude of overlay center — INPUT ONLY (used by projectPOI for
 //                     accurate azimuth at non-zero tilt; never modified)
+//   - photoRoll:      in-plane rotation around the overlay's center axis — INPUT
+//                     ONLY (rotates the local X/Y basis in projectPOI; not solved
+//                     for since it isn't observable from azimuth-only residuals)
 //   - sizeRad:        angular width (FOV) of the overlay — local free at N≥2
 //   - aspect:         photo width/height (locked input)
 //   - camLat, camLng: panorama camera location — GLOBAL free, shared across photos
@@ -60,7 +63,7 @@ export function autoLocalFreeParams(numPois: number): LocalParam[] {
 }
 
 function projectPOI(pose: Pose, u: number, v: number): { az: number; el: number } {
-  const { photoAz: az, photoTilt: alt, sizeRad, aspect } = pose;
+  const { photoAz: az, photoTilt: alt, photoRoll: roll, sizeRad, aspect } = pose;
 
   // Photo center direction (world), matching dirFromAzAlt(az, alt) in overlay.ts:
   // start (0,0,-1); rotate around X by alt; rotate around Y by az.
@@ -70,15 +73,26 @@ function projectPOI(pose: Pose, u: number, v: number): { az: number; el: number 
   const cy = sa;
   const cz = -ca * caz;
 
-  // Local +X (right) and +Y (up) of the photo plane in world coords.
+  // Pre-roll local +X (right) and +Y (up) of the photo plane in world coords.
   // localX = up_world × localZ; localY = localZ × localX. See overlay.ts.
   const lxX = -cz, lxZ = cx;
   const lxLen = Math.hypot(lxX, lxZ) || 1;
-  const localXx = lxX / lxLen, localXz = lxZ / lxLen;
+  const baseXx = lxX / lxLen, baseXz = lxZ / lxLen;     // baseXy = 0 by construction
 
   const lyX = -cy * cx, lyY = cz * cz + cx * cx, lyZ = -cy * cz;
   const lyLen = Math.hypot(lyX, lyY, lyZ) || 1;
-  const localYx = lyX / lyLen, localYy = lyY / lyLen, localYz = lyZ / lyLen;
+  const baseYx = lyX / lyLen, baseYy = lyY / lyLen, baseYz = lyZ / lyLen;
+
+  // Apply photoRoll: rotate (baseX, baseY) around localZ. Matches
+  // o.rotateZ(roll) in overlay.ts so a rolled overlay's POIs project to the
+  // same world rays the renderer is drawing.
+  const cr = Math.cos(roll), sr = Math.sin(roll);
+  const localXx = cr * baseXx + sr * baseYx;
+  const localXy =                sr * baseYy;            // baseXy = 0
+  const localXz = cr * baseXz + sr * baseYz;
+  const localYx = -sr * baseXx + cr * baseYx;
+  const localYy =                cr * baseYy;            // baseXy = 0
+  const localYz = -sr * baseXz + cr * baseYz;
 
   // POI offset in plane-local coords. Unit-radius photo plane (R=1); magnitude
   // cancels in the atan2 / asin below.
@@ -87,9 +101,8 @@ function projectPOI(pose: Pose, u: number, v: number): { az: number; el: number 
   const dx = (u - 0.5) * W;
   const dy = (v - 0.5) * H;
 
-  // localXy is 0, so localXy * dx is omitted from py.
   const px = cx + dx * localXx + dy * localYx;
-  const py = cy + dy * localYy;
+  const py = cy + dx * localXy + dy * localYy;
   const pz = cz + dx * localXz + dy * localYz;
 
   const len = Math.hypot(px, py, pz);
@@ -298,6 +311,7 @@ export function solveJointPose(options: {
       pose: {
         photoAz: p.photoAz,
         photoTilt: p.photoTilt,
+        photoRoll: p.photoRoll,
         sizeRad: p.sizeRad,
         aspect: p.aspect,
         camLat,

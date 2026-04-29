@@ -288,6 +288,7 @@ function getSnapshot(): AppSnapshot {
       aspect: pose.aspect,
       photoAz: pose.photoAz,
       photoTilt: pose.photoTilt,
+      photoRoll: pose.photoRoll,
       opacity: meshMat(data.body).opacity,
       pois: (data.pois ?? []).map(p => {
         const pd = poiData(p);
