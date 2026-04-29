@@ -59,8 +59,8 @@ const WIREFRAME_COLOR = 0x88aaff;
 const WIREFRAME_OPACITY = 0.35;
 // Fallback fill for the imagery canvas when individual tiles fail to load.
 const IMAGERY_FALLBACK = '#888';
-const DIR_LIGHT_INTENSITY = 1.4;
-const AMBIENT_LIGHT_INTENSITY = 0.35;
+const DIR_LIGHT_INTENSITY = 2.5;
+const AMBIENT_LIGHT_INTENSITY = 0.7;
 // Far enough that direction is the only thing that matters; lambert ignores
 // magnitude but Three.js still uses the position vector to build the direction.
 const DIR_LIGHT_DISTANCE = 1000;

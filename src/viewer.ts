@@ -22,10 +22,10 @@ function makeGridTexture(): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#1a1a1a';
+  ctx.fillStyle = '#e6e6e6';
   ctx.fillRect(0, 0, W, H);
   // Minor lines every 15°.
-  ctx.strokeStyle = '#2c2c2c';
+  ctx.strokeStyle = '#d0d0d0';
   ctx.lineWidth = 1;
   for (let lon = 0; lon <= 360; lon += 15) {
     const x = lon / 360 * W;
@@ -36,7 +36,7 @@ function makeGridTexture(): HTMLCanvasElement {
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
   }
   // Major lines every 90° + equator.
-  ctx.strokeStyle = '#454545';
+  ctx.strokeStyle = '#a0a0a0';
   ctx.lineWidth = 2;
   for (let lon = 0; lon <= 360; lon += 90) {
     const x = lon / 360 * W;
@@ -47,7 +47,7 @@ function makeGridTexture(): HTMLCanvasElement {
   // Compass rose on the floor (cardinal labels at altitude −75°).
   // Equirect u mapping (Three.js convention u = atan2(z, x)/(2π) + 0.5):
   //   N (-Z) → u=0.25, E (+X) → u=0.5, S (+Z) → u=0.75, W (-X) → u=0/1.
-  ctx.fillStyle = '#5a5a5a';
+  ctx.fillStyle = '#888';
   ctx.font = 'bold 90px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
