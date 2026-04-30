@@ -4,6 +4,12 @@ import { R_EARTH, bearingFromLocation, viewerAzToBearing, bearingToViewerAz } fr
 import type { Cone, LatLng, MapPOIView, POIBearing } from './types.js';
 import { TILE_PX, fetchTileElevations, tileYToLat } from './dem.js';
 
+export interface ProjectMarker {
+  id: string;
+  latlng: LatLng;
+  label: string;
+}
+
 export interface MapView {
   getLocation(): LatLng | null;
   setLocation(latlng: LatLng | null): void;
@@ -11,6 +17,7 @@ export interface MapView {
   setOverlayCones(newCones: Cone[]): void;
   setPOIBearings(newPOIs: POIBearing[]): void;
   setMapPOIs(mapPois: readonly MapPOIView[]): void;
+  setProjectMarkers(projects: readonly ProjectMarker[]): void;
   isVisible(): boolean;
   onShow(): void;
   onHide(): void;
@@ -30,6 +37,7 @@ export interface CreateMapViewOptions {
   onMapPoiArmedAddClick?: (latlng: LatLng) => void;
   onMapPoiClick?: (id: string) => void;
   onMapPoiDragged?: (id: string, latlng: LatLng) => void;
+  onProjectMarkerOpen?: (id: string) => void;
   onShowRefresh?: () => void;
   onArmedChange?: (armed: boolean) => void;
   onMapPoiArmedChange?: (armed: boolean) => void;
@@ -131,6 +139,10 @@ function projectClickToRay(loc: LatLng, bearingDeg: number, click: L.LatLng): La
   return { lat: loc.lat + t * dirN, lng: loc.lng + (t * dirE) / cosLat };
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+}
+
 function pixelsToMeters(map: L.Map, pixels: number): number {
   const c = map.getCenter();
   const p = map.latLngToContainerPoint(c);
@@ -147,6 +159,7 @@ export function createMapView({
   onMapPoiArmedAddClick,
   onMapPoiClick,
   onMapPoiDragged,
+  onProjectMarkerOpen,
   onShowRefresh,
   onArmedChange,
   onMapPoiArmedChange,
@@ -231,6 +244,7 @@ export function createMapView({
     iconSize: [36, 36],
     iconAnchor: [18, 18],
   });
+  const projectMarkers = new Map<string, L.Marker>();
 
   function screenDiagonalMeters(): number {
     const s = map.getSize();
@@ -418,6 +432,33 @@ export function createMapView({
     setMapPOIs(newMapPOIs: readonly MapPOIView[]): void {
       mapPoiData = newMapPOIs;
       redrawMapPoiAnchors();
+    },
+    setProjectMarkers(projects: readonly ProjectMarker[]): void {
+      const wantedIds = new Set(projects.map(p => p.id));
+      for (const [id, m] of projectMarkers) {
+        if (!wantedIds.has(id)) { map.removeLayer(m); projectMarkers.delete(id); }
+      }
+      for (const p of projects) {
+        const existing = projectMarkers.get(p.id);
+        if (existing) {
+          existing.setLatLng([p.latlng.lat, p.latlng.lng]);
+          continue;
+        }
+        const m = L.marker([p.latlng.lat, p.latlng.lng]);
+        const popupHtml = `<span class="name">${escapeHtml(p.label)}</span>`
+          + `<button type="button" class="go" data-id="${p.id}">Go to project →</button>`;
+        m.bindPopup(popupHtml, { className: 'project-popup', closeButton: true });
+        m.on('contextmenu', (e: L.LeafletMouseEvent) => {
+          L.DomEvent.preventDefault(e.originalEvent);
+          m.openPopup();
+        });
+        m.on('popupopen', (e: L.PopupEvent) => {
+          const btn = e.popup.getElement()?.querySelector<HTMLButtonElement>('.go');
+          btn?.addEventListener('click', () => { onProjectMarkerOpen?.(p.id); }, { once: true });
+        });
+        m.addTo(map);
+        projectMarkers.set(p.id, m);
+      }
     },
     isVisible: () => visible,
     onShow(): void {

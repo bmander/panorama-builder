@@ -35,5 +35,11 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 }
 .settings-inline input[type="range"] { flex: 1; accent-color: #fff; }
 #view.tool-poi { cursor: crosshair; }
+.project-popup .leaflet-popup-content { margin: 8px 10px; font: 12px monospace; }
+.project-popup .name { display: block; font-weight: bold; margin-bottom: 6px; color: #000; }
+.project-popup .go { display: inline-block; padding: 4px 8px; background: #1a73e8;
+                     color: #fff; text-decoration: none; cursor: pointer;
+                     border: none; font: 12px monospace; }
+.project-popup .go:hover { background: #155bbd; }
 .poi-anchor-marker { color: #5080ff; filter: drop-shadow(0 0 2px rgba(0,0,0,0.85)); }
 .poi-anchor-marker.selected { color: #ffff66; }

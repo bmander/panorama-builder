@@ -107,6 +107,10 @@ export function createLocation(latlng: LatLng, name?: string): Promise<ApiLocati
   return request<ApiLocation>('POST', '/locations', { lat: latlng.lat, lng: latlng.lng, name: name ?? null });
 }
 
+export function listLocations(): Promise<ApiLocation[]> {
+  return request<ApiLocation[]>('GET', '/locations');
+}
+
 export function getLocation(id: string): Promise<ApiHydratedLocation> {
   return request<ApiHydratedLocation>('GET', `/locations/${encodeURIComponent(id)}`);
 }

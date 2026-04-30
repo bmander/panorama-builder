@@ -17,7 +17,7 @@ import { createMapPoiColumns, COLUMN_Y_MIN_M, COLUMN_Y_MAX_M } from './map-poi-c
 import type { MapPoiColumn } from './map-poi-columns.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
 import * as api from './api.js';
-import type { ApiHydratedLocation } from './api.js';
+import type { ApiHydratedLocation, ApiLocation } from './api.js';
 import { loadPrefs, savePrefs } from './prefs.js';
 import type { Prefs } from './prefs.js';
 
@@ -317,6 +317,7 @@ const mapView = createMapView({
     setLocationBtn.textContent = armed ? 'Click map to set…' : 'Set location';
   },
   onMapPoiArmedChange: armed => { addPoiBtnEl.classList.toggle('armed', armed); },
+  onProjectMarkerOpen: id => { location.assign('/' + id); },
 });
 setLocationBtn.addEventListener('click', () => { mapView.toggleSetLocationArmed(); });
 
@@ -423,6 +424,7 @@ async function handleSetLocation(loc: LatLng): Promise<void> {
     currentLocationId = created.id;
     pushLocationToURL(created.id);
     synced.location = { lat: created.lat, lng: created.lng };
+    mapView.setProjectMarkers([]);
   } else {
     synced.location = { lat: loc.lat, lng: loc.lng };
     await api.updateLocation(currentLocationId, loc);
@@ -744,6 +746,21 @@ async function hydrateFromAPI(id: string): Promise<void> {
   }
 }
 
+async function showProjectMarkers(): Promise<void> {
+  let locations: ApiLocation[];
+  try {
+    locations = await api.listLocations();
+  } catch (err) {
+    console.error('list locations failed:', err);
+    return;
+  }
+  mapView.setProjectMarkers(locations.map(loc => ({
+    id: loc.id,
+    latlng: { lat: loc.lat, lng: loc.lng },
+    label: loc.name ?? `Untitled ${loc.id.slice(0, 6)}`,
+  })));
+}
+
 async function bootstrap(): Promise<void> {
   if (currentLocationId) {
     await hydrateFromAPI(currentLocationId);
@@ -753,6 +770,8 @@ async function bootstrap(): Promise<void> {
     overlays.setSelected(null);
     overlays.setSelectedPOI(null);
     overlays.setSelectedMapPOI(null);
+  } else {
+    void showProjectMarkers();
   }
   loading = false;
   applyLocationGate();
