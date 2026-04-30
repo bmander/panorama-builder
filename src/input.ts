@@ -5,9 +5,10 @@ import { ROLE_BODY, ROLE_HANDLE, ROLE_POI, dirFromAzAlt } from './overlay.js';
 import type { OverlayManager } from './overlay.js';
 import { getRole, overlayData, poiData } from './types.js';
 
-export type Tool = 'move' | 'poi';
+export type Tool = 'move' | 'poi' | 'navigate';
 export const TOOL_MOVE = 'move' satisfies Tool;
 export const TOOL_POI = 'poi' satisfies Tool;
+export const TOOL_NAVIGATE = 'navigate' satisfies Tool;
 
 // Discriminated state machine for the active pointer drag. `null` = no drag in
 // progress. Each variant carries exactly the state its handler needs, so
@@ -86,7 +87,11 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShif
     // re-fire the solver / map redraw / bake-dirty cascade. Closed in endDrag.
     openBatch();
 
-    if (tool === TOOL_POI) {
+    if (tool === TOOL_NAVIGATE) {
+      // Inspect-only mode: any drag pans the camera regardless of what was
+      // clicked. Photos and POIs are click-through; selection is preserved.
+      mode = { type: 'pan' };
+    } else if (tool === TOOL_POI) {
       const poiHit = hits.find(h => getRole(h.object) === ROLE_POI);
       const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
       if (poiHit) {
