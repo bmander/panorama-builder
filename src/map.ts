@@ -160,6 +160,10 @@ export function createMapView({
   const coneLayers: L.Polygon[] = [];
   let pois: POIBearing[] = [];
   const poiLayers: L.Polyline[] = [];
+  // Tracks the last-applied selected state per polyline, so we only call
+  // setStyle (an SVG attribute write that can trigger layout) when the
+  // color actually needs to change.
+  const poiSelectedState: boolean[] = [];
   // Track the last-applied selected state alongside the marker. Calling
   // setIcon() rebuilds the marker's DOM element, which kills any drag in
   // progress, so we only swap when selection actually changes.
@@ -238,13 +242,18 @@ export function createMapView({
         const pt = destination(loc, viewerAzToBearing(p.az), distM);
         layer.setLatLngs([[loc.lat, loc.lng], [pt.lat, pt.lng]]);
       });
+    // Trim the parallel selected-state array to match the (possibly shrunk) pool.
+    poiSelectedState.length = poiLayers.length;
     // Re-bind click handlers — closures need fresh poi references.
     for (let i = 0; i < poiLayers.length; i++) {
       const poi = pois[i]!;
       const layer = poiLayers[i]!;
       const handle = poi.handle;
       const az = poi.az;
-      layer.setStyle({ color: poi.selected ? SELECTED_COLOR : POI_COLOR });
+      if (poiSelectedState[i] !== poi.selected) {
+        layer.setStyle({ color: poi.selected ? SELECTED_COLOR : POI_COLOR });
+        poiSelectedState[i] = poi.selected;
+      }
       layer.off('click');
       layer.on('click', (e: L.LeafletMouseEvent) => {
         if (!location) return;

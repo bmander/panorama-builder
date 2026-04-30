@@ -60,6 +60,11 @@ function refreshMapAnnotations(): void {
 }
 
 function refreshMapPoiColumns(): void {
+  // Columns only render in the 360° tab — skip the work entirely when the
+  // user is on the Map tab. Critical during live solver iterations: each
+  // anchor drag fires onMutate at ~60 Hz while the 360° viewer is hidden.
+  // The onModeChange handler refreshes once on tab-switch back to 360°.
+  if (viewTabs.getMode() !== '360') return;
   const camLoc = mapView.getLocation();
   const columns: MapPoiColumn[] = [];
   for (const p of overlays.getPOIs()) {
@@ -356,6 +361,7 @@ viewTabs.onModeChange(mode => {
   const is360 = mode === '360';
   toolsEl.style.display = is360 ? '' : 'none';
   locksEl.style.display = is360 ? '' : 'none';
+  if (is360) refreshMapPoiColumns();
   save();
 });
 attachDownload({ baker });

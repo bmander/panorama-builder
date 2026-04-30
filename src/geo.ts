@@ -10,6 +10,17 @@ export const R_EARTH = 6371000;
 // constant (Earth is round); per-degree longitude scales by cos(lat).
 export const M_PER_DEG_LAT = 111320;
 
+// Tangent-plane projection of `pt` into a camera-relative meter frame
+// centered on `camLoc`: +x east, +z south, +y unused (caller pairs with an
+// elevation/height of its own). Accurate to <1 % within ~50 km of camLoc.
+export function latLngToCameraRelativeMeters(pt: LatLng, camLoc: LatLng): { x: number; z: number } {
+  const cosLat = Math.cos(camLoc.lat * Math.PI / 180);
+  return {
+    x: (pt.lng - camLoc.lng) * M_PER_DEG_LAT * cosLat,
+    z: -(pt.lat - camLoc.lat) * M_PER_DEG_LAT,
+  };
+}
+
 export function bearingFromLocation(loc: LatLng, latlng: LatLng): number {
   const φ1 = loc.lat * Math.PI / 180, φ2 = latlng.lat * Math.PI / 180;
   const Δλ = (latlng.lng - loc.lng) * Math.PI / 180;

@@ -25,7 +25,7 @@ import {
 } from './dem.js';
 import { fetchImageryTile } from './imagery.js';
 import { sunDirection } from './solar.js';
-import { M_PER_DEG_LAT } from './geo.js';
+import { M_PER_DEG_LAT, latLngToCameraRelativeMeters } from './geo.js';
 
 // Outer-edge angular-pitch target driving the ring layout below: ~5 mrad
 // (~0.29°). At 75° FOV / ~1920 px viewport one screen pixel subtends ~0.7
@@ -365,6 +365,17 @@ async function buildRing(
 export function createTerrainView({ scene, requestRender }: CreateTerrainViewOptions): TerrainView {
   let mode: TerrainMode = 'off';
   let location: LatLng | null = null;
+  // Build origin of the current meshes. Vertex positions are stored relative
+  // to this, so live-camera moves translate the group (cheap) until the
+  // camera leaves the inner-ring tile window and a real rebuild is needed.
+  let builtLocation: LatLng | null = null;
+  // Inner ring at zoom 11 covers ~50–80 km on a side; rebuilding when the
+  // camera has moved 5 km from the build origin keeps a comfortable margin.
+  const REBUILD_DIST_THRESHOLD_M = 5000;
+  // All ring meshes ride on this group. group.position carries both the
+  // camera-height y-offset and the camera-vs-builtLocation x/z translation.
+  const terrainGroup = new THREE.Group();
+  scene.add(terrainGroup);
   let meshes: THREE.Mesh[] = [];
   // Parallel to `meshes`. Kept separately so swapMaterials (wireframe ↔ shaded)
   // can rebuild a Lambert material with the same imagery `map` without going
@@ -406,13 +417,21 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
     dirLight.intensity = sunAlt > 0 ? DIR_LIGHT_INTENSITY : 0;
   }
 
-  function applyCameraHeight(): void {
-    for (const m of meshes) m.position.y = -cameraHeight;
+  function applyGroupTransform(): void {
+    if (location && builtLocation) {
+      // Translate by the build origin's position in the current camera frame:
+      // a vertex stored at the origin (the build point) renders at exactly
+      // that offset from the live camera.
+      const o = latLngToCameraRelativeMeters(builtLocation, location);
+      terrainGroup.position.set(o.x, -cameraHeight, o.z);
+    } else {
+      terrainGroup.position.set(0, -cameraHeight, 0);
+    }
   }
 
   function disposeMeshes(): void {
     for (const m of meshes) {
-      scene.remove(m);
+      terrainGroup.remove(m);
       m.geometry.dispose();
       (m.material as THREE.Material).dispose();
     }
@@ -483,28 +502,50 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       // Always draw before photo overlays (which use depthTest:false to stay on
       // top regardless of whether they physically intersect terrain).
       mesh.renderOrder = -1;
-      scene.add(mesh);
+      terrainGroup.add(mesh);
       meshes.push(mesh);
       textures.push(texture);
     });
+    builtLocation = camLoc;
     applyVisibility();
-    applyCameraHeight();
+    applyGroupTransform();
     requestRender();
   }
 
   function maybeRebuild(): void {
     if (mode === 'off' || !location) {
       disposeMeshes();
+      builtLocation = null;
+      applyGroupTransform();
       requestRender();
       return;
     }
     void rebuild(location, mode);
   }
 
+  // Distance² from current location to the build origin, in m². Used to
+  // decide whether a rebuild is needed instead of just translating.
+  function distSqFromBuilt(): number {
+    if (!location || !builtLocation) return Infinity;
+    const { x, z } = latLngToCameraRelativeMeters(location, builtLocation);
+    return x * x + z * z;
+  }
+
   return {
     setLocation(camLoc) {
       location = camLoc;
-      maybeRebuild();
+      // Translate the mesh group to follow the camera. For in-window moves
+      // this is the whole update — no rebuild needed. The translation also
+      // keeps the old meshes correctly positioned during an in-flight
+      // rebuild after a large jump.
+      applyGroupTransform();
+      requestRender();
+      // Trigger a real rebuild only when the camera leaves the safe zone of
+      // the current build (e.g., the first location after startup, or the
+      // user dropping a faraway pin).
+      if (meshes.length === 0 || distSqFromBuilt() >= REBUILD_DIST_THRESHOLD_M * REBUILD_DIST_THRESHOLD_M) {
+        maybeRebuild();
+      }
     },
     setMode(value) {
       if (mode === value) return;
@@ -546,7 +587,7 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
     setCameraHeight(meters) {
       if (cameraHeight === meters) return false;
       cameraHeight = meters;
-      applyCameraHeight();
+      applyGroupTransform();
       requestRender();
       return true;
     },

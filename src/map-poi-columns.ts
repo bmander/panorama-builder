@@ -14,7 +14,7 @@
 
 import * as THREE from 'three';
 import type { LatLng } from './types.js';
-import { M_PER_DEG_LAT } from './geo.js';
+import { latLngToCameraRelativeMeters } from './geo.js';
 
 // Vertical extent relative to the camera origin: well below ground and well
 // above any plausible landmark.
@@ -72,12 +72,10 @@ export function createMapPoiColumns({ scene, requestRender }: CreateMapPoiColumn
         requestRender();
         return;
       }
-      const cosLat = Math.cos(camLoc.lat * Math.PI / 180);
       for (const c of columns) {
-        const wx = (c.anchor.lng - camLoc.lng) * M_PER_DEG_LAT * cosLat;
-        const wz = -(c.anchor.lat - camLoc.lat) * M_PER_DEG_LAT;
+        const { x, z } = latLngToCameraRelativeMeters(c.anchor, camLoc);
         const line = new THREE.Line(lineGeom, c.selected ? materialSelected : material);
-        line.position.set(wx, 0, wz);
+        line.position.set(x, 0, z);
         line.renderOrder = COLUMN_RENDER_ORDER;
         line.frustumCulled = false;
         group.add(line);
