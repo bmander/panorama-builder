@@ -4,6 +4,36 @@ export const PITCH_LIMIT = Math.PI / 2 - 0.01;
 export const FOV_MIN = 15;
 export const FOV_MAX = 100;
 
+// Atmospheric perspective. We override Three.js's default FogExp2 falloff
+// (`exp(-σ² · d²)`, stylistic) with Beer-Lambert (`exp(-σ · d)`, the actual
+// physics of a uniform absorbing/scattering medium). With σ = 5e-6 that's
+// ~15 % at 33 km, ~38 % at 95 km (Rainier from Seattle), ~63 % at 200 km, and
+// ~93 % at 525 km. Beer-Lambert leaves more contrast at distance than the
+// standard exp-squared falloff for the same near-haze level. Photos at
+// radius 100 m get effectively no fog (~5e-4). HAZE_COLOR matches the
+// panorama background grid so distant terrain dissolves into the "sky".
+const HAZE_COLOR = 0xe6e6e6;
+export const HAZE_DENSITY_DEFAULT = 5e-6;
+// Slider's 100 % maps here. Wildfire-smoke level — at this density Beer-Lambert
+// gives ~63 % haze at 1 km, ~92 % at 5 km, essentially full haze beyond ~10 km.
+// Main.ts maps the slider with a cubic curve so the lower end stays usable.
+export const HAZE_DENSITY_MAX = 1e-3;
+
+// Override Three.js's fog fragment chunk to use Beer-Lambert (linear in
+// distance) instead of the default exp-squared. This affects every material
+// in every scene that uses FogExp2; harmless because we only use FogExp2
+// once and per-material `fog: false` (e.g. on the sun marker) still opts out.
+THREE.ShaderChunk.fog_fragment = `
+#ifdef USE_FOG
+  #ifdef FOG_EXP2
+    float fogFactor = 1.0 - exp( - fogDensity * vFogDepth );
+  #else
+    float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
+  #endif
+  gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );
+#endif
+`;
+
 export interface Viewer {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
@@ -13,6 +43,7 @@ export interface Viewer {
   getAzAlt(): { azimuth: number; altitude: number };
   setAzAlt(az: number, alt: number): void;
   setFov(fov: number): void;
+  setFogDensity(density: number): void;
   setCanvasVisible(visible: boolean): void;
   start(): void;
 }
@@ -83,6 +114,8 @@ export function createViewer({ container }: { container: HTMLElement }): Viewer 
 
   const scene = new THREE.Scene();
   scene.background = baseTex;
+  const fog = new THREE.FogExp2(HAZE_COLOR, HAZE_DENSITY_DEFAULT);
+  scene.fog = fog;
   const overlaysGroup = new THREE.Group();
   scene.add(overlaysGroup);
 
@@ -128,6 +161,12 @@ export function createViewer({ container }: { container: HTMLElement }): Viewer 
     setFov(fov: number) {
       camera.fov = THREE.MathUtils.clamp(fov, FOV_MIN, FOV_MAX);
       camera.updateProjectionMatrix();
+      dirty = true;
+    },
+    setFogDensity(density: number) {
+      const clamped = Math.max(0, density);
+      if (fog.density === clamped) return;
+      fog.density = clamped;
       dirty = true;
     },
     setCanvasVisible(visible: boolean) {

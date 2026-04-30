@@ -42,6 +42,8 @@ export interface AppSnapshot {
   // ISO datetime string (no timezone — interpreted as local civil time, matching
   // the <input type="datetime-local"> value format).
   sunDateTime?: string;
+  // FogExp2 density per meter for the atmospheric haze. Optional for back-compat.
+  hazeDensity?: number;
   // Camera height above local ground (terrain feature). Optional for back-compat.
   cameraHeight?: number;
   overlays: OverlaySnapshot[];

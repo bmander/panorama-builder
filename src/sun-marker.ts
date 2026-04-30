@@ -27,7 +27,9 @@ export function createSunMarker({ scene, requestRender }: CreateSunMarkerOptions
   const sphereR = SUN_RADIUS_M * Math.sin(SUN_ANGULAR_DIAMETER_RAD / 2);
   const mesh = new THREE.Mesh(
     new THREE.SphereGeometry(sphereR, 24, 16),
-    new THREE.MeshBasicMaterial({ color: SUN_COLOR }),
+    // fog: false so atmospheric haze in viewer.ts doesn't wash the sun
+    // out at its 800 km distance.
+    new THREE.MeshBasicMaterial({ color: SUN_COLOR, fog: false }),
   );
   mesh.frustumCulled = false;
   mesh.visible = false;
