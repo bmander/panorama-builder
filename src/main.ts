@@ -172,6 +172,22 @@ hazeSliderEl.addEventListener('input', () => {
   save();
 });
 
+const curvatureToggleEl = getElement<HTMLInputElement>('curvature-toggle');
+const refractionToggleEl = getElement<HTMLInputElement>('refraction-toggle');
+function refreshRefractionAvailability(): void {
+  refractionToggleEl.disabled = !curvatureToggleEl.checked;
+}
+curvatureToggleEl.addEventListener('change', () => {
+  terrain.setCurvatureEnabled(curvatureToggleEl.checked);
+  refreshRefractionAvailability();
+  save();
+});
+refractionToggleEl.addEventListener('change', () => {
+  terrain.setRefractionEnabled(refractionToggleEl.checked);
+  save();
+});
+refreshRefractionAvailability();
+
 // Run the joint photo-pose solver across every overlay with anchored POIs.
 // All photos share one camera location, so POIs from every photo contribute
 // evidence to it; each photo's photoAz/sizeRad is local. The solver decides
@@ -350,6 +366,8 @@ function getSnapshot(): AppSnapshot {
     sunDateTime: sunDateTimeEl.value,
     cameraHeight: terrain.getCameraHeight(),
     hazeDensity: hazeSliderToDensity(parseFloat(hazeSliderEl.value)),
+    curvatureEnabled: terrain.getCurvatureEnabled(),
+    refractionEnabled: terrain.getRefractionEnabled(),
     overlays: overlaysSnap,
   };
 }
@@ -383,6 +401,15 @@ if (persisted) {
     viewer.setFogDensity(snapshot.hazeDensity);
     hazeSliderEl.value = String(Math.round(hazeDensityToSlider(snapshot.hazeDensity)));
   }
+  if (snapshot.curvatureEnabled !== undefined) {
+    curvatureToggleEl.checked = snapshot.curvatureEnabled;
+    terrain.setCurvatureEnabled(snapshot.curvatureEnabled);
+  }
+  if (snapshot.refractionEnabled !== undefined) {
+    refractionToggleEl.checked = snapshot.refractionEnabled;
+    terrain.setRefractionEnabled(snapshot.refractionEnabled);
+  }
+  refreshRefractionAvailability();
   const restoredMode: TerrainMode =
     snapshot.terrainMode ?? (snapshot.terrainEnabled ? 'wireframe' : 'off');
   terrainModeEl.value = restoredMode;
