@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 export const PITCH_LIMIT = Math.PI / 2 - 0.01;
-export const FOV_MIN = 15;
+export const FOV_MIN = 2;
 export const FOV_MAX = 100;
 
 // Atmospheric perspective. We override Three.js's default FogExp2 falloff

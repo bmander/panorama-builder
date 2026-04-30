@@ -208,15 +208,28 @@ export function createMapView({
   const POI_COLOR = '#ff5050';
   const SELECTED_COLOR = '#ffff66';
   const POI_STYLE: L.PolylineOptions = { color: POI_COLOR, weight: 2, opacity: 0.8 };
+  // Crosshair-inside-a-circle, matching the procedural reticle in overlay.ts.
+  // viewBox -1..1 keeps the same geometry constants as the shader (ring at
+  // r=0.7, crosshair lines from |x|=0.10 to 0.85). stroke="currentColor" lets
+  // the actual color come from the CSS `color` of the parent .poi-anchor-marker
+  // div — so toggling the .selected class on the marker swaps blue→yellow
+  // without re-rendering the SVG.
+  const RETICLE_SVG = `<svg width="36" height="36" viewBox="-1 -1 2 2" xmlns="http://www.w3.org/2000/svg">`
+    + `<circle cx="0" cy="0" r="0.7" fill="none" stroke="currentColor" stroke-width="0.12"/>`
+    + `<path d="M -0.85 0 L -0.1 0 M 0.1 0 L 0.85 0 M 0 -0.85 L 0 -0.1 M 0 0.1 L 0 0.85" `
+    + `stroke="currentColor" stroke-width="0.12" stroke-linecap="round" fill="none"/>`
+    + `</svg>`;
   const ANCHOR_ICON = L.divIcon({
     className: 'poi-anchor-marker',
-    iconSize: [14, 14],
-    iconAnchor: [7, 7],
+    html: RETICLE_SVG,
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
   });
   const ANCHOR_ICON_SELECTED = L.divIcon({
     className: 'poi-anchor-marker selected',
-    iconSize: [14, 14],
-    iconAnchor: [7, 7],
+    html: RETICLE_SVG,
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
   });
 
   function screenDiagonalMeters(): number {

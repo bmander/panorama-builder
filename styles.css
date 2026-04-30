@@ -35,6 +35,5 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 }
 .settings-inline input[type="range"] { flex: 1; accent-color: #fff; }
 #view.tool-poi { cursor: crosshair; }
-.poi-anchor-marker { background: #5080ff; border: 2px solid white; border-radius: 50%;
-                     box-shadow: 0 0 3px rgba(0,0,0,0.5); }
-.poi-anchor-marker.selected { background: #ffff66; }
+.poi-anchor-marker { color: #5080ff; filter: drop-shadow(0 0 2px rgba(0,0,0,0.85)); }
+.poi-anchor-marker.selected { color: #ffff66; }

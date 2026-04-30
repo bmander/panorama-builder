@@ -132,6 +132,7 @@ function applyCameraLocation(loc: LatLng): void {
   terrain.setLocation(loc);
   refreshSunDirection();
   refreshMapPoiColumns();
+  applyLocationGate();
 }
 
 // User-configurable solver locks. When a parameter is locked, autoFreeParams's
@@ -426,6 +427,18 @@ viewTabs.onModeChange(mode => {
   if (mode === '360') refreshMapPoiColumns();
   save();
 });
+
+// Until the user sets a camera location on the Map, the 360° viewer has
+// nothing to show. Disable the 360° tab and force-switch to Map; re-enable
+// once a location lands. Called from applyCameraLocation (any location set)
+// and once at startup (covers fresh-start + restore-without-location).
+const tab360El = getElement<HTMLButtonElement>('tab-360');
+function applyLocationGate(): void {
+  const hasLocation = mapView.getLocation() !== null;
+  tab360El.disabled = !hasLocation;
+  tab360El.title = hasLocation ? '' : 'Set a camera location on the Map first';
+  if (!hasLocation && viewTabs.getMode() === '360') viewTabs.setMode('map');
+}
 attachDownload({ baker });
 
 // --- Save / Load project bundle (single-file JSON download) ---
@@ -626,6 +639,7 @@ if (persisted) {
   restoring = false;
 }
 
+applyLocationGate();
 hud.refresh();
 refreshSelectionUI();
 viewer.start();
