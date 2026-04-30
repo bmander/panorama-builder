@@ -1,0 +1,6 @@
+data/
+.env
+*.test
+*.out
+bin/
+/backend

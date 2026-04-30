@@ -1,8 +1,13 @@
 # panorama-builder
 
-Browser-based tool for compositing flat photos into a 360° equirectangular panorama. Pick a camera location on a historical map, drop photos onto the panorama sphere, anchor each photo's POIs to map locations, and the pose solver fits each photo's azimuth, FOV, and (optionally) the camera location automatically.
+Tools for compositing flat photos into a 360° equirectangular panorama and sharing them. The frontend is a browser-only TypeScript app; the backend is a small Go HTTP service that stores the constituent objects (locations, photos with pose, map POIs, image POIs).
 
-## Run
+## Layout
+
+- `src/` — TypeScript frontend. Builds to `build/` via `tsc`. No bundler.
+- `backend/` — Go API service backed by Postgres + PostGIS. See `backend/README.md`.
+
+## Frontend
 
 ```sh
 npm install
@@ -12,19 +17,29 @@ python3 -m http.server 8000    # any static server
 
 Open <http://localhost:8000>.
 
+## Backend
+
+```sh
+cd backend
+docker compose up -d                         # postgis/postgis:16-3.4 on :5432
+make schema                                  # one-time table creation
+make run                                     # API on :8080
+```
+
+`backend/README.md` lists env vars, endpoints, and a curl smoke test.
+
 ## Use
 
-- **360° tab** — pan with mouse, zoom with wheel. Drop a JPEG/PNG to add an overlay. Drag to reposition; corner handles to resize.
-- **POI tool** — click on an overlay to drop a marker, then click on the **Map tab** to anchor it to a real-world lat/lng. Once a photo has anchored markers, the pose solver runs automatically.
-- **Lock camera position** — keeps the camera fixed at the user-set lat/lng, turning a 4+ POI fit from exact to least-squares.
-- **Map tab** — shows each photo's bearing cone and POI bearings. Pick a location with a click; drag the marker to refine.
-- **Flat tab** — flat preview of the equirect bake.
-- **download PNG** — 8192-wide composite.
+- **Map tab** (default until a camera location is set) — click *Set location*, then click on the map. Drag the camera marker to refine. *+ POI* drops a free-floating map landmark (blue crosshair on the map; blue column in 360°).
+- **360° tab** — pan with mouse, zoom with wheel. Drop a JPEG/PNG to add a photo overlay. Drag a photo to reposition; corner handles to resize; shift-drag to roll. *+ POI* drops an image marker on the photo.
+- **Match by hover** — in 360°, hover a blue map-POI column to highlight it; click on the underlying photo to create a paired image-POI anchored to that landmark. The pose solver kicks in once a photo has anchored POIs.
+- **⚙ Settings** — Lock camera position, Auto-solve photo rotation, Terrain mode (off / wireframe / shaded), sun datetime, photo opacity, atmospheric haze, Earth curvature, atmospheric refraction.
+- **Save…** / **Load…** / **Clear** — round-trip the project as a JSON bundle (photos base64-encoded inline) or wipe IDB.
+- **download PNG** — 8192-wide composite of the current panorama.
 
 ## Stack
 
-- TypeScript (strict + `noUncheckedIndexedAccess`), no bundler
-- Three.js, Leaflet (loaded via importmap from unpkg)
-- ESLint with typescript-eslint `strict-type-checked` + `stylistic-type-checked`
+- **Frontend**: TypeScript (strict + `noUncheckedIndexedAccess`), Three.js, Leaflet, IndexedDB. No bundler. Three.js + Leaflet loaded via importmap from unpkg.
+- **Backend**: Go 1.22+ stdlib `net/http` (method routing), `pgx/v5`, Postgres + PostGIS, local-disk photo blobs.
 
-Scripts: `build`, `watch`, `typecheck`, `lint`, `lint:fix`.
+Frontend scripts: `build`, `watch`, `typecheck`, `lint`, `lint:fix`. Backend tasks: `cd backend && make {run,build,fmt,vet,tidy,schema}`.
