@@ -160,7 +160,10 @@ export function createMapView({
   const coneLayers: L.Polygon[] = [];
   let pois: POIBearing[] = [];
   const poiLayers: L.Polyline[] = [];
-  const anchorMarkers = new Map<THREE.Mesh, L.Marker>();
+  // Track the last-applied selected state alongside the marker. Calling
+  // setIcon() rebuilds the marker's DOM element, which kills any drag in
+  // progress, so we only swap when selection actually changes.
+  const anchorMarkers = new Map<THREE.Mesh, { marker: L.Marker; selected: boolean }>();
   let visible = false;
   let setLocationArmed = false;
   function setArmed(v: boolean): void {
@@ -258,8 +261,8 @@ export function createMapView({
     for (const p of pois) {
       if (p.mapAnchor) wanted.set(p.handle, { anchor: p.mapAnchor, selected: p.selected });
     }
-    for (const [handle, m] of anchorMarkers) {
-      if (!wanted.has(handle)) { map.removeLayer(m); anchorMarkers.delete(handle); }
+    for (const [handle, entry] of anchorMarkers) {
+      if (!wanted.has(handle)) { map.removeLayer(entry.marker); anchorMarkers.delete(handle); }
     }
     for (const [handle, { anchor, selected }] of wanted) {
       const icon = selected ? ANCHOR_ICON_SELECTED : ANCHOR_ICON;
@@ -276,10 +279,13 @@ export function createMapView({
           onPOIAnchorMarkerClick?.(handle);
           L.DomEvent.stopPropagation(e);
         });
-        anchorMarkers.set(handle, m);
+        anchorMarkers.set(handle, { marker: m, selected });
       } else {
-        existing.setLatLng([anchor.lat, anchor.lng]);
-        existing.setIcon(icon);
+        existing.marker.setLatLng([anchor.lat, anchor.lng]);
+        if (existing.selected !== selected) {
+          existing.marker.setIcon(icon);
+          existing.selected = selected;
+        }
       }
     }
   }
