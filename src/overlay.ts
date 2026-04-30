@@ -104,6 +104,10 @@ export interface OverlayManager {
   restoreOverlay(tex: THREE.Texture, snapshot: OverlaySnapshot): THREE.Group;
   getSelected(): THREE.Group | null;
   setSelected(o: THREE.Group | null): void;
+  // Marks an overlay as the hover target so its outline becomes visible (the
+  // visual "this is editable" affordance). Independent of selection. Returns
+  // true if the hover target actually changed; lets callers skip a render.
+  setHovered(o: THREE.Group | null): boolean;
   moveSelectedTo(point: THREE.Vector3): void;
   resizeSelectedTo(sizeRad: number): void;
   // In-plane roll (radians, CCW positive). Re-applies position + lookAt so the
@@ -151,6 +155,7 @@ export function createOverlayManager(
   };
   let selected: THREE.Group | null = null;
   let selectedPOI: THREE.Mesh | null = null;
+  let hoveredOverlay: THREE.Group | null = null;
 
   // Returns viewer-azimuth (CCW from -Z) of a point given in an overlay's local frame.
   const azScratch = new THREE.Vector3();
@@ -171,14 +176,35 @@ export function createOverlayManager(
     );
     (body.userData as { role: Role }).role = ROLE_BODY;
     o.add(body);
+
+    // Outline is always present; visibility is driven by selected || hovered.
+    // This lets the input layer "preview" a photo's editable status by toggling
+    // hover, without adding/removing scene-graph objects on every cursor move.
+    const outline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.PlaneGeometry(1, 1)),
+      new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true }),
+    );
+    (outline.userData as { role: Role }).role = ROLE_OUTLINE;
+    outline.renderOrder = 1;
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    outline.raycast = () => {};
+    outline.visible = false;
+    o.add(outline);
+
     const data = overlayData(o);
     data.id = id ?? crypto.randomUUID();
     data.sizeRad = DEFAULT_SIZE_RAD;
     data.aspect = aspect;
     data.photoRoll = 0;
     data.body = body;
+    data.outline = outline;
     applySize(o);
     return o;
+  }
+
+  function applyOverlayDecoration(o: THREE.Group): void {
+    const data = overlayData(o);
+    if (data.outline) data.outline.visible = (selected === o) || (hoveredOverlay === o);
   }
 
   function applySize(o: THREE.Group): void {
@@ -211,18 +237,6 @@ export function createOverlayManager(
   }
 
   function addSelectionVisuals(o: THREE.Group): void {
-    const outline = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.PlaneGeometry(1, 1)),
-      new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true }),
-    );
-    (outline.userData as { role: Role }).role = ROLE_OUTLINE;
-    outline.renderOrder = 1;
-    // Outlines are visual-only; opt out of raycaster hits.
-    // eslint-disable-next-line @typescript-eslint/no-empty-function
-    outline.raycast = () => {};
-    o.add(outline);
-    overlayData(o).outline = outline;
-
     const handleGeom = new THREE.SphereGeometry(2.5, 12, 8);
     const handleMat = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false });
     const handles: THREE.Mesh[] = [];
@@ -235,17 +249,12 @@ export function createOverlayManager(
     }
     overlayData(o).handles = handles;
     applySize(o);
+    applyOverlayDecoration(o);
   }
 
   function clearSelectionVisuals(o: THREE.Group | null): void {
     if (!o) return;
     const data = overlayData(o);
-    if (data.outline) {
-      o.remove(data.outline);
-      data.outline.geometry.dispose();
-      lineMat(data.outline).dispose();
-      delete data.outline;
-    }
     if (data.handles) {
       const handles = data.handles;
       for (const m of handles) o.remove(m);
@@ -257,6 +266,7 @@ export function createOverlayManager(
       }
       delete data.handles;
     }
+    applyOverlayDecoration(o);
   }
 
   const manager: OverlayManager = {
@@ -304,9 +314,21 @@ export function createOverlayManager(
     getSelected: () => selected,
     setSelected(o) {
       if (selected === o) return;
-      clearSelectionVisuals(selected);
+      const prev = selected;
+      clearSelectionVisuals(prev);
       selected = o;
+      // applyOverlayDecoration on the previously-selected so its outline
+      // can fall back to hover-only state (or hide).
+      if (prev && prev !== o) applyOverlayDecoration(prev);
       if (selected) addSelectionVisuals(selected);
+    },
+    setHovered(o) {
+      if (hoveredOverlay === o) return false;
+      const prev = hoveredOverlay;
+      hoveredOverlay = o;
+      if (prev) applyOverlayDecoration(prev);
+      if (o) applyOverlayDecoration(o);
+      return true;
     },
     moveSelectedTo(point) {
       if (!selected) return;
@@ -333,6 +355,7 @@ export function createOverlayManager(
       if (!selected) return;
       const o = selected;
       manager.setSelected(null);
+      if (hoveredOverlay === o) hoveredOverlay = null;
       // Drop selectedPOI if it lived on this overlay; bypass setSelectedPOI so we
       // don't try to recolor a material that's about to be disposed.
       if (selectedPOI && poiData(selectedPOI).parentOverlay === o) selectedPOI = null;
@@ -342,6 +365,10 @@ export function createOverlayManager(
       const bodyMat = meshMat(data.body);
       bodyMat.map?.dispose();
       bodyMat.dispose();
+      if (data.outline) {
+        data.outline.geometry.dispose();
+        lineMat(data.outline).dispose();
+      }
       if (data.pois) {
         for (const p of data.pois) {
           // POIs share POI_GEOM (don't dispose) but each has its own material.

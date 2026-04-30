@@ -33,7 +33,6 @@ export interface AppSnapshot {
   altitude: number;
   fov: number;
   tab: '360' | 'flat' | 'map';
-  tool: 'move' | 'poi' | 'navigate';
   lockCamera: boolean;
   // Legacy boolean — superseded by terrainMode. Kept readable for back-compat
   // so old snapshots restore as 'wireframe' if true.
