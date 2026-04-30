@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { TOOL_MOVE, TOOL_POI, type InputController, type Tool } from './input.js';
+import { TOOL_MOVE, TOOL_NAVIGATE, TOOL_POI, type InputController, type Tool } from './input.js';
 import { getElement } from './types.js';
 import type { AzAltSnapshot } from './types.js';
 import type { Baker } from './bake.js';
@@ -80,6 +80,7 @@ export function attachToolPalette({ input }: { input: InputController }): void {
   const buttons: Record<Tool, HTMLElement> = {
     [TOOL_MOVE]: getElement('tool-move'),
     [TOOL_POI]: getElement('tool-poi'),
+    [TOOL_NAVIGATE]: getElement('tool-navigate'),
   };
   function refresh(): void {
     const cur = input.getTool();
