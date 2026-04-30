@@ -4,18 +4,18 @@ Tools for compositing flat photos into a 360° equirectangular panorama and shar
 
 ## Layout
 
-- `src/` — TypeScript frontend. Builds to `build/` via `tsc`. No bundler.
-- `backend/` — Go API service backed by Postgres + PostGIS. See `backend/README.md`.
+- `frontend/` — TypeScript frontend. `frontend/src/` is the TS source; `frontend/build/` is the `tsc` output. No bundler.
+- `backend/` — Go API service backed by Postgres + PostGIS. Also serves the frontend static files. See `backend/README.md`.
 
 ## Frontend
 
 ```sh
+cd frontend
 npm install
-npm run watch                  # tsc watch mode
-python3 -m http.server 8000    # any static server
+npm run watch                  # tsc watch mode → frontend/build/
 ```
 
-Open <http://localhost:8000>.
+The Go backend serves `frontend/` (`STATIC_DIR=../frontend` by default), so visit <http://localhost:8080> after starting the backend below.
 
 ## Backend
 
@@ -42,4 +42,4 @@ make run                                     # API on :8080
 - **Frontend**: TypeScript (strict + `noUncheckedIndexedAccess`), Three.js, Leaflet, IndexedDB. No bundler. Three.js + Leaflet loaded via importmap from unpkg.
 - **Backend**: Go 1.22+ stdlib `net/http` (method routing), `pgx/v5`, Postgres + PostGIS, local-disk photo blobs.
 
-Frontend scripts: `build`, `watch`, `typecheck`, `lint`, `lint:fix`. Backend tasks: `cd backend && make {run,build,fmt,vet,tidy,schema}`.
+Frontend scripts (run from `frontend/`): `build`, `watch`, `typecheck`, `lint`, `lint:fix`. Backend tasks: `cd backend && make {run,build,fmt,vet,tidy,schema}`.

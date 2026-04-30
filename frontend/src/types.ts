@@ -52,10 +52,17 @@ export interface Cone {
 // Per-POI viewer bearing, paired with its scene-graph handle so the map view
 // can correlate clicks back to the POI it represents.
 export interface POIBearing {
+  // Server-assigned id; matches the row in the API's image_pois table.
+  readonly id: string;
   readonly handle: THREE.Mesh;
   readonly az: number;
   readonly uv: { readonly u: number; readonly v: number };
+  // Cached lat/lng of the linked map-POI, kept in sync by the orchestration
+  // layer for cheap render-time access. Null when the POI has no anchor.
   readonly mapAnchor: LatLng | null;
+  // FK to the map-POI this POI is anchored to. Sync layer reads this when
+  // PUTing image_pois rows. Null = unanchored.
+  readonly mapPOIId: string | null;
   readonly selected: boolean;
 }
 
@@ -119,10 +126,18 @@ export interface OverlayUserData {
 }
 
 export interface POIUserData {
+  // Server-assigned id; same as the row in the API's image_pois table.
+  id: string;
   role: 'poi';
   uv: { u: number; v: number };
   parentOverlay: THREE.Group;
+  // Cached lat/lng of the linked map-POI. Cleared / refreshed by the
+  // orchestration layer whenever the linked map POI moves or the link
+  // changes. Null = unanchored.
   mapAnchor: LatLng | null;
+  // FK to the linked map POI. Source of truth for sync; mapAnchor is the
+  // render-time cache. Null = unanchored.
+  mapPOIId: string | null;
 }
 
 // Roles tagged on every interactive scene-graph object so input.ts can

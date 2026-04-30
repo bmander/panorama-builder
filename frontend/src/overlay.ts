@@ -13,7 +13,6 @@ import type {
   Pose,
   Role,
 } from './types.js';
-import type { OverlaySnapshot } from './persistence.js';
 
 export const OVERLAY_R = 100;
 export const DEFAULT_SIZE_RAD = Math.PI / 6;       // 30°
@@ -96,13 +95,24 @@ function posToAzAlt(o: THREE.Object3D): { az: number; alt: number } {
   };
 }
 
+export interface AddPhotoOptions {
+  // Server-assigned photo id. Required since we now talk to a backend that
+  // owns identity.
+  readonly id: string;
+}
+
+export interface AddPOIOptions {
+  // Server-assigned image-POI id.
+  readonly id: string;
+  // Optional initial anchor (cache + FK) — populated when the matcher click
+  // creates a paired POI.
+  readonly mapPOIId?: string | null;
+  readonly mapAnchor?: LatLng | null;
+}
+
 export interface OverlayManager {
   overlaySphere: THREE.Sphere;
-  addOverlay(tex: THREE.Texture, aspect: number, dir: THREE.Vector3): THREE.Group;
-  // Restores an overlay from persisted state. Skips selection visuals; the
-  // caller wraps a batch of restoreOverlay calls in withBatch so onMutate
-  // fires once at the end (not per-overlay).
-  restoreOverlay(tex: THREE.Texture, snapshot: OverlaySnapshot): THREE.Group;
+  addOverlay(tex: THREE.Texture, aspect: number, dir: THREE.Vector3, opts: AddPhotoOptions): THREE.Group;
   getSelected(): THREE.Group | null;
   setSelected(o: THREE.Group | null): void;
   // Marks an overlay as the hover target so its outline becomes visible (the
@@ -121,8 +131,13 @@ export interface OverlayManager {
   // opacity doesn't affect the solver, map cones, or POIs).
   setSelectedOpacity(opacity: number): void;
   getSelectedOpacity(): number | null;
-  addPOI(o: THREE.Group, u: number, v: number): THREE.Mesh;
-  setPOIMapAnchor(poi: THREE.Mesh, latlng: LatLng | null): void;
+  addPOI(o: THREE.Group, u: number, v: number, opts: AddPOIOptions): THREE.Mesh;
+  // Updates both the lat/lng cache and the FK on a POI in lockstep. Pass
+  // (null, null) to clear the anchor entirely.
+  setPOIMapAnchor(poi: THREE.Mesh, latlng: LatLng | null, mapPOIId: string | null): void;
+  // Refreshes mapAnchor caches on every image-POI that references the given
+  // map POI. Called from the orchestration layer after a map POI moves.
+  refreshAnchorsForMapPOI(mapPOIId: string, latlng: LatLng | null): void;
   listOverlays(): THREE.Object3D[];
   extractPose(o: THREE.Group, camLoc: LatLng | null): Pose;
   applyPose(o: THREE.Group, pose: Pose): void;
@@ -140,9 +155,7 @@ export interface OverlayManager {
   getPOIs(): POIBearing[];
   // Standalone map-POIs (no parent photo). Stored at the manager level rather
   // than on any overlay; the joint solver ignores them.
-  addMapPOI(latlng: LatLng): string;
-  // Restores a map-POI with its persisted id (vs addMapPOI which generates a fresh one).
-  restoreMapPOI(id: string, latlng: LatLng): void;
+  addMapPOI(id: string, latlng: LatLng): void;
   setMapPOILatLng(id: string, latlng: LatLng): void;
   getMapPOIs(): MapPOIView[];
   getSelectedMapPOI(): string | null;
@@ -294,43 +307,13 @@ export function createOverlayManager(
 
   const manager: OverlayManager = {
     overlaySphere,
-    addOverlay(tex, aspect, dir) {
+    addOverlay(tex, aspect, dir, opts) {
       tex.colorSpace = THREE.SRGBColorSpace;
       tex.anisotropy = getAnisotropy();
-      const o = makeOverlay(tex, aspect);
+      const o = makeOverlay(tex, aspect, opts.id);
       placeAt(o, dir);
       overlaysGroup.add(o);
       manager.setSelected(o);
-      notify();
-      return o;
-    },
-    restoreOverlay(tex, snapshot) {
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.anisotropy = getAnisotropy();
-      const o = makeOverlay(tex, snapshot.aspect, snapshot.id);
-      overlayData(o).sizeRad = THREE.MathUtils.clamp(snapshot.sizeRad, SIZE_MIN, SIZE_MAX);
-      overlayData(o).photoRoll = snapshot.photoRoll ?? 0;
-      placeAt(o, dirFromAzAlt(snapshot.photoAz, snapshot.photoTilt), overlayData(o).photoRoll);
-      applySize(o);
-      if (snapshot.opacity !== undefined) {
-        meshMat(overlayData(o).body).opacity = snapshot.opacity;
-      }
-      overlaysGroup.add(o);
-      for (const p of snapshot.pois) {
-        // addPOI assumes selection visuals; bypass it here and add directly.
-        const poi = new THREE.Mesh(POI_GEOM, makePoiMaterial());
-        const pdata = poiData(poi);
-        pdata.role = ROLE_POI;
-        pdata.uv = { u: p.u, v: p.v };
-        pdata.parentOverlay = o;
-        pdata.mapAnchor = p.mapAnchor;
-        poi.renderOrder = 3;
-        o.add(poi);
-        const data = overlayData(o);
-        data.pois ??= [];
-        data.pois.push(poi);
-      }
-      applySize(o); // apply now that POIs are attached so they get scaled too
       notify();
       return o;
     },
@@ -405,14 +388,16 @@ export function createOverlayManager(
       meshMat(overlayData(selected).body).opacity = THREE.MathUtils.clamp(opacity, 0, 1);
     },
     getSelectedOpacity: () => selected ? meshMat(overlayData(selected).body).opacity : null,
-    addPOI(o, u, v) {
+    addPOI(o, u, v, opts) {
       // Unit-radius reticle plane; applySize() scales it per overlay width.
       const poi = new THREE.Mesh(POI_GEOM, makePoiMaterial());
       const pData = poiData(poi);
+      pData.id = opts.id;
       pData.role = ROLE_POI;
       pData.uv = { u, v };
       pData.parentOverlay = o;
-      pData.mapAnchor = null;
+      pData.mapAnchor = opts.mapAnchor ? { lat: opts.mapAnchor.lat, lng: opts.mapAnchor.lng } : null;
+      pData.mapPOIId = opts.mapPOIId ?? null;
       poi.renderOrder = 3;
       o.add(poi);
       const data = overlayData(o);
@@ -423,9 +408,25 @@ export function createOverlayManager(
       notify();
       return poi;
     },
-    setPOIMapAnchor(poi, latlng) {
-      poiData(poi).mapAnchor = latlng ? { lat: latlng.lat, lng: latlng.lng } : null;
+    setPOIMapAnchor(poi, latlng, mapPOIId) {
+      const pd = poiData(poi);
+      pd.mapAnchor = latlng ? { lat: latlng.lat, lng: latlng.lng } : null;
+      pd.mapPOIId = mapPOIId;
       notify();
+    },
+    refreshAnchorsForMapPOI(mapPOIId, latlng) {
+      // No notify() — the orchestration layer that triggered this also fires
+      // its own mutation path (e.g., setMapPOILatLng's notify).
+      for (const child of overlaysGroup.children) {
+        const o = child as THREE.Group;
+        const data = overlayData(o);
+        if (!data.pois) continue;
+        for (const poi of data.pois) {
+          const pd = poiData(poi);
+          if (pd.mapPOIId !== mapPOIId) continue;
+          pd.mapAnchor = latlng ? { lat: latlng.lat, lng: latlng.lng } : null;
+        }
+      }
     },
     listOverlays: () => overlaysGroup.children,
     extractPose(o, camLoc) {
@@ -519,23 +520,19 @@ export function createOverlayManager(
         for (const poi of data.pois) {
           const pData = poiData(poi);
           result.push({
+            id: pData.id,
             handle: poi,
             az: azFromLocal(o, poi.position.x, poi.position.y, poi.position.z),
             uv: { ...pData.uv },
             mapAnchor: pData.mapAnchor,
+            mapPOIId: pData.mapPOIId,
             selected: poi === selectedPOI,
           });
         }
       }
       return result;
     },
-    addMapPOI(latlng) {
-      const id = crypto.randomUUID();
-      mapPois.push({ id, latlng: { lat: latlng.lat, lng: latlng.lng } });
-      notify();
-      return id;
-    },
-    restoreMapPOI(id, latlng) {
+    addMapPOI(id, latlng) {
       mapPois.push({ id, latlng: { lat: latlng.lat, lng: latlng.lng } });
       notify();
     },
@@ -543,6 +540,9 @@ export function createOverlayManager(
       const entry = mapPois.find(m => m.id === id);
       if (!entry) return;
       entry.latlng = { lat: latlng.lat, lng: latlng.lng };
+      // Fan out: any image POI that references this map POI gets its anchor
+      // cache refreshed so the next render uses the new lat/lng.
+      manager.refreshAnchorsForMapPOI(id, latlng);
       notify();
     },
     getMapPOIs() {

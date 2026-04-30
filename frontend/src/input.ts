@@ -39,10 +39,18 @@ export interface AttachInputOptions {
   viewer: Viewer;
   overlays: OverlayManager;
   onChange: () => void;
-  // Fired right after a dropped file becomes a new overlay. The Blob is the
-  // original dropped File so persistence can stash it before the URL is
-  // revoked. Optional — the app works without it.
-  onOverlayAdded?: (overlay: THREE.Group, blob: Blob) => void;
+  // Fired when the user drops an image file. The host is expected to POST a
+  // photo, upload the blob, and call overlays.addOverlay with the server id.
+  // tex's URL.createObjectURL is held until the host finishes — the host
+  // revokes after addOverlay completes.
+  onPhotoDropped?: (tex: THREE.Texture, blob: Blob, aspect: number, dir: THREE.Vector3, revokeUrl: () => void) => void;
+  // Fired when the user clicks on a photo body with "+ POI" armed. Host
+  // POSTs an image-poi (no map_poi_id) then calls overlays.addPOI with the
+  // server id.
+  onAddImagePOI?: (overlay: THREE.Group, u: number, v: number) => void;
+  // Fired when the user matches a hovered column to a photo body. Host POSTs
+  // an image-poi with map_poi_id set, then calls overlays.addPOI with both.
+  onMatchImagePOI?: (overlay: THREE.Group, u: number, v: number, mapPOIId: string, latlng: LatLng) => void;
   // Fired on shift+wheel with the same normalized px-delta the FOV path uses.
   // Routed out so the host module decides what shift-wheel does.
   onShiftWheel?: (deltaPx: number) => void;
@@ -59,7 +67,7 @@ export interface AttachInputOptions {
   onHoveredColumnChange?: (id: string | null) => void;
 }
 
-export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShiftWheel, onPoiArmChange, findColumnAtNDC, onHoveredColumnChange }: AttachInputOptions): InputController {
+export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddImagePOI, onMatchImagePOI, onShiftWheel, onPoiArmChange, findColumnAtNDC, onHoveredColumnChange }: AttachInputOptions): InputController {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -145,27 +153,23 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShif
       if (poiArmed) togglePoiArm();
     }
     // 2. "+ POI" armed: click on body adds a POI; miss un-arms and pans.
+    // The host POSTs the image-POI then calls overlays.addPOI with the
+    // server id; we don't enter poi-drag mode because the mesh doesn't
+    // exist yet at click-time.
     else if (poiArmed) {
       if (bodyHit?.uv) {
         const o = bodyHit.object.parent as THREE.Group;
-        const poi = overlays.addPOI(o, bodyHit.uv.x, bodyHit.uv.y);
-        mode = { type: 'poi-drag', poi };
-      } else {
-        mode = { type: 'pan' };
+        onAddImagePOI?.(o, bodyHit.uv.x, bodyHit.uv.y);
       }
+      mode = { type: 'pan' };
       togglePoiArm();
     }
-    // Hovered column + photo body hit → create a matched POI: a fresh photo
-    // POI on the body at the click UV, anchored to the column's lat/lng.
-    // Both representations end up selected so the user sees the new pair.
-    // addPOI + setPOIMapAnchor each call notify(), but pointerdown's batch
-    // (openBatch above) coalesces them into one onMutate at endDrag.
+    // Hovered column + photo body hit → match. Host POSTs an image-POI with
+    // map_poi_id set then calls overlays.addPOI with both.
     else if (hoveredColumn && bodyHit?.uv) {
       const o = bodyHit.object.parent as THREE.Group;
       const col = hoveredColumn;
-      const newPoi = overlays.addPOI(o, bodyHit.uv.x, bodyHit.uv.y);
-      overlays.setPOIMapAnchor(newPoi, col.latlng);
-      overlays.setSelectedPair(newPoi, col.id);
+      onMatchImagePOI?.(o, bodyHit.uv.x, bodyHit.uv.y, col.id, col.latlng);
       // Clear the hover now that the click has been consumed; the cursor
       // hasn't moved yet, but the next pointermove will recompute.
       setHoveredColumn(null);
@@ -347,14 +351,14 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShif
       const url = URL.createObjectURL(file);
       loader.load(url, tex => {
         const img = tex.image as HTMLImageElement | undefined;
-        if (!img) return;
+        if (!img) { URL.revokeObjectURL(url); return; }
         const aspect = img.naturalWidth / img.naturalHeight;
         const { azimuth, altitude } = viewer.getAzAlt();
-        const overlay = overlays.addOverlay(tex, aspect, dirFromAzAlt(azimuth, altitude));
-        onOverlayAdded?.(overlay, file);
-        onChange();
-        URL.revokeObjectURL(url);
-      });
+        // Hand off to the host (main.ts). The host POSTs metadata, uploads
+        // the blob, then calls overlays.addOverlay with the server id. Once
+        // it's done with the texture's URL it calls revokeUrl() back here.
+        onPhotoDropped?.(tex, file, aspect, dirFromAzAlt(azimuth, altitude), () => { URL.revokeObjectURL(url); });
+      }, undefined, () => { URL.revokeObjectURL(url); });
     }
   });
 
