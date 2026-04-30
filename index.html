@@ -19,6 +19,13 @@
     <button id="tab-map" class="btn tab">Map</button>
   </div>
   <button id="download" class="btn">download PNG</button>
+  <button id="settings-btn" class="btn" aria-expanded="false">⚙ Settings</button>
+  <div id="settings-panel" hidden>
+    <div class="settings-row">
+      <label for="haze-slider">Atmospheric haze</label>
+      <input type="range" id="haze-slider" min="0" max="100" value="17" step="1">
+    </div>
+  </div>
   <div id="hud"></div>
   <div id="tools">
     <button id="tool-move" class="btn tool">Move</button>

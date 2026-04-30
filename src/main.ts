@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { createViewer } from './viewer.js';
+import { createViewer, HAZE_DENSITY_MAX } from './viewer.js';
 import { createOverlayManager } from './overlay.js';
 import { createBaker } from './bake.js';
 import { attachInput } from './input.js';
@@ -146,6 +146,30 @@ terrainModeEl.addEventListener('change', () => {
 });
 sunDateTimeEl.addEventListener('change', () => {
   refreshSunDirection();
+  save();
+});
+
+const settingsBtnEl = getElement<HTMLButtonElement>('settings-btn');
+const settingsPanelEl = getElement('settings-panel');
+settingsBtnEl.addEventListener('click', () => {
+  settingsPanelEl.hidden = !settingsPanelEl.hidden;
+  settingsBtnEl.setAttribute('aria-expanded', String(!settingsPanelEl.hidden));
+});
+
+// Cubic mapping: slider's lower half adjusts subtle "atmospheric" haze with
+// fine resolution; the upper half ramps quickly into wildfire-smoke territory.
+const HAZE_SLIDER_EXPONENT = 3;
+function hazeSliderToDensity(v: number): number {
+  return HAZE_DENSITY_MAX * Math.pow(v / 100, HAZE_SLIDER_EXPONENT);
+}
+function hazeDensityToSlider(d: number): number {
+  if (d <= 0) return 0;
+  return Math.pow(d / HAZE_DENSITY_MAX, 1 / HAZE_SLIDER_EXPONENT) * 100;
+}
+
+const hazeSliderEl = getElement<HTMLInputElement>('haze-slider');
+hazeSliderEl.addEventListener('input', () => {
+  viewer.setFogDensity(hazeSliderToDensity(parseFloat(hazeSliderEl.value)));
   save();
 });
 
@@ -317,6 +341,7 @@ function getSnapshot(): AppSnapshot {
     terrainMode: terrain.getMode(),
     sunDateTime: sunDateTimeEl.value,
     cameraHeight: terrain.getCameraHeight(),
+    hazeDensity: hazeSliderToDensity(parseFloat(hazeSliderEl.value)),
     overlays: overlaysSnap,
   };
 }
@@ -346,6 +371,10 @@ if (persisted) {
   applyCameraLock(snapshot.lockCamera);
   input.setTool(snapshot.tool);
   if (snapshot.cameraHeight !== undefined) terrain.setCameraHeight(snapshot.cameraHeight);
+  if (snapshot.hazeDensity !== undefined) {
+    viewer.setFogDensity(snapshot.hazeDensity);
+    hazeSliderEl.value = String(Math.round(hazeDensityToSlider(snapshot.hazeDensity)));
+  }
   const restoredMode: TerrainMode =
     snapshot.terrainMode ?? (snapshot.terrainEnabled ? 'wireframe' : 'off');
   terrainModeEl.value = restoredMode;
