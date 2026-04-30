@@ -78,7 +78,10 @@ const M_PER_DEG_LAT = 111320;
 // 18.6 km at the outer ring's 525 km horizon.
 const EARTH_RADIUS_M = 6371000;
 const SURVEY_REFRACTION_K = 0.14;
-const CURVATURE_DROP_FACTOR = (1 - SURVEY_REFRACTION_K) / (2 * EARTH_RADIUS_M);
+// drop = factor · d². Curvature off → 0 (flat plane). Curvature on,
+// refraction off → full geometric drop. Both on → drop reduced by k.
+const CURVATURE_FACTOR_GEOMETRIC = 1 / (2 * EARTH_RADIUS_M);
+const CURVATURE_FACTOR_REFRACTED = (1 - SURVEY_REFRACTION_K) / (2 * EARTH_RADIUS_M);
 
 export type TerrainMode = 'off' | 'wireframe' | 'shaded';
 
@@ -93,6 +96,15 @@ export interface TerrainView {
   setLocation(camLoc: LatLng | null): void;
   setMode(mode: TerrainMode): void;
   getMode(): TerrainMode;
+  // Earth-curvature drop applied to each vertex (`d² / (2R)`). Off = flat
+  // tangent-plane; distant peaks sit too high in the model. On = correct.
+  setCurvatureEnabled(enabled: boolean): void;
+  getCurvatureEnabled(): boolean;
+  // Standard surveyor's atmospheric-refraction correction. Multiplies the
+  // curvature drop by (1 - k) where k = 0.14. Only meaningful when curvature
+  // is on; setting it without curvature is a no-op.
+  setRefractionEnabled(enabled: boolean): void;
+  getRefractionEnabled(): boolean;
   // Sun direction for the 'shaded' mode. Azimuth is radians from north
   // clockwise; altitude is radians above the horizon. Negative altitudes are
   // accepted (sun below horizon → terrain falls into ambient-only).
@@ -180,6 +192,7 @@ interface RingResult {
 async function buildRing(
   camLoc: LatLng,
   spec: RingSpec,
+  curvatureFactor: number,
   prev?: { camGroundElev: number; bounds: RingBounds },
 ): Promise<RingResult> {
   const { zoom, radiusTiles, stride } = spec;
@@ -266,7 +279,7 @@ async function buildRing(
       const elev = tile ? tile[py * TILE_PX + px]! : 0;
       const idx = (j * nx + i) * 3;
       const wx = colWx[i]!;
-      const drop = CURVATURE_DROP_FACTOR * (wx * wx + wz * wz);
+      const drop = curvatureFactor * (wx * wx + wz * wz);
       positions[idx] = wx;
       positions[idx + 1] = elev - camGroundElev - drop;
       positions[idx + 2] = wz;
@@ -364,6 +377,13 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
   let cameraHeight = 0;
   let sunAz = Math.PI;       // default: due south
   let sunAlt = Math.PI / 4;  // default: 45° up
+  let curvatureEnabled = true;
+  let refractionEnabled = true;
+
+  function curvatureFactor(): number {
+    if (!curvatureEnabled) return 0;
+    return refractionEnabled ? CURVATURE_FACTOR_REFRACTED : CURVATURE_FACTOR_GEOMETRIC;
+  }
 
   // Lights are added on first transition out of 'off' and stay in the scene
   // afterwards. MeshBasicMaterial (wireframe + photo overlays) ignores lights,
@@ -440,11 +460,12 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
     // Build inner ring first to fix camGroundElev; outer rings reuse it so the
     // meshes line up cleanly at boundaries. Each ring's outer coverage is
     // passed to the next so it can carve a matching hole and avoid z-fighting.
+    const factor = curvatureFactor();
     const builtGeometries: THREE.BufferGeometry[] = [];
     const builtTextures: THREE.Texture[] = [];
     let prev: { camGroundElev: number; bounds: RingBounds } | undefined;
     for (const spec of RINGS) {
-      const result = await buildRing(camLoc, spec, prev);
+      const result = await buildRing(camLoc, spec, factor, prev);
       if (myBuildId !== buildId) {
         for (const g of builtGeometries) g.dispose();
         for (const t of builtTextures) t.dispose();
@@ -504,6 +525,20 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       }
     },
     getMode: () => mode,
+    setCurvatureEnabled(enabled) {
+      if (curvatureEnabled === enabled) return;
+      curvatureEnabled = enabled;
+      maybeRebuild();
+    },
+    getCurvatureEnabled: () => curvatureEnabled,
+    setRefractionEnabled(enabled) {
+      if (refractionEnabled === enabled) return;
+      refractionEnabled = enabled;
+      // No-op visually while curvature is off — the factor stays 0. Skip the
+      // rebuild; the new value will apply next time curvature is turned on.
+      if (curvatureEnabled) maybeRebuild();
+    },
+    getRefractionEnabled: () => refractionEnabled,
     setSunDirection(az, alt) {
       if (sunAz === az && sunAlt === alt) return;
       sunAz = az;

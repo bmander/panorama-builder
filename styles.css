@@ -29,6 +29,8 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 #settings-panel[hidden] { display: none; }
 .settings-row { display: flex; flex-direction: column; gap: 4px; }
 .settings-row input[type="range"] { width: 100%; accent-color: #fff; }
+.settings-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.settings-check input { margin: 0; }
 #tools { position: fixed; top: 30px; left: 10px; display: flex; gap: 4px; }
 .tool.active { background: rgba(255,255,255,0.25); }
 #locks { position: fixed; top: 60px; left: 10px; padding: 4px 8px;

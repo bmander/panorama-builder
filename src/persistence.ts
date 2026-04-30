@@ -44,6 +44,10 @@ export interface AppSnapshot {
   sunDateTime?: string;
   // FogExp2 density per meter for the atmospheric haze. Optional for back-compat.
   hazeDensity?: number;
+  // Earth-curvature drop on terrain. Optional for back-compat (defaults to on).
+  curvatureEnabled?: boolean;
+  // Atmospheric refraction correction. Only meaningful when curvatureEnabled.
+  refractionEnabled?: boolean;
   // Camera height above local ground (terrain feature). Optional for back-compat.
   cameraHeight?: number;
   overlays: OverlaySnapshot[];
