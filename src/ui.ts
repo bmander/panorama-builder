@@ -69,6 +69,16 @@ export function attachViewTabs({ viewer, hud, mapView }: {
   };
 }
 
+// Trigger a browser file download for the given Blob. The 1-second revoke
+// delay gives the browser time to start the download before we drop the URL.
+export function triggerDownload(filename: string, blob: Blob): void {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); }, 1000);
+}
+
 export function attachDownload({ baker }: { baker: Baker }): void {
   getElement('download').addEventListener('click', () => {
     const baked = baker.bake(8192);
@@ -76,11 +86,7 @@ export function attachDownload({ baker }: { baker: Baker }): void {
     baker.paintToCanvas(c, baked);
     c.toBlob(blob => {
       if (blob == null) return;
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'panorama-composite.png';
-      a.click();
-      setTimeout(() => { URL.revokeObjectURL(a.href); }, 1000);
+      triggerDownload('panorama-composite.png', blob);
     });
   });
 }

@@ -3,12 +3,12 @@ import { createViewer, HAZE_DENSITY_MAX } from './viewer.js';
 import { createOverlayManager } from './overlay.js';
 import { createBaker } from './bake.js';
 import { attachInput } from './input.js';
-import { createHud, attachViewTabs, attachDownload } from './ui.js';
+import { createHud, attachViewTabs, attachDownload, triggerDownload } from './ui.js';
 import { createMapView } from './map.js';
 import { solveJointPose, autoLocalFreeParams } from './solver.js';
 import { getElement, meshMat, overlayData, poiData } from './types.js';
 import type { JointPhoto, LatLng, SolverParam } from './types.js';
-import { openStore } from './persistence.js';
+import { openStore, isAppSnapshot } from './persistence.js';
 import type { AppSnapshot, Store } from './persistence.js';
 import { createTerrainView } from './terrain.js';
 import type { TerrainMode } from './terrain.js';
@@ -427,6 +427,95 @@ viewTabs.onModeChange(mode => {
   save();
 });
 attachDownload({ baker });
+
+// --- Save / Load project bundle (single-file JSON download) ---
+
+interface ProjectBundle {
+  readonly version: 1;
+  readonly snapshot: AppSnapshot;
+  readonly photos: Record<string, { mime: string; data: string }>;
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = (): void => {
+      const url = r.result as string;
+      resolve(url.slice(url.indexOf(',') + 1));
+    };
+    r.onerror = (): void => { reject(r.error ?? new Error('FileReader failed')); };
+    r.readAsDataURL(blob);
+  });
+}
+
+function base64ToBlob(b64: string, mime: string): Blob {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+function isValidBundle(v: unknown): v is ProjectBundle {
+  if (typeof v !== 'object' || v === null) return false;
+  const obj = v as Record<string, unknown>;
+  if (obj.version !== 1) return false;
+  if (!isAppSnapshot(obj.snapshot)) return false;
+  if (typeof obj.photos !== 'object' || obj.photos === null) return false;
+  for (const photo of Object.values(obj.photos as Record<string, unknown>)) {
+    if (typeof photo !== 'object' || photo === null) return false;
+    const p = photo as Record<string, unknown>;
+    if (typeof p.mime !== 'string' || typeof p.data !== 'string') return false;
+  }
+  return true;
+}
+
+const saveBundleBtn = getElement('save-bundle');
+saveBundleBtn.addEventListener('click', () => {
+  void (async (): Promise<void> => {
+    if (!store) return;
+    const data = await store.loadAll();
+    if (!data) return;
+    const photos: ProjectBundle['photos'] = {};
+    for (const [id, blob] of data.blobs) {
+      photos[id] = { mime: blob.type || 'image/jpeg', data: await blobToBase64(blob) };
+    }
+    const bundle: ProjectBundle = { version: 1, snapshot: data.snapshot, photos };
+    triggerDownload('panorama-bundle.json', new Blob([JSON.stringify(bundle)], { type: 'application/json' }));
+  })();
+});
+
+const loadBundleBtn = getElement('load-bundle');
+const loadBundleInput = getElement<HTMLInputElement>('load-bundle-input');
+loadBundleBtn.addEventListener('click', () => { loadBundleInput.click(); });
+loadBundleInput.addEventListener('change', () => {
+  void (async (): Promise<void> => {
+    const file = loadBundleInput.files?.[0];
+    // Allow re-loading the same file later by clearing the input value.
+    loadBundleInput.value = '';
+    if (!file || !store) return;
+    let parsed: unknown;
+    try { parsed = JSON.parse(await file.text()); }
+    catch { alert('Could not parse file as JSON.'); return; }
+    if (!isValidBundle(parsed)) { alert('File is not a valid panorama bundle.'); return; }
+    if (!confirm('Loading this bundle will replace your current project. Continue?')) return;
+    const blobs = new Map<string, Blob>();
+    for (const [id, photo] of Object.entries(parsed.photos)) {
+      blobs.set(id, base64ToBlob(photo.data, photo.mime));
+    }
+    await store.replaceAll(parsed.snapshot, blobs);
+    window.location.reload();
+  })();
+});
+
+const clearProjectBtn = getElement('clear-project');
+clearProjectBtn.addEventListener('click', () => {
+  void (async (): Promise<void> => {
+    if (!store) return;
+    if (!confirm('This will delete all photos and POIs in this project. Continue?')) return;
+    await store.clearAll();
+    window.location.reload();
+  })();
+});
 
 function getSnapshot(): AppSnapshot {
   const camLoc = mapView.getLocation();

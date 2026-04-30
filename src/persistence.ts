@@ -62,6 +62,13 @@ export interface Store {
   saveBlob(id: string, blob: Blob): Promise<void>;
   scheduleSave(getSnapshot: () => AppSnapshot): void;
   loadAll(): Promise<{ snapshot: AppSnapshot; blobs: Map<string, Blob> } | null>;
+  // Atomically clears the state + blob stores and writes the new snapshot
+  // and blobs in a single transaction. Used by the bundle-load path to swap
+  // the entire project in one step before the page reloads.
+  replaceAll(snapshot: AppSnapshot, blobs: Map<string, Blob>): Promise<void>;
+  // Atomically clears both stores. Used by the "Clear project" path to
+  // reset to an empty state before the page reloads.
+  clearAll(): Promise<void>;
 }
 
 function promisify<T>(req: IDBRequest<T>): Promise<T> {
@@ -95,14 +102,20 @@ export async function openStore(): Promise<Store | null> {
     return null;
   }
 
+  // Resolves when the transaction commits; rejects on error or abort. The
+  // tag identifies the originating method in error messages.
+  function txComplete(tx: IDBTransaction, tag: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = (): void => { resolve(); };
+      tx.onerror = (): void => { reject(tx.error ?? new Error(`${tag} failed`)); };
+      tx.onabort = (): void => { reject(tx.error ?? new Error(`${tag} aborted`)); };
+    });
+  }
+
   async function saveBlob(id: string, blob: Blob): Promise<void> {
     const tx = db.transaction(BLOBS_STORE, 'readwrite');
     tx.objectStore(BLOBS_STORE).put(blob, id);
-    await new Promise<void>((resolve, reject) => {
-      tx.oncomplete = (): void => { resolve(); };
-      tx.onerror = (): void => { reject(tx.error ?? new Error('saveBlob failed')); };
-      tx.onabort = (): void => { reject(tx.error ?? new Error('saveBlob aborted')); };
-    });
+    await txComplete(tx, 'saveBlob');
   }
 
   async function writeSnapshot(snapshot: AppSnapshot): Promise<void> {
@@ -118,11 +131,7 @@ export async function openStore(): Promise<Store | null> {
       if (typeof key === 'string' && !wantedIds.has(key)) blobStore.delete(key);
     }
 
-    await new Promise<void>((resolve, reject) => {
-      tx.oncomplete = (): void => { resolve(); };
-      tx.onerror = (): void => { reject(tx.error ?? new Error('saveSnapshot failed')); };
-      tx.onabort = (): void => { reject(tx.error ?? new Error('saveSnapshot aborted')); };
-    });
+    await txComplete(tx, 'saveSnapshot');
   }
 
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -150,12 +159,30 @@ export async function openStore(): Promise<Store | null> {
     return { snapshot: raw, blobs };
   }
 
-  return { saveBlob, scheduleSave, loadAll };
+  async function replaceAll(snapshot: AppSnapshot, blobs: Map<string, Blob>): Promise<void> {
+    const tx = db.transaction([STATE_STORE, BLOBS_STORE], 'readwrite');
+    const stateStore = tx.objectStore(STATE_STORE);
+    const blobStore = tx.objectStore(BLOBS_STORE);
+    stateStore.clear();
+    blobStore.clear();
+    stateStore.put(snapshot, SINGLETON_KEY);
+    for (const [id, blob] of blobs) blobStore.put(blob, id);
+    await txComplete(tx, 'replaceAll');
+  }
+
+  async function clearAll(): Promise<void> {
+    const tx = db.transaction([STATE_STORE, BLOBS_STORE], 'readwrite');
+    tx.objectStore(STATE_STORE).clear();
+    tx.objectStore(BLOBS_STORE).clear();
+    await txComplete(tx, 'clearAll');
+  }
+
+  return { saveBlob, scheduleSave, loadAll, replaceAll, clearAll };
 }
 
 // Loose runtime check: anything that doesn't look like a v1 snapshot we
 // treat as missing — better to start clean than to half-restore garbage.
-function isAppSnapshot(v: unknown): v is AppSnapshot {
+export function isAppSnapshot(v: unknown): v is AppSnapshot {
   if (typeof v !== 'object' || v === null) return false;
   const obj = v as Record<string, unknown>;
   return obj.version === 1 && Array.isArray(obj.overlays);
