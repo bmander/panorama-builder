@@ -15,7 +15,6 @@ const SUN_COLOR = 0xfff2cc;
 
 export interface SunMarker {
   setDirection(az: number, alt: number): void;
-  setBakeVisible(visible: boolean): void;
 }
 
 export interface CreateSunMarkerOptions {
@@ -35,26 +34,15 @@ export function createSunMarker({ scene, requestRender }: CreateSunMarkerOptions
   mesh.visible = false;
   scene.add(mesh);
 
-  let bakeHidden = false;
-  let aboveHorizon = false;
-
-  function applyVisibility(): void {
-    mesh.visible = aboveHorizon && !bakeHidden;
-  }
-
   return {
     setDirection(az, alt) {
-      aboveHorizon = alt > 0;
+      const aboveHorizon = alt > 0;
+      mesh.visible = aboveHorizon;
       if (aboveHorizon) {
         const d = sunDirection(az, alt);
         mesh.position.set(d.x * SUN_RADIUS_M, d.y * SUN_RADIUS_M, d.z * SUN_RADIUS_M);
       }
-      applyVisibility();
       requestRender();
-    },
-    setBakeVisible(visible) {
-      bakeHidden = !visible;
-      applyVisibility();
     },
   };
 }

@@ -15,7 +15,9 @@ export interface CreateBakerOptions {
 
 export function createBaker({ renderer, scene, setVisualsVisible }: CreateBakerOptions): Baker {
   const cubeRT = new THREE.WebGLCubeRenderTarget(1024);
-  const cubeCam = new THREE.CubeCamera(0.1, 1000, cubeRT);
+  // Far matches viewer.ts's perspective camera so the cube render captures the
+  // outermost terrain ring (~525 km at lat 47.6, larger nearer the equator).
+  const cubeCam = new THREE.CubeCamera(0.1, 1000000, cubeRT);
   cubeCam.position.set(0, 0, 0);
 
   const equirectScene = new THREE.Scene();
