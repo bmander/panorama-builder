@@ -45,5 +45,6 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 }
 .lock input[type="range"] { width: 120px; accent-color: #fff; }
 #view.tool-poi { cursor: crosshair; }
-.poi-anchor-marker { background: #ff5050; border: 2px solid white; border-radius: 50%;
+.poi-anchor-marker { background: #5080ff; border: 2px solid white; border-radius: 50%;
                      box-shadow: 0 0 3px rgba(0,0,0,0.5); }
+.poi-anchor-marker.selected { background: #ffff66; }

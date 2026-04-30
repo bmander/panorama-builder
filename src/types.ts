@@ -56,6 +56,7 @@ export interface POIBearing {
   readonly az: number;
   readonly uv: { readonly u: number; readonly v: number };
   readonly mapAnchor: LatLng | null;
+  readonly selected: boolean;
 }
 
 // Pose-solver inputs and outputs. The solver works on ALL anchored photos

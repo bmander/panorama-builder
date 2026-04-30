@@ -6,6 +6,10 @@ import type { LatLng } from './types.js';
 
 export const R_EARTH = 6371000;
 
+// Local-tangent-plane approximation: meters per degree latitude is roughly
+// constant (Earth is round); per-degree longitude scales by cos(lat).
+export const M_PER_DEG_LAT = 111320;
+
 export function bearingFromLocation(loc: LatLng, latlng: LatLng): number {
   const φ1 = loc.lat * Math.PI / 180, φ2 = latlng.lat * Math.PI / 180;
   const Δλ = (latlng.lng - loc.lng) * Math.PI / 180;

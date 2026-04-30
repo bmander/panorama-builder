@@ -25,6 +25,7 @@ import {
 } from './dem.js';
 import { fetchImageryTile } from './imagery.js';
 import { sunDirection } from './solar.js';
+import { M_PER_DEG_LAT } from './geo.js';
 
 // Outer-edge angular-pitch target driving the ring layout below: ~5 mrad
 // (~0.29°). At 75° FOV / ~1920 px viewport one screen pixel subtends ~0.7
@@ -64,10 +65,6 @@ const AMBIENT_LIGHT_INTENSITY = 0.7;
 // Far enough that direction is the only thing that matters; lambert ignores
 // magnitude but Three.js still uses the position vector to build the direction.
 const DIR_LIGHT_DISTANCE = 1000;
-
-// Local-tangent-plane approximation: meters per degree latitude is roughly
-// constant (Earth is round); per-degree longitude scales by cos(lat).
-const M_PER_DEG_LAT = 111320;
 
 // Curvature + standard atmospheric refraction. The geometric drop below the
 // tangent plane at distance d from the camera is d²/(2R) (small-angle

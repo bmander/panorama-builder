@@ -14,6 +14,8 @@ import { createTerrainView } from './terrain.js';
 import type { TerrainMode } from './terrain.js';
 import { solarAzAlt } from './solar.js';
 import { createSunMarker } from './sun-marker.js';
+import { createMapPoiColumns } from './map-poi-columns.js';
+import type { MapPoiColumn } from './map-poi-columns.js';
 
 // Open IDB before building UI; null on private mode / unsupported.
 const store: Store | null = await openStore();
@@ -40,8 +42,15 @@ const overlays = createOverlayManager({
     // Skip the map work entirely when the map tab isn't showing — getCones /
     // getPOIs walk every overlay and dirty their world matrices for nothing.
     if (mapView.isVisible()) refreshMapAnnotations();
+    refreshMapPoiColumns();
     runSolve();
     save();
+  },
+  // Skip the solver/save cascade — only the cross-view highlight visuals depend on selection.
+  onSelectionChange: () => {
+    viewer.requestRender();
+    if (mapView.isVisible()) refreshMapAnnotations();
+    refreshMapPoiColumns();
   },
 });
 
@@ -50,12 +59,26 @@ function refreshMapAnnotations(): void {
   mapView.setPOIBearings(overlays.getPOIs());
 }
 
+function refreshMapPoiColumns(): void {
+  const camLoc = mapView.getLocation();
+  const columns: MapPoiColumn[] = [];
+  for (const p of overlays.getPOIs()) {
+    if (p.mapAnchor) columns.push({ anchor: p.mapAnchor, selected: p.selected });
+  }
+  mapPoiColumns.update(camLoc, columns);
+}
+
 const terrain = createTerrainView({
   scene: viewer.scene,
   requestRender: () => { viewer.requestRender(); },
 });
 
 const sunMarker = createSunMarker({
+  scene: viewer.scene,
+  requestRender: () => { viewer.requestRender(); },
+});
+
+const mapPoiColumns = createMapPoiColumns({
   scene: viewer.scene,
   requestRender: () => { viewer.requestRender(); },
 });
@@ -91,6 +114,7 @@ function applyCameraLocation(loc: LatLng): void {
   coordsEl.textContent = `lat ${loc.lat.toFixed(5)}  lng ${loc.lng.toFixed(5)}`;
   terrain.setLocation(loc);
   refreshSunDirection();
+  refreshMapPoiColumns();
 }
 
 // User-configurable solver locks. When a parameter is locked, autoFreeParams's
@@ -270,6 +294,7 @@ const mapView = createMapView({
       // Solver runs via onMutate after the batch closes; no per-handle rotate needed.
     });
   },
+  onPOIAnchorMarkerClick: handle => { overlays.setSelectedPOI(handle); },
   onArmedChange: armed => {
     setLocationBtn.classList.toggle('armed', armed);
     setLocationBtn.textContent = armed ? 'Click map to set…' : 'Set location';

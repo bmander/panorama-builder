@@ -141,10 +141,13 @@ export interface CreateOverlayManagerOptions {
   overlaysGroup: THREE.Group;
   getAnisotropy: () => number;
   onMutate?: () => void;
+  // Separate from onMutate so consumers refresh selection-dependent visuals
+  // without paying the solver/save cascade.
+  onSelectionChange?: () => void;
 }
 
 export function createOverlayManager(
-  { overlaysGroup, getAnisotropy, onMutate }: CreateOverlayManagerOptions,
+  { overlaysGroup, getAnisotropy, onMutate, onSelectionChange }: CreateOverlayManagerOptions,
 ): OverlayManager {
   const overlaySphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), OVERLAY_R);
   let batching = 0;
@@ -463,6 +466,7 @@ export function createOverlayManager(
       if (selectedPOI) setPoiColor(selectedPOI, POI_COLOR);
       selectedPOI = poi;
       if (selectedPOI) setPoiColor(selectedPOI, POI_COLOR_SELECTED);
+      onSelectionChange?.();
     },
     getPOIs() {
       const result: POIBearing[] = [];
@@ -477,6 +481,7 @@ export function createOverlayManager(
             az: azFromLocal(o, poi.position.x, poi.position.y, poi.position.z),
             uv: { ...pData.uv },
             mapAnchor: pData.mapAnchor,
+            selected: poi === selectedPOI,
           });
         }
       }

@@ -21,6 +21,7 @@ export interface CreateMapViewOptions {
   onLocationChange?: (loc: LatLng) => void;
   onPOIAnchorClick?: (handle: THREE.Mesh, latlng: LatLng) => void;
   onPOIAnchorDragged?: (handle: THREE.Mesh, latlng: LatLng, viewerAz: number) => void;
+  onPOIAnchorMarkerClick?: (handle: THREE.Mesh) => void;
   onShowRefresh?: () => void;
   onArmedChange?: (armed: boolean) => void;
 }
@@ -133,6 +134,7 @@ export function createMapView({
   onLocationChange,
   onPOIAnchorClick,
   onPOIAnchorDragged,
+  onPOIAnchorMarkerClick,
   onShowRefresh,
   onArmedChange,
 }: CreateMapViewOptions): MapView {
@@ -169,9 +171,16 @@ export function createMapView({
   }
 
   const CONE_STYLE: L.PolylineOptions = { color: '#ffd84a', weight: 1, fillColor: '#ffd84a', fillOpacity: 0.18 };
-  const POI_STYLE: L.PolylineOptions = { color: '#ff5050', weight: 2, opacity: 0.8 };
+  const POI_COLOR = '#ff5050';
+  const SELECTED_COLOR = '#ffff66';
+  const POI_STYLE: L.PolylineOptions = { color: POI_COLOR, weight: 2, opacity: 0.8 };
   const ANCHOR_ICON = L.divIcon({
     className: 'poi-anchor-marker',
+    iconSize: [14, 14],
+    iconAnchor: [7, 7],
+  });
+  const ANCHOR_ICON_SELECTED = L.divIcon({
+    className: 'poi-anchor-marker selected',
     iconSize: [14, 14],
     iconAnchor: [7, 7],
   });
@@ -226,12 +235,13 @@ export function createMapView({
         const pt = destination(loc, viewerAzToBearing(p.az), distM);
         layer.setLatLngs([[loc.lat, loc.lng], [pt.lat, pt.lng]]);
       });
-    // Re-bind click handlers (closures need fresh poi references).
+    // Re-bind click handlers — closures need fresh poi references.
     for (let i = 0; i < poiLayers.length; i++) {
       const poi = pois[i]!;
       const layer = poiLayers[i]!;
       const handle = poi.handle;
       const az = poi.az;
+      layer.setStyle({ color: poi.selected ? SELECTED_COLOR : POI_COLOR });
       layer.off('click');
       layer.on('click', (e: L.LeafletMouseEvent) => {
         if (!location) return;
@@ -244,26 +254,32 @@ export function createMapView({
 
   function redrawAnchors(): void {
     if (!visible) return;
-    const wanted = new Map<THREE.Mesh, LatLng>();
+    const wanted = new Map<THREE.Mesh, { anchor: LatLng; selected: boolean }>();
     for (const p of pois) {
-      if (p.mapAnchor) wanted.set(p.handle, p.mapAnchor);
+      if (p.mapAnchor) wanted.set(p.handle, { anchor: p.mapAnchor, selected: p.selected });
     }
     for (const [handle, m] of anchorMarkers) {
       if (!wanted.has(handle)) { map.removeLayer(m); anchorMarkers.delete(handle); }
     }
-    for (const [handle, anchor] of wanted) {
+    for (const [handle, { anchor, selected }] of wanted) {
+      const icon = selected ? ANCHOR_ICON_SELECTED : ANCHOR_ICON;
       const existing = anchorMarkers.get(handle);
       if (!existing) {
-        const m = L.marker([anchor.lat, anchor.lng], { draggable: true, icon: ANCHOR_ICON }).addTo(map);
+        const m = L.marker([anchor.lat, anchor.lng], { draggable: true, icon }).addTo(map);
         m.on('drag', (e: L.LeafletEvent) => {
           if (!location) return;
           const ll = (e.target as L.Marker).getLatLng();
           const bearing = bearingFromLocation(location, ll);
           onPOIAnchorDragged?.(handle, ll, bearingToViewerAz(bearing));
         });
+        m.on('click', (e: L.LeafletMouseEvent) => {
+          onPOIAnchorMarkerClick?.(handle);
+          L.DomEvent.stopPropagation(e);
+        });
         anchorMarkers.set(handle, m);
       } else {
         existing.setLatLng([anchor.lat, anchor.lng]);
+        existing.setIcon(icon);
       }
     }
   }
