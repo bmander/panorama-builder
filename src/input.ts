@@ -4,6 +4,7 @@ import type { Viewer } from './viewer.js';
 import { ROLE_BODY, ROLE_HANDLE, ROLE_POI, dirFromAzAlt } from './overlay.js';
 import type { OverlayManager } from './overlay.js';
 import { getRole, overlayData, poiData } from './types.js';
+import type { LatLng } from './types.js';
 
 // Hits inside this UV-distance from any edge of an overlay's body count as
 // "edge" and select the photo. The interior is treated as click-through (pans
@@ -29,6 +30,9 @@ export interface InputController {
   // Toggles the "next click adds a POI" armed state. Click → arm; click again
   // (or click-miss) → un-arm. Fires onPoiArmChange whenever the state flips.
   togglePoiArm(): void;
+  // Forces the armed state off; no-op if already off. Used on tab-switch to
+  // avoid stale arming carrying across views.
+  disarmPoi(): void;
 }
 
 export interface AttachInputOptions {
@@ -44,9 +48,18 @@ export interface AttachInputOptions {
   onShiftWheel?: (deltaPx: number) => void;
   // Fired whenever the "+ POI" arming state flips. Caller updates UI.
   onPoiArmChange?: (armed: boolean) => void;
+  // Hit-test for map-POI columns at the cursor's NDC. Returns the column's
+  // id and lat/lng if the cursor is within the host's screen-space radius,
+  // else null. The host owns the projection math (it has the camera and
+  // column list in scope).
+  findColumnAtNDC?: (ndc: { x: number; y: number }) => { id: string; latlng: LatLng } | null;
+  // Fired whenever the cursor enters or leaves a map-POI column. The host
+  // forwards the id to the columns module so the column re-renders with the
+  // hover (yellow) treatment, signalling "click here to match."
+  onHoveredColumnChange?: (id: string | null) => void;
 }
 
-export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShiftWheel, onPoiArmChange }: AttachInputOptions): InputController {
+export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShiftWheel, onPoiArmChange, findColumnAtNDC, onHoveredColumnChange }: AttachInputOptions): InputController {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -71,11 +84,38 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShif
   let mode: ModeState = null;
   let lastX = 0, lastY = 0;
   let poiArmed = false;
+  // The map-POI column under the cursor (if any). Set by pointermove via the
+  // host's findColumnAtNDC. While non-null the next click will create a paired
+  // image-POI on the underlying photo, anchored to this column's lat/lng.
+  let hoveredColumn: { id: string; latlng: LatLng } | null = null;
+
+  // Crosshair cursor is on for both +POI arming and column-hover (which is
+  // implicit arming for matching).
+  function applyArmedCursor(): void {
+    canvas.classList.toggle('tool-poi', poiArmed || hoveredColumn !== null);
+  }
+
+  function setHoveredColumn(next: { id: string; latlng: LatLng } | null): void {
+    const prevId = hoveredColumn?.id ?? null;
+    const nextId = next?.id ?? null;
+    hoveredColumn = next;
+    if (prevId !== nextId) {
+      onHoveredColumnChange?.(nextId);
+      applyArmedCursor();
+    }
+  }
 
   function togglePoiArm(): void {
     poiArmed = !poiArmed;
-    canvas.classList.toggle('tool-poi', poiArmed);
+    applyArmedCursor();
     onPoiArmChange?.(poiArmed);
+  }
+
+  function disarmPoi(): void {
+    if (!poiArmed) return;
+    poiArmed = false;
+    applyArmedCursor();
+    onPoiArmChange?.(false);
   }
 
   let batchOpen = false;
@@ -114,6 +154,22 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShif
         mode = { type: 'pan' };
       }
       togglePoiArm();
+    }
+    // Hovered column + photo body hit → create a matched POI: a fresh photo
+    // POI on the body at the click UV, anchored to the column's lat/lng.
+    // Both representations end up selected so the user sees the new pair.
+    // addPOI + setPOIMapAnchor each call notify(), but pointerdown's batch
+    // (openBatch above) coalesces them into one onMutate at endDrag.
+    else if (hoveredColumn && bodyHit?.uv) {
+      const o = bodyHit.object.parent as THREE.Group;
+      const col = hoveredColumn;
+      const newPoi = overlays.addPOI(o, bodyHit.uv.x, bodyHit.uv.y);
+      overlays.setPOIMapAnchor(newPoi, col.latlng);
+      overlays.setSelectedPair(newPoi, col.id);
+      // Clear the hover now that the click has been consumed; the cursor
+      // hasn't moved yet, but the next pointermove will recompute.
+      setHoveredColumn(null);
+      mode = { type: 'pan' };
     }
     // 3. Corner handle on the selected photo → resize.
     else if (handleHit && selected && handleHit.object.parent === selected) {
@@ -163,15 +219,26 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShif
   canvas.addEventListener('pointercancel', endDrag);
   canvas.addEventListener('lostpointercapture', endDrag);
   canvas.addEventListener('pointerleave', () => {
-    if (!mode && overlays.setHovered(null)) viewer.requestRender();
+    if (mode) return;
+    if (overlays.setHovered(null)) viewer.requestRender();
+    setHoveredColumn(null);
   });
 
   canvas.addEventListener('pointermove', (e: PointerEvent) => {
     if (!mode) {
-      // No drag in progress — preview the photo edge under the cursor by
-      // toggling its hover outline. Keeps the photos otherwise click-through.
+      // No drag in progress — update both hover affordances:
+      // 1. Map-POI column under cursor → highlights "click here to match."
+      // 2. Photo edge under cursor → outlines the photo for editing.
+      // Column hover takes precedence: if the cursor is over a column, we
+      // suppress the edge-hover so the user gets one clear affordance.
       ndcFromEvent(e);
       raycaster.setFromCamera(ndc, camera);
+      const colHit = findColumnAtNDC?.({ x: ndc.x, y: ndc.y }) ?? null;
+      setHoveredColumn(colHit);
+      if (colHit) {
+        if (overlays.setHovered(null)) viewer.requestRender();
+        return;
+      }
       const hits = raycastOverlays();
       const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
       const hoverTarget = (bodyHit?.uv && isOnEdge(bodyHit.uv))
@@ -256,9 +323,10 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShif
 
   addEventListener('keydown', (e: KeyboardEvent) => {
     if (e.key === 'Backspace' || e.key === 'Delete') {
-      // POI selection takes priority: a selected POI is the more specific
-      // target the user is acting on (vs the photo it sits on).
-      if (overlays.getSelectedPOI()) {
+      // POI selection takes priority: a selected POI (photo-attached OR
+      // standalone map-POI) is the more specific target the user is acting
+      // on (vs the photo it sits on). deleteSelectedPOI handles both kinds.
+      if (overlays.getSelectedPOI() || overlays.getSelectedMapPOI()) {
         overlays.deleteSelectedPOI();
         endDrag();
         onChange();
@@ -290,5 +358,5 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShif
     }
   });
 
-  return { togglePoiArm };
+  return { togglePoiArm, disarmPoi };
 }

@@ -54,12 +54,17 @@ type Slot =
   | { kind: 'camLng' }
   | { kind: 'photo'; photoIndex: number; name: LocalParam };
 
-// Decides which photoAz/sizeRad are worth solving for given a photo's POI count.
-// Camera params are decided globally by the caller (see solveCamera flag).
-export function autoLocalFreeParams(numPois: number): LocalParam[] {
+// Decides which per-photo params are worth solving for given a photo's POI
+// count. Camera params are decided globally by the caller (see solveCamera).
+// `solveRoll` is the user-controlled "Auto-solve photo rotation" toggle —
+// roll only adds a useful DOF once 3+ POIs constrain it, so we keep it off
+// at lower counts even when the toggle is on.
+export function autoLocalFreeParams(numPois: number, solveRoll = false): LocalParam[] {
   if (numPois <= 0) return [];
   if (numPois === 1) return ['photoAz'];
-  return ['photoAz', 'sizeRad'];
+  const free: LocalParam[] = ['photoAz', 'sizeRad'];
+  if (solveRoll && numPois >= 3) free.push('photoRoll');
+  return free;
 }
 
 function projectPOI(pose: Pose, u: number, v: number): { az: number; el: number } {

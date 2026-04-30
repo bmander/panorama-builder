@@ -55,7 +55,7 @@ export function createBaker({ renderer, scene, setVisualsVisible }: CreateBakerO
     const height = width / 2;
     // Cube face = width / 4 matches the equirect's per-90° span at the equator,
     // so detail isn't bottlenecked at the cubemap when sampling for hi-res output.
-    // Floor at 1024 keeps the small flat-preview path inexpensive.
+    // Floor at 1024 to keep small bakes inexpensive.
     const cubeFaceSize = Math.max(1024, Math.ceil(width / 4));
     if (cubeRT.width !== cubeFaceSize) cubeRT.setSize(cubeFaceSize, cubeFaceSize);
     setVisualsVisible(false);

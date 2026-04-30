@@ -59,6 +59,15 @@ export interface POIBearing {
   readonly selected: boolean;
 }
 
+// Standalone map-POI: a free-floating landmark on the map with no parent
+// photo. Rendered as an anchor marker on the map and a vertical column in
+// the 360° viewer (same blue/yellow vocabulary as photo-anchored POIs).
+export interface MapPOIView {
+  readonly id: string;
+  readonly latlng: LatLng;
+  readonly selected: boolean;
+}
+
 // Pose-solver inputs and outputs. The solver works on ALL anchored photos
 // jointly — camera location is a shared parameter, per-photo orientation
 // (photoAz, sizeRad) is local. This is necessary so POIs from every photo
@@ -78,7 +87,7 @@ export interface JointSolveResult {
 }
 
 // Per-photo free parameters. Camera params are global (see solveCamera flag).
-export type LocalParam = 'photoAz' | 'sizeRad';
+export type LocalParam = 'photoAz' | 'sizeRad' | 'photoRoll';
 
 // Names of every parameter the solver can adjust — used by main.ts's lock
 // state. Includes the global camera params alongside the per-photo locals.
@@ -156,7 +165,7 @@ export const getRole = (o: THREE.Object3D): Role | undefined =>
 // Look up an element by id; throw with a clear message if it's missing.
 // Replaces the `document.getElementById('id')!` pattern with a single
 // failure mode that names the missing id. The generic is for the
-// caller's convenience (e.g. `getElement<HTMLCanvasElement>('flat')`)
+// caller's convenience (e.g. `getElement<HTMLInputElement>('haze-slider')`)
 // rather than narrowing — the function just casts.
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
 export const getElement = <T extends HTMLElement = HTMLElement>(id: string): T => {

@@ -32,6 +32,8 @@ export interface AppSnapshot {
   azimuth: number;
   altitude: number;
   fov: number;
+  // 'flat' is a legacy value (the Flat tab was removed); restore code in
+  // main.ts maps it back to '360'.
   tab: '360' | 'flat' | 'map';
   lockCamera: boolean;
   // Legacy boolean — superseded by terrainMode. Kept readable for back-compat
@@ -49,7 +51,11 @@ export interface AppSnapshot {
   refractionEnabled?: boolean;
   // Camera height above local ground (terrain feature). Optional for back-compat.
   cameraHeight?: number;
+  // Auto-solve photo rotation toggle. Optional for back-compat — defaults to false.
+  solvePhotoRoll?: boolean;
   overlays: OverlaySnapshot[];
+  // Standalone map-POIs (free-floating landmarks). Optional for back-compat.
+  mapPois?: { id: string; lat: number; lng: number }[];
 }
 
 export interface Store {

@@ -1,7 +1,7 @@
 import * as L from 'leaflet';
 import type * as THREE from 'three';
 import { R_EARTH, bearingFromLocation, viewerAzToBearing, bearingToViewerAz } from './geo.js';
-import type { Cone, LatLng, POIBearing } from './types.js';
+import type { Cone, LatLng, MapPOIView, POIBearing } from './types.js';
 import { TILE_PX, fetchTileElevations, tileYToLat } from './dem.js';
 
 export interface MapView {
@@ -10,10 +10,15 @@ export interface MapView {
   viewerAzToAnchor(latlng: LatLng): number;
   setOverlayCones(newCones: Cone[]): void;
   setPOIBearings(newPOIs: POIBearing[]): void;
+  setMapPOIs(mapPois: readonly MapPOIView[]): void;
   isVisible(): boolean;
   onShow(): void;
   onHide(): void;
   toggleSetLocationArmed(): void;
+  toggleMapPoiArm(): void;
+  // Disarms both armed states. Used on tab switch so the user doesn't get
+  // surprised by stale arming when they come back to the Map tab.
+  disarmAll(): void;
 }
 
 export interface CreateMapViewOptions {
@@ -22,8 +27,12 @@ export interface CreateMapViewOptions {
   onPOIAnchorClick?: (handle: THREE.Mesh, latlng: LatLng) => void;
   onPOIAnchorDragged?: (handle: THREE.Mesh, latlng: LatLng, viewerAz: number) => void;
   onPOIAnchorMarkerClick?: (handle: THREE.Mesh) => void;
+  onMapPoiArmedAddClick?: (latlng: LatLng) => void;
+  onMapPoiClick?: (id: string) => void;
+  onMapPoiDragged?: (id: string, latlng: LatLng) => void;
   onShowRefresh?: () => void;
   onArmedChange?: (armed: boolean) => void;
+  onMapPoiArmedChange?: (armed: boolean) => void;
 }
 
 const HIST_ATTR = 'Historical maps via <a href="https://bmander.com/seamap">bmander.com/seamap</a>';
@@ -135,8 +144,12 @@ export function createMapView({
   onPOIAnchorClick,
   onPOIAnchorDragged,
   onPOIAnchorMarkerClick,
+  onMapPoiArmedAddClick,
+  onMapPoiClick,
+  onMapPoiDragged,
   onShowRefresh,
   onArmedChange,
+  onMapPoiArmedChange,
 }: CreateMapViewOptions): MapView {
   const layers: Record<string, L.Layer> = {
     'Sanborn 1884': histLayer(1884),
@@ -168,13 +181,27 @@ export function createMapView({
   // setIcon() rebuilds the marker's DOM element, which kills any drag in
   // progress, so we only swap when selection actually changes.
   const anchorMarkers = new Map<THREE.Mesh, { marker: L.Marker; selected: boolean }>();
+  let mapPoiData: readonly MapPOIView[] = [];
+  // Standalone-map-POI markers, keyed by id. Parallel structure to anchorMarkers.
+  const mapPoiMarkers = new Map<string, { marker: L.Marker; selected: boolean }>();
   let visible = false;
   let setLocationArmed = false;
+  let mapPoiArmed = false;
+  // Shared crosshair-cursor class is on whenever EITHER armed mode is active.
+  function applyArmedCursor(): void {
+    container.classList.toggle('armed', setLocationArmed || mapPoiArmed);
+  }
   function setArmed(v: boolean): void {
     if (setLocationArmed === v) return;
     setLocationArmed = v;
-    container.classList.toggle('armed', v);
+    applyArmedCursor();
     onArmedChange?.(v);
+  }
+  function setMapPoiArmed(v: boolean): void {
+    if (mapPoiArmed === v) return;
+    mapPoiArmed = v;
+    applyArmedCursor();
+    onMapPoiArmedChange?.(v);
   }
 
   const CONE_STYLE: L.PolylineOptions = { color: '#ffd84a', weight: 1, fillColor: '#ffd84a', fillOpacity: 0.18 };
@@ -299,7 +326,38 @@ export function createMapView({
     }
   }
 
-  function redrawAll(): void { redrawCones(); redrawPOIs(); redrawAnchors(); }
+  function redrawMapPoiAnchors(): void {
+    if (!visible) return;
+    const wanted = new Map<string, MapPOIView>();
+    for (const m of mapPoiData) wanted.set(m.id, m);
+    for (const [id, entry] of mapPoiMarkers) {
+      if (!wanted.has(id)) { map.removeLayer(entry.marker); mapPoiMarkers.delete(id); }
+    }
+    for (const [id, view] of wanted) {
+      const icon = view.selected ? ANCHOR_ICON_SELECTED : ANCHOR_ICON;
+      const existing = mapPoiMarkers.get(id);
+      if (!existing) {
+        const m = L.marker([view.latlng.lat, view.latlng.lng], { draggable: true, icon }).addTo(map);
+        m.on('drag', (e: L.LeafletEvent) => {
+          const ll = (e.target as L.Marker).getLatLng();
+          onMapPoiDragged?.(id, ll);
+        });
+        m.on('click', (e: L.LeafletMouseEvent) => {
+          onMapPoiClick?.(id);
+          L.DomEvent.stopPropagation(e);
+        });
+        mapPoiMarkers.set(id, { marker: m, selected: view.selected });
+      } else {
+        existing.marker.setLatLng([view.latlng.lat, view.latlng.lng]);
+        if (existing.selected !== view.selected) {
+          existing.marker.setIcon(icon);
+          existing.selected = view.selected;
+        }
+      }
+    }
+  }
+
+  function redrawAll(): void { redrawCones(); redrawPOIs(); redrawAnchors(); redrawMapPoiAnchors(); }
 
   function ensureMarker(latlng: L.LatLngExpression): void {
     if (marker) { marker.setLatLng(latlng); return; }
@@ -313,6 +371,11 @@ export function createMapView({
   }
 
   map.on('click', (e: L.LeafletMouseEvent) => {
+    if (mapPoiArmed) {
+      setMapPoiArmed(false);
+      onMapPoiArmedAddClick?.({ lat: e.latlng.lat, lng: e.latlng.lng });
+      return;
+    }
     if (!setLocationArmed) return;
     setArmed(false);
     location = { lat: e.latlng.lat, lng: e.latlng.lng };
@@ -339,6 +402,10 @@ export function createMapView({
     },
     setOverlayCones(newCones: Cone[]): void { cones = newCones; redrawCones(); },
     setPOIBearings(newPOIs: POIBearing[]): void { pois = newPOIs; redrawPOIs(); redrawAnchors(); },
+    setMapPOIs(newMapPOIs: readonly MapPOIView[]): void {
+      mapPoiData = newMapPOIs;
+      redrawMapPoiAnchors();
+    },
     isVisible: () => visible,
     onShow(): void {
       // Pull fresh annotation data into our cone/POI caches first. The setters'
@@ -353,5 +420,7 @@ export function createMapView({
     },
     onHide(): void { visible = false; },
     toggleSetLocationArmed(): void { setArmed(!setLocationArmed); },
+    toggleMapPoiArm(): void { setMapPoiArmed(!mapPoiArmed); },
+    disarmAll(): void { setArmed(false); setMapPoiArmed(false); },
   };
 }

@@ -17,9 +17,10 @@ import type { LatLng } from './types.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
 
 // Vertical extent relative to the camera origin: well below ground and well
-// above any plausible landmark.
-const COLUMN_Y_MIN_M = -1000;
-const COLUMN_Y_MAX_M = 5000;
+// above any plausible landmark. Exported so the matcher's hit-test (in
+// main.ts) can project the same endpoints when computing screen distance.
+export const COLUMN_Y_MIN_M = -1000;
+export const COLUMN_Y_MAX_M = 5000;
 // Blue is the visual vocabulary for map-POIs; yellow when selected (matches
 // the photo handle + anchor marker selected fill).
 const COLUMN_COLOR = 0x5080ff;
@@ -27,12 +28,18 @@ const COLUMN_COLOR_SELECTED = 0xffff66;
 const COLUMN_RENDER_ORDER = 999;
 
 export interface MapPoiColumn {
+  readonly id: string;
   readonly anchor: LatLng;
   readonly selected: boolean;
 }
 
 export interface MapPoiColumns {
   update(camLoc: LatLng | null, columns: readonly MapPoiColumn[]): void;
+  // Highlights one column as the matcher target. The hover treatment uses
+  // the same yellow material as selection — pre-click feedback that "this
+  // is what would be matched if you clicked now."
+  setHoveredColumn(id: string | null): void;
+  setVisible(visible: boolean): void;
 }
 
 export interface CreateMapPoiColumnsOptions {
@@ -65,20 +72,39 @@ export function createMapPoiColumns({ scene, requestRender }: CreateMapPoiColumn
   const group = new THREE.Group();
   scene.add(group);
 
+  let hoveredId: string | null = null;
+  let lastColumns: readonly MapPoiColumn[] = [];
+  function pickMaterial(c: MapPoiColumn): THREE.LineBasicMaterial {
+    return (c.selected || c.id === hoveredId) ? materialSelected : material;
+  }
+
   return {
+    setVisible(visible) { group.visible = visible; },
     update(camLoc, columns) {
       group.clear();
+      lastColumns = columns;
       if (camLoc === null || columns.length === 0) {
         requestRender();
         return;
       }
       for (const c of columns) {
         const { x, z } = latLngToCameraRelativeMeters(c.anchor, camLoc);
-        const line = new THREE.Line(lineGeom, c.selected ? materialSelected : material);
+        const line = new THREE.Line(lineGeom, pickMaterial(c));
         line.position.set(x, 0, z);
         line.renderOrder = COLUMN_RENDER_ORDER;
         line.frustumCulled = false;
         group.add(line);
+      }
+      requestRender();
+    },
+    setHoveredColumn(id) {
+      if (hoveredId === id) return;
+      hoveredId = id;
+      // Re-apply materials in place — no need to rebuild geometry.
+      for (let i = 0; i < group.children.length; i++) {
+        const c = lastColumns[i];
+        if (!c) continue;
+        (group.children[i] as THREE.Line).material = pickMaterial(c);
       }
       requestRender();
     },

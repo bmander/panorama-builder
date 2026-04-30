@@ -7,20 +7,34 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div id="flat-wrap"><canvas id="flat"></canvas></div>
   <div id="map-wrap">
     <div id="map"></div>
     <button id="set-location" class="btn">Set location</button>
     <div id="map-coords"></div>
   </div>
-  <div id="tabs">
-    <button id="tab-360" class="btn tab">360°</button>
-    <button id="tab-flat" class="btn tab">Flat</button>
-    <button id="tab-map" class="btn tab">Map</button>
+  <div id="top-right">
+    <button id="settings-btn" class="btn" aria-expanded="false">⚙ Settings</button>
+    <button id="add-poi" class="btn">+ POI</button>
+    <button id="download" class="btn">download PNG</button>
+    <div id="tabs">
+      <button id="tab-360" class="btn tab">360°</button>
+      <button id="tab-map" class="btn tab">Map</button>
+    </div>
   </div>
-  <button id="download" class="btn">download PNG</button>
-  <button id="settings-btn" class="btn" aria-expanded="false">⚙ Settings</button>
   <div id="settings-panel" hidden>
+    <label class="settings-check"><input type="checkbox" id="lock-camera"> Lock camera position</label>
+    <label class="settings-check"><input type="checkbox" id="solve-roll-toggle"> Auto-solve photo rotation</label>
+    <label class="settings-inline">Terrain
+      <select id="terrain-mode">
+        <option value="off">off</option>
+        <option value="wireframe">wireframe</option>
+        <option value="shaded">shaded</option>
+      </select>
+    </label>
+    <label class="settings-inline">Sun <input type="datetime-local" id="sun-datetime" step="60"></label>
+    <label class="settings-inline" id="overlay-opacity-row">Photo opacity
+      <input type="range" id="overlay-opacity" min="0" max="100" value="100" step="1">
+    </label>
     <div class="settings-row">
       <label for="haze-slider">Atmospheric haze</label>
       <input type="range" id="haze-slider" min="0" max="100" value="17" step="1">
@@ -29,23 +43,6 @@
     <label class="settings-check"><input type="checkbox" id="refraction-toggle" checked> Atmospheric refraction</label>
   </div>
   <div id="hud"></div>
-  <div id="tools">
-    <button id="add-poi" class="btn">+ POI</button>
-  </div>
-  <div id="locks">
-    <label class="lock"><input type="checkbox" id="lock-camera"> Lock camera position</label>
-    <label class="lock">Terrain
-      <select id="terrain-mode">
-        <option value="off">off</option>
-        <option value="wireframe">wireframe</option>
-        <option value="shaded">shaded</option>
-      </select>
-    </label>
-    <label class="lock">Sun <input type="datetime-local" id="sun-datetime" step="60"></label>
-    <label class="lock" id="overlay-opacity-row">Photo opacity
-      <input type="range" id="overlay-opacity" min="0" max="100" value="100" step="1">
-    </label>
-  </div>
   <script type="importmap">
     {
       "imports": {

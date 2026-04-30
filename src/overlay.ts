@@ -8,6 +8,7 @@ import {
 import type {
   Cone,
   LatLng,
+  MapPOIView,
   POIBearing,
   Pose,
   Role,
@@ -132,7 +133,20 @@ export interface OverlayManager {
   deleteSelectedPOI(): void;
   getSelectedPOI(): THREE.Mesh | null;
   setSelectedPOI(poi: THREE.Mesh | null): void;
+  // Sets photo-POI and map-POI selection together, firing onSelectionChange
+  // exactly once. Used by the matcher click so refresh paths run once for
+  // the pair instead of twice (one per setter).
+  setSelectedPair(poi: THREE.Mesh | null, mapPOIId: string | null): void;
   getPOIs(): POIBearing[];
+  // Standalone map-POIs (no parent photo). Stored at the manager level rather
+  // than on any overlay; the joint solver ignores them.
+  addMapPOI(latlng: LatLng): string;
+  // Restores a map-POI with its persisted id (vs addMapPOI which generates a fresh one).
+  restoreMapPOI(id: string, latlng: LatLng): void;
+  setMapPOILatLng(id: string, latlng: LatLng): void;
+  getMapPOIs(): MapPOIView[];
+  getSelectedMapPOI(): string | null;
+  setSelectedMapPOI(id: string | null): void;
   getCones(): Cone[];
   setVisualsVisible(visible: boolean): void;
 }
@@ -159,6 +173,12 @@ export function createOverlayManager(
   let selected: THREE.Group | null = null;
   let selectedPOI: THREE.Mesh | null = null;
   let hoveredOverlay: THREE.Group | null = null;
+
+  // Standalone map-POIs (free-floating landmarks). Mutable {id, latlng} pairs.
+  // Selection is mutually exclusive with `selectedPOI` — at most one of the
+  // two is non-null at a time.
+  const mapPois: { id: string; latlng: LatLng }[] = [];
+  let selectedMapPOIId: string | null = null;
 
   // Returns viewer-azimuth (CCW from -Z) of a point given in an overlay's local frame.
   const azScratch = new THREE.Vector3();
@@ -422,7 +442,9 @@ export function createOverlayManager(
       };
     },
     applyPose(o, pose) {
-      // photoTilt and photoRoll are preserved (solver doesn't touch them).
+      // photoTilt is always preserved (solver never touches it). photoRoll is
+      // preserved unless the user enabled "Auto-solve photo rotation," in
+      // which case the solver may have refined it.
       overlayData(o).photoRoll = pose.photoRoll;
       placeAt(o, dirFromAzAlt(pose.photoAz, pose.photoTilt), pose.photoRoll);
       overlayData(o).sizeRad = THREE.MathUtils.clamp(pose.sizeRad, SIZE_MIN, SIZE_MAX);
@@ -446,6 +468,14 @@ export function createOverlayManager(
       notify();
     },
     deleteSelectedPOI() {
+      if (selectedMapPOIId) {
+        const i = mapPois.findIndex(m => m.id === selectedMapPOIId);
+        if (i >= 0) mapPois.splice(i, 1);
+        selectedMapPOIId = null;
+        onSelectionChange?.();
+        notify();
+        return;
+      }
       if (!selectedPOI) return;
       const poi = selectedPOI;
       manager.setSelectedPOI(null);
@@ -468,6 +498,18 @@ export function createOverlayManager(
       if (selectedPOI) setPoiColor(selectedPOI, POI_COLOR_SELECTED);
       onSelectionChange?.();
     },
+    setSelectedPair(poi, mapPOIId) {
+      const photoChanged = selectedPOI !== poi;
+      const mapChanged = selectedMapPOIId !== mapPOIId;
+      if (!photoChanged && !mapChanged) return;
+      if (photoChanged) {
+        if (selectedPOI) setPoiColor(selectedPOI, POI_COLOR);
+        selectedPOI = poi;
+        if (selectedPOI) setPoiColor(selectedPOI, POI_COLOR_SELECTED);
+      }
+      if (mapChanged) selectedMapPOIId = mapPOIId;
+      onSelectionChange?.();
+    },
     getPOIs() {
       const result: POIBearing[] = [];
       for (const child of overlaysGroup.children) {
@@ -486,6 +528,35 @@ export function createOverlayManager(
         }
       }
       return result;
+    },
+    addMapPOI(latlng) {
+      const id = crypto.randomUUID();
+      mapPois.push({ id, latlng: { lat: latlng.lat, lng: latlng.lng } });
+      notify();
+      return id;
+    },
+    restoreMapPOI(id, latlng) {
+      mapPois.push({ id, latlng: { lat: latlng.lat, lng: latlng.lng } });
+      notify();
+    },
+    setMapPOILatLng(id, latlng) {
+      const entry = mapPois.find(m => m.id === id);
+      if (!entry) return;
+      entry.latlng = { lat: latlng.lat, lng: latlng.lng };
+      notify();
+    },
+    getMapPOIs() {
+      return mapPois.map(m => ({
+        id: m.id,
+        latlng: m.latlng,
+        selected: m.id === selectedMapPOIId,
+      }));
+    },
+    getSelectedMapPOI: () => selectedMapPOIId,
+    setSelectedMapPOI(id) {
+      if (selectedMapPOIId === id) return;
+      selectedMapPOIId = id;
+      onSelectionChange?.();
     },
     getCones() {
       // Sample each vertical edge at its centerline (y=0). For tilted overlays the

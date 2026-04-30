@@ -14,8 +14,9 @@ import { createTerrainView } from './terrain.js';
 import type { TerrainMode } from './terrain.js';
 import { solarAzAlt } from './solar.js';
 import { createSunMarker } from './sun-marker.js';
-import { createMapPoiColumns } from './map-poi-columns.js';
+import { createMapPoiColumns, COLUMN_Y_MIN_M, COLUMN_Y_MAX_M } from './map-poi-columns.js';
 import type { MapPoiColumn } from './map-poi-columns.js';
+import { latLngToCameraRelativeMeters } from './geo.js';
 
 // Open IDB before building UI; null on private mode / unsupported.
 const store: Store | null = await openStore();
@@ -57,6 +58,7 @@ const overlays = createOverlayManager({
 function refreshMapAnnotations(): void {
   mapView.setOverlayCones(overlays.getCones());
   mapView.setPOIBearings(overlays.getPOIs());
+  mapView.setMapPOIs(overlays.getMapPOIs());
 }
 
 function refreshMapPoiColumns(): void {
@@ -68,7 +70,14 @@ function refreshMapPoiColumns(): void {
   const camLoc = mapView.getLocation();
   const columns: MapPoiColumn[] = [];
   for (const p of overlays.getPOIs()) {
-    if (p.mapAnchor) columns.push({ anchor: p.mapAnchor, selected: p.selected });
+    // Photo-anchored POIs share the column ids of the host POI's mesh uuid —
+    // any stable string works since this id is only consumed by the columns
+    // module's hover lookup, and photo-anchored POIs don't participate in
+    // the hover-to-match flow (matching only applies to standalone map-POIs).
+    if (p.mapAnchor) columns.push({ id: p.handle.uuid, anchor: p.mapAnchor, selected: p.selected });
+  }
+  for (const m of overlays.getMapPOIs()) {
+    columns.push({ id: m.id, anchor: m.latlng, selected: m.selected });
   }
   mapPoiColumns.update(camLoc, columns);
 }
@@ -91,10 +100,13 @@ const mapPoiColumns = createMapPoiColumns({
 const baker = createBaker({
   renderer: viewer.renderer,
   scene: viewer.scene,
-  // Hide only the authoring overlays (selection outlines, handles, POI dots).
-  // Terrain, sun, and fog stay visible so the Flat tab and the downloaded PNG
-  // match what the user composed in the 360° viewer.
-  setVisualsVisible: visible => { overlays.setVisualsVisible(visible); },
+  // Hide only the authoring overlays (selection outlines, handles, POI dots,
+  // map-anchor columns). Terrain, sun, and fog stay visible so the Flat tab
+  // and the downloaded PNG match what the user composed in the 360° viewer.
+  setVisualsVisible: visible => {
+    overlays.setVisualsVisible(visible);
+    mapPoiColumns.setVisible(visible);
+  },
 });
 
 const hud = createHud(() => {
@@ -217,6 +229,13 @@ refractionToggleEl.addEventListener('change', () => {
 });
 refreshRefractionAvailability();
 
+const solveRollToggleEl = getElement<HTMLInputElement>('solve-roll-toggle');
+solveRollToggleEl.addEventListener('change', () => {
+  // Re-solve so the new free-param set takes effect immediately.
+  runSolve();
+  save();
+});
+
 // Run the joint photo-pose solver across every overlay with anchored POIs.
 // All photos share one camera location, so POIs from every photo contribute
 // evidence to it; each photo's photoAz/sizeRad is local. The solver decides
@@ -246,7 +265,7 @@ function solveAllPhotos(): void {
             anchorLat: anchor.lat, anchorLng: anchor.lng,
           };
         }),
-        free: autoLocalFreeParams(anchored.length),
+        free: autoLocalFreeParams(anchored.length, solveRollToggleEl.checked),
       },
     });
   }
@@ -279,6 +298,7 @@ function solveAllPhotos(): void {
   }
 }
 
+const addPoiBtnEl = getElement('add-poi');
 const setLocationBtn = getElement('set-location');
 const mapView = createMapView({
   container: getElement('map'),
@@ -300,10 +320,16 @@ const mapView = createMapView({
     });
   },
   onPOIAnchorMarkerClick: handle => { overlays.setSelectedPOI(handle); },
+  onMapPoiArmedAddClick: latlng => { overlays.addMapPOI(latlng); },
+  onMapPoiClick: id => { overlays.setSelectedMapPOI(id); },
+  onMapPoiDragged: (id, latlng) => {
+    overlays.withBatch(() => { overlays.setMapPOILatLng(id, latlng); });
+  },
   onArmedChange: armed => {
     setLocationBtn.classList.toggle('armed', armed);
     setLocationBtn.textContent = armed ? 'Click map to set…' : 'Set location';
   },
+  onMapPoiArmedChange: armed => { addPoiBtnEl.classList.toggle('armed', armed); },
 });
 setLocationBtn.addEventListener('click', () => { mapView.toggleSetLocationArmed(); });
 
@@ -333,7 +359,40 @@ opacitySliderEl.addEventListener('input', () => {
   save();
 });
 
-const addPoiBtnEl = getElement('add-poi');
+// Screen-space hit radius for the matcher: a click within this NDC distance
+// of a column's projected line segment counts as a hit. ~0.04 ≈ 40 px on a
+// 1080-tall viewport — generous enough that thin column lines are easy to grab.
+const COLUMN_NDC_HIT_RADIUS = 0.04;
+const _baseProjected = new THREE.Vector3();
+const _topProjected = new THREE.Vector3();
+// Distance in NDC from point p to the segment a-b (2D, ignoring z).
+function ndcSegmentDistance(p: { x: number; y: number }, a: THREE.Vector3, b: THREE.Vector3): number {
+  const abx = b.x - a.x, aby = b.y - a.y;
+  const apx = p.x - a.x, apy = p.y - a.y;
+  const lenSq = abx * abx + aby * aby;
+  const t = lenSq > 0 ? Math.max(0, Math.min(1, (apx * abx + apy * aby) / lenSq)) : 0;
+  return Math.hypot(apx - t * abx, apy - t * aby);
+}
+// Only standalone map-POI columns are hover-matchable — matching a
+// photo-anchored column would create a duplicate paired POI at the same
+// lat/lng, which isn't useful.
+function findColumnAtNDC(ndc: { x: number; y: number }): { id: string; latlng: LatLng } | null {
+  const camLoc = mapView.getLocation();
+  if (!camLoc) return null;
+  let best: { id: string; latlng: LatLng } | null = null;
+  let bestDist = COLUMN_NDC_HIT_RADIUS;
+  for (const m of overlays.getMapPOIs()) {
+    const { x, z } = latLngToCameraRelativeMeters(m.latlng, camLoc);
+    _baseProjected.set(x, COLUMN_Y_MIN_M, z).project(viewer.camera);
+    _topProjected.set(x, COLUMN_Y_MAX_M, z).project(viewer.camera);
+    // Both endpoints behind the camera → segment isn't visible at all.
+    if (_baseProjected.z > 1 && _topProjected.z > 1) continue;
+    const d = ndcSegmentDistance(ndc, _baseProjected, _topProjected);
+    if (d < bestDist) { bestDist = d; best = { id: m.id, latlng: m.latlng }; }
+  }
+  return best;
+}
+
 const input = attachInput({
   viewer,
   overlays,
@@ -350,18 +409,21 @@ const input = attachInput({
     save();
   },
   onPoiArmChange: armed => { addPoiBtnEl.classList.toggle('armed', armed); },
+  findColumnAtNDC,
+  onHoveredColumnChange: id => { mapPoiColumns.setHoveredColumn(id); },
 });
-addPoiBtnEl.addEventListener('click', () => { input.togglePoiArm(); });
-const viewTabs = attachViewTabs({ baker, viewer, hud, mapView });
-// Authoring controls (tools, locks panel) only matter in the 360° viewer
-// where the user is composing the panorama. Hide them on the Flat / Map tabs.
-const toolsEl = getElement('tools');
-const locksEl = getElement('locks');
+// + POI is contextual: on 360° it arms photo-POI placement; on Map it arms
+// standalone-map-POI placement. Both armed states share the button's glow.
+addPoiBtnEl.addEventListener('click', () => {
+  if (viewTabs.getMode() === '360') input.togglePoiArm();
+  else mapView.toggleMapPoiArm();
+});
+const viewTabs = attachViewTabs({ viewer, hud, mapView });
 viewTabs.onModeChange(mode => {
-  const is360 = mode === '360';
-  toolsEl.style.display = is360 ? '' : 'none';
-  locksEl.style.display = is360 ? '' : 'none';
-  if (is360) refreshMapPoiColumns();
+  // Disarm all armed states on tab switch so stale arming doesn't carry.
+  input.disarmPoi();
+  mapView.disarmAll();
+  if (mode === '360') refreshMapPoiColumns();
   save();
 });
 attachDownload({ baker });
@@ -400,7 +462,9 @@ function getSnapshot(): AppSnapshot {
     hazeDensity: hazeSliderToDensity(parseFloat(hazeSliderEl.value)),
     curvatureEnabled: terrain.getCurvatureEnabled(),
     refractionEnabled: terrain.getRefractionEnabled(),
+    solvePhotoRoll: solveRollToggleEl.checked,
     overlays: overlaysSnap,
+    mapPois: overlays.getMapPOIs().map(m => ({ id: m.id, lat: m.latlng.lat, lng: m.latlng.lng })),
   };
 }
 
@@ -439,6 +503,7 @@ if (persisted) {
     terrain.setRefractionEnabled(snapshot.refractionEnabled);
   }
   refreshRefractionAvailability();
+  if (snapshot.solvePhotoRoll !== undefined) solveRollToggleEl.checked = snapshot.solvePhotoRoll;
   const restoredMode: TerrainMode =
     snapshot.terrainMode ?? (snapshot.terrainEnabled ? 'wireframe' : 'off');
   terrainModeEl.value = restoredMode;
@@ -459,9 +524,16 @@ if (persisted) {
     });
   })));
 
-  // Tab last — switching to map/flat triggers Leaflet/bake which need
-  // overlays in place. Default to '360' if persisted value is invalid.
-  viewTabs.setMode(snapshot.tab);
+  // Restore standalone map-POIs (preserve original ids so save/load is idempotent).
+  if (snapshot.mapPois) {
+    for (const m of snapshot.mapPois) {
+      overlays.restoreMapPOI(m.id, { lat: m.lat, lng: m.lng });
+    }
+  }
+
+  // Tab last — switching to map triggers Leaflet which needs overlays in
+  // place. Map the legacy 'flat' value (when there was a Flat tab) onto '360'.
+  viewTabs.setMode(snapshot.tab === 'flat' ? '360' : snapshot.tab);
   restoring = false;
 }
 
