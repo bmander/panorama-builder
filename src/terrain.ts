@@ -93,7 +93,6 @@ export interface TerrainView {
   setLocation(camLoc: LatLng | null): void;
   setMode(mode: TerrainMode): void;
   getMode(): TerrainMode;
-  setBakeVisible(visible: boolean): void;
   // Sun direction for the 'shaded' mode. Azimuth is radians from north
   // clockwise; altitude is radians above the horizon. Negative altitudes are
   // accepted (sun below horizon → terrain falls into ambient-only).
@@ -355,7 +354,6 @@ async function buildRing(
 
 export function createTerrainView({ scene, requestRender }: CreateTerrainViewOptions): TerrainView {
   let mode: TerrainMode = 'off';
-  let bakeHidden = false;
   let location: LatLng | null = null;
   let meshes: THREE.Mesh[] = [];
   // Parallel to `meshes`. Kept separately so swapMaterials (wireframe ↔ shaded)
@@ -407,7 +405,7 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
   }
 
   function applyVisibility(): void {
-    const visible = mode !== 'off' && !bakeHidden;
+    const visible = mode !== 'off';
     for (const m of meshes) m.visible = visible;
   }
 
@@ -506,10 +504,6 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       }
     },
     getMode: () => mode,
-    setBakeVisible(visible) {
-      bakeHidden = !visible;
-      applyVisibility();
-    },
     setSunDirection(az, alt) {
       if (sunAz === az && sunAlt === alt) return;
       sunAz = az;

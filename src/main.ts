@@ -63,11 +63,10 @@ const sunMarker = createSunMarker({
 const baker = createBaker({
   renderer: viewer.renderer,
   scene: viewer.scene,
-  setVisualsVisible: visible => {
-    overlays.setVisualsVisible(visible);
-    terrain.setBakeVisible(visible);
-    sunMarker.setBakeVisible(visible);
-  },
+  // Hide only the authoring overlays (selection outlines, handles, POI dots).
+  // Terrain, sun, and fog stay visible so the Flat tab and the downloaded PNG
+  // match what the user composed in the 360° viewer.
+  setVisualsVisible: visible => { overlays.setVisualsVisible(visible); },
 });
 
 const hud = createHud(() => {
@@ -305,7 +304,16 @@ const input = attachInput({
   },
 });
 const viewTabs = attachViewTabs({ baker, viewer, hud, mapView });
-viewTabs.onModeChange(() => { save(); });
+// Authoring controls (tools, locks panel) only matter in the 360° viewer
+// where the user is composing the panorama. Hide them on the Flat / Map tabs.
+const toolsEl = getElement('tools');
+const locksEl = getElement('locks');
+viewTabs.onModeChange(mode => {
+  const is360 = mode === '360';
+  toolsEl.style.display = is360 ? '' : 'none';
+  locksEl.style.display = is360 ? '' : 'none';
+  save();
+});
 attachDownload({ baker });
 attachToolPalette({ input });
 
