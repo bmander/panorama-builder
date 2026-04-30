@@ -21,9 +21,8 @@ export interface MapView {
   isVisible(): boolean;
   onShow(): void;
   onHide(): void;
-  toggleSetLocationArmed(): void;
   toggleMapPoiArm(): void;
-  // Disarms both armed states. Used on tab switch so the user doesn't get
+  // Disarms armed states. Used on tab switch so the user doesn't get
   // surprised by stale arming when they come back to the Map tab.
   disarmAll(): void;
 }
@@ -38,8 +37,8 @@ export interface CreateMapViewOptions {
   onMapPoiClick?: (id: string) => void;
   onMapPoiDragged?: (id: string, latlng: LatLng) => void;
   onProjectMarkerOpen?: (id: string) => void;
+  onStartProjectHere?: (latlng: LatLng) => void;
   onShowRefresh?: () => void;
-  onArmedChange?: (armed: boolean) => void;
   onMapPoiArmedChange?: (armed: boolean) => void;
 }
 
@@ -160,8 +159,8 @@ export function createMapView({
   onMapPoiClick,
   onMapPoiDragged,
   onProjectMarkerOpen,
+  onStartProjectHere,
   onShowRefresh,
-  onArmedChange,
   onMapPoiArmedChange,
 }: CreateMapViewOptions): MapView {
   const layers: Record<string, L.Layer> = {
@@ -198,22 +197,11 @@ export function createMapView({
   // Standalone-map-POI markers, keyed by id. Parallel structure to anchorMarkers.
   const mapPoiMarkers = new Map<string, { marker: L.Marker; selected: boolean }>();
   let visible = false;
-  let setLocationArmed = false;
   let mapPoiArmed = false;
-  // Shared crosshair-cursor class is on whenever EITHER armed mode is active.
-  function applyArmedCursor(): void {
-    container.classList.toggle('armed', setLocationArmed || mapPoiArmed);
-  }
-  function setArmed(v: boolean): void {
-    if (setLocationArmed === v) return;
-    setLocationArmed = v;
-    applyArmedCursor();
-    onArmedChange?.(v);
-  }
   function setMapPoiArmed(v: boolean): void {
     if (mapPoiArmed === v) return;
     mapPoiArmed = v;
-    applyArmedCursor();
+    container.classList.toggle('armed', mapPoiArmed);
     onMapPoiArmedChange?.(v);
   }
 
@@ -245,6 +233,15 @@ export function createMapView({
     iconAnchor: [18, 18],
   });
   const projectMarkers = new Map<string, L.Marker>();
+  const GO_POPUP_OPTS: L.PopupOptions = { className: 'project-popup', closeButton: true };
+  const goButtonHtml = (label: string): string => `<button type="button" class="go">${label}</button>`;
+  function wireGoButton(popup: L.Popup, onClick: () => void): void {
+    const btn = popup.getElement()?.querySelector<HTMLButtonElement>('.go');
+    btn?.addEventListener('click', () => {
+      map.closePopup(popup);
+      onClick();
+    }, { once: true });
+  }
 
   function screenDiagonalMeters(): number {
     const s = map.getSize();
@@ -401,14 +398,20 @@ export function createMapView({
     if (mapPoiArmed) {
       setMapPoiArmed(false);
       onMapPoiArmedAddClick?.({ lat: e.latlng.lat, lng: e.latlng.lng });
-      return;
     }
-    if (!setLocationArmed) return;
-    setArmed(false);
-    location = { lat: e.latlng.lat, lng: e.latlng.lng };
-    ensureMarker(e.latlng);
-    onLocationChange?.(location);
-    redrawAll();
+  });
+  map.on('contextmenu', (e: L.LeafletMouseEvent) => {
+    // Skip when the right-click landed on a marker or popup — those have
+    // their own contextmenu / popup handling and we don't want to clobber it.
+    const target = e.originalEvent.target as Element | null;
+    if (target?.closest('.leaflet-marker-icon, .leaflet-popup')) return;
+    L.DomEvent.preventDefault(e.originalEvent);
+    const latlng: LatLng = { lat: e.latlng.lat, lng: e.latlng.lng };
+    const popup = L.popup(GO_POPUP_OPTS)
+      .setLatLng(e.latlng)
+      .setContent(goButtonHtml('Start project here'))
+      .openOn(map);
+    wireGoButton(popup, () => onStartProjectHere?.(latlng));
   });
   map.on('zoomend', redrawAll);
   map.on('resize', redrawAll);
@@ -446,15 +449,14 @@ export function createMapView({
         }
         const m = L.marker([p.latlng.lat, p.latlng.lng]);
         const popupHtml = `<span class="name">${escapeHtml(p.label)}</span>`
-          + `<button type="button" class="go" data-id="${p.id}">Go to project →</button>`;
-        m.bindPopup(popupHtml, { className: 'project-popup', closeButton: true });
+          + goButtonHtml('Go to project →');
+        m.bindPopup(popupHtml, GO_POPUP_OPTS);
         m.on('contextmenu', (e: L.LeafletMouseEvent) => {
           L.DomEvent.preventDefault(e.originalEvent);
           m.openPopup();
         });
         m.on('popupopen', (e: L.PopupEvent) => {
-          const btn = e.popup.getElement()?.querySelector<HTMLButtonElement>('.go');
-          btn?.addEventListener('click', () => { onProjectMarkerOpen?.(p.id); }, { once: true });
+          wireGoButton(e.popup, () => onProjectMarkerOpen?.(p.id));
         });
         m.addTo(map);
         projectMarkers.set(p.id, m);
@@ -473,8 +475,7 @@ export function createMapView({
       redrawAll();
     },
     onHide(): void { visible = false; },
-    toggleSetLocationArmed(): void { setArmed(!setLocationArmed); },
     toggleMapPoiArm(): void { setMapPoiArmed(!mapPoiArmed); },
-    disarmAll(): void { setArmed(false); setMapPoiArmed(false); },
+    disarmAll(): void { setMapPoiArmed(false); },
   };
 }

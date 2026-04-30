@@ -28,11 +28,8 @@ function parseLocationIdFromURL(): string | null {
   const m = ID_RE.exec(location.pathname);
   return m ? m[1]! : null;
 }
-function pushLocationToURL(id: string): void {
-  history.replaceState(null, '', '/' + id);
-}
 
-let currentLocationId: string | null = parseLocationIdFromURL();
+const currentLocationId: string | null = parseLocationIdFromURL();
 
 // --- Sync state ---------------------------------------------------------
 
@@ -138,7 +135,7 @@ const hud = createHud(() => {
 });
 
 const coordsEl = getElement('map-coords');
-coordsEl.textContent = 'no location set — click "Set location"';
+coordsEl.textContent = 'no location set — right-click the map to start a project';
 
 function applyCameraLocation(loc: LatLng): void {
   coordsEl.textContent = `lat ${loc.lat.toFixed(5)}  lng ${loc.lng.toFixed(5)}`;
@@ -290,7 +287,6 @@ function solveAllPhotos(): void {
 }
 
 const addPoiBtnEl = getElement('add-poi');
-const setLocationBtn = getElement('set-location');
 
 const mapView = createMapView({
   container: getElement('map'),
@@ -312,14 +308,10 @@ const mapView = createMapView({
   onMapPoiDragged: (id, latlng) => {
     overlays.withBatch(() => { overlays.setMapPOILatLng(id, latlng); });
   },
-  onArmedChange: armed => {
-    setLocationBtn.classList.toggle('armed', armed);
-    setLocationBtn.textContent = armed ? 'Click map to set…' : 'Set location';
-  },
   onMapPoiArmedChange: armed => { addPoiBtnEl.classList.toggle('armed', armed); },
   onProjectMarkerOpen: id => { location.assign('/' + id); },
+  onStartProjectHere: loc => { void handleStartProjectHere(loc); },
 });
-setLocationBtn.addEventListener('click', () => { mapView.toggleSetLocationArmed(); });
 
 const SHIFT_WHEEL_LOG_PER_PX = 0.005;
 
@@ -415,22 +407,47 @@ function applyLocationGate(): void {
 }
 attachDownload({ baker });
 
+// --- Admin modal -------------------------------------------------------
+
+const adminBtn = getElement<HTMLButtonElement>('admin-btn');
+const adminModal = getElement('admin-modal');
+const adminCloseBtn = getElement<HTMLButtonElement>('admin-close');
+const adminDeleteBtn = getElement<HTMLButtonElement>('admin-delete');
+function openAdminModal(): void { adminModal.hidden = false; }
+function closeAdminModal(): void { adminModal.hidden = true; }
+adminBtn.addEventListener('click', openAdminModal);
+adminCloseBtn.addEventListener('click', closeAdminModal);
+adminModal.addEventListener('click', e => {
+  if (e.target === adminModal) closeAdminModal();
+});
+adminDeleteBtn.addEventListener('click', () => {
+  if (!currentLocationId) return;
+  if (!confirm('Delete this project? Photos, POIs, and matches will be removed permanently.')) return;
+  adminDeleteBtn.disabled = true;
+  void api.deleteLocation(currentLocationId)
+    .then(() => { location.assign('/'); })
+    .catch((err: unknown) => {
+      adminDeleteBtn.disabled = false;
+      console.error('delete project failed:', err);
+      alert('Could not delete the project.');
+    });
+});
+
 // --- Orchestration: creates always go through the API, then mutate scene ---
 
 async function handleSetLocation(loc: LatLng): Promise<void> {
-  if (!currentLocationId) {
-    // First-ever location: POST creates the project and binds it to the URL.
-    const created = await api.createLocation(loc);
-    currentLocationId = created.id;
-    pushLocationToURL(created.id);
-    synced.location = { lat: created.lat, lng: created.lng };
-    mapView.setProjectMarkers([]);
-  } else {
-    synced.location = { lat: loc.lat, lng: loc.lng };
-    await api.updateLocation(currentLocationId, loc);
-  }
+  if (!currentLocationId) return;
+  synced.location = { lat: loc.lat, lng: loc.lng };
+  await api.updateLocation(currentLocationId, loc);
   applyCameraLocation(loc);
   runSolve();
+}
+
+async function handleStartProjectHere(loc: LatLng): Promise<void> {
+  const created = await api.createLocation(loc);
+  // Hard navigate so the new project hydrates from a clean state, regardless
+  // of whether we were on / or some other /<id>.
+  location.assign('/' + created.id);
 }
 
 async function handlePhotoDropped(
@@ -770,6 +787,7 @@ async function bootstrap(): Promise<void> {
     overlays.setSelected(null);
     overlays.setSelectedPOI(null);
     overlays.setSelectedMapPOI(null);
+    adminBtn.hidden = false;
   } else {
     void showProjectMarkers();
   }

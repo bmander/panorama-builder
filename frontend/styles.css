@@ -9,8 +9,6 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 #map-coords { position: fixed; bottom: 30px; left: 10px; padding: 4px 8px;
               background: rgba(0,0,0,0.5); color: #fff; font: 12px monospace;
               border: 1px solid #fff; pointer-events: none; z-index: 1000; }
-#set-location { position: fixed; bottom: 60px; left: 10px; z-index: 1000; }
-#set-location.armed { background: rgba(255,220,80,0.45); }
 #map.armed { cursor: crosshair; }
 .btn { padding: 6px 10px; background: rgba(0,0,0,0.5);
        color: #fff; border: 1px solid #fff; font: 12px monospace; cursor: pointer; }
@@ -43,3 +41,14 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .project-popup .go:hover { background: #155bbd; }
 .poi-anchor-marker { color: #5080ff; filter: drop-shadow(0 0 2px rgba(0,0,0,0.85)); }
 .poi-anchor-marker.selected { color: #ffff66; }
+#admin-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+               display: flex; align-items: center; justify-content: center; z-index: 2000; }
+#admin-modal[hidden] { display: none; }
+#admin-modal-panel { background: rgba(0,0,0,0.85); color: #fff; border: 1px solid #fff;
+                     padding: 16px; min-width: 240px; font: 12px monospace;
+                     display: flex; flex-direction: column; gap: 12px; }
+#admin-modal-panel .modal-header { display: flex; align-items: center; justify-content: space-between;
+                                   font-weight: bold; }
+#admin-modal-panel .modal-header .btn { padding: 2px 6px; }
+.btn.danger { color: #ff8080; border-color: #ff8080; }
+.btn.danger:hover { background: rgba(255,80,80,0.2); }
