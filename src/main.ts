@@ -3,7 +3,7 @@ import { createViewer, HAZE_DENSITY_MAX } from './viewer.js';
 import { createOverlayManager } from './overlay.js';
 import { createBaker } from './bake.js';
 import { attachInput } from './input.js';
-import { createHud, attachViewTabs, attachDownload, attachToolPalette } from './ui.js';
+import { createHud, attachViewTabs, attachDownload } from './ui.js';
 import { createMapView } from './map.js';
 import { solveJointPose, autoLocalFreeParams } from './solver.js';
 import { getElement, meshMat, overlayData, poiData } from './types.js';
@@ -303,6 +303,7 @@ opacitySliderEl.addEventListener('input', () => {
   save();
 });
 
+const addPoiBtnEl = getElement('add-poi');
 const input = attachInput({
   viewer,
   overlays,
@@ -318,7 +319,9 @@ const input = attachInput({
     hud.refresh();
     save();
   },
+  onPoiArmChange: armed => { addPoiBtnEl.classList.toggle('armed', armed); },
 });
+addPoiBtnEl.addEventListener('click', () => { input.togglePoiArm(); });
 const viewTabs = attachViewTabs({ baker, viewer, hud, mapView });
 // Authoring controls (tools, locks panel) only matter in the 360° viewer
 // where the user is composing the panorama. Hide them on the Flat / Map tabs.
@@ -331,7 +334,6 @@ viewTabs.onModeChange(mode => {
   save();
 });
 attachDownload({ baker });
-attachToolPalette({ input });
 
 function getSnapshot(): AppSnapshot {
   const camLoc = mapView.getLocation();
@@ -360,7 +362,6 @@ function getSnapshot(): AppSnapshot {
     altitude,
     fov: viewer.camera.fov,
     tab: viewTabs.getMode(),
-    tool: input.getTool(),
     lockCamera: lockCameraEl.checked,
     terrainMode: terrain.getMode(),
     sunDateTime: sunDateTimeEl.value,
@@ -376,8 +377,6 @@ function save(): void {
   if (restoring) return; // ignore self-induced saves while replaying
   store?.scheduleSave(getSnapshot);
 }
-
-input.onToolChange(() => { save(); });
 
 // --- Restore from persisted state, if any ---
 let restoring = false;
@@ -395,7 +394,6 @@ if (persisted) {
   viewer.setFov(snapshot.fov);
   lockCameraEl.checked = snapshot.lockCamera;
   applyCameraLock(snapshot.lockCamera);
-  input.setTool(snapshot.tool);
   if (snapshot.cameraHeight !== undefined) terrain.setCameraHeight(snapshot.cameraHeight);
   if (snapshot.hazeDensity !== undefined) {
     viewer.setFogDensity(snapshot.hazeDensity);

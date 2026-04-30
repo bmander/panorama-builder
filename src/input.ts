@@ -5,10 +5,14 @@ import { ROLE_BODY, ROLE_HANDLE, ROLE_POI, dirFromAzAlt } from './overlay.js';
 import type { OverlayManager } from './overlay.js';
 import { getRole, overlayData, poiData } from './types.js';
 
-export type Tool = 'move' | 'poi' | 'navigate';
-export const TOOL_MOVE = 'move' satisfies Tool;
-export const TOOL_POI = 'poi' satisfies Tool;
-export const TOOL_NAVIGATE = 'navigate' satisfies Tool;
+// Hits inside this UV-distance from any edge of an overlay's body count as
+// "edge" and select the photo. The interior is treated as click-through (pans
+// the camera) for an unselected photo.
+const EDGE_THRESHOLD = 0.08;
+
+function isOnEdge(uv: THREE.Vector2): boolean {
+  return Math.min(uv.x, 1 - uv.x, uv.y, 1 - uv.y) < EDGE_THRESHOLD;
+}
 
 // Discriminated state machine for the active pointer drag. `null` = no drag in
 // progress. Each variant carries exactly the state its handler needs, so
@@ -22,9 +26,9 @@ type ModeState =
   | null;
 
 export interface InputController {
-  setTool(newTool: Tool): void;
-  getTool(): Tool;
-  onToolChange(cb: (tool: Tool) => void): void;
+  // Toggles the "next click adds a POI" armed state. Click → arm; click again
+  // (or click-miss) → un-arm. Fires onPoiArmChange whenever the state flips.
+  togglePoiArm(): void;
 }
 
 export interface AttachInputOptions {
@@ -38,9 +42,11 @@ export interface AttachInputOptions {
   // Fired on shift+wheel with the same normalized px-delta the FOV path uses.
   // Routed out so the host module decides what shift-wheel does.
   onShiftWheel?: (deltaPx: number) => void;
+  // Fired whenever the "+ POI" arming state flips. Caller updates UI.
+  onPoiArmChange?: (armed: boolean) => void;
 }
 
-export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShiftWheel }: AttachInputOptions): InputController {
+export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShiftWheel, onPoiArmChange }: AttachInputOptions): InputController {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -62,16 +68,14 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShif
       .filter(h => getRole(h.object) !== undefined);
   }
 
-  let tool: Tool = TOOL_MOVE;
   let mode: ModeState = null;
   let lastX = 0, lastY = 0;
-  const toolChangeCbs: ((tool: Tool) => void)[] = [];
+  let poiArmed = false;
 
-  function setTool(newTool: Tool): void {
-    if (tool === newTool) return;
-    tool = newTool;
-    canvas.classList.toggle('tool-poi', tool === TOOL_POI);
-    for (const cb of toolChangeCbs) cb(tool);
+  function togglePoiArm(): void {
+    poiArmed = !poiArmed;
+    canvas.classList.toggle('tool-poi', poiArmed);
+    onPoiArmChange?.(poiArmed);
   }
 
   let batchOpen = false;
@@ -87,41 +91,41 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShif
     // re-fire the solver / map redraw / bake-dirty cascade. Closed in endDrag.
     openBatch();
 
-    if (tool === TOOL_NAVIGATE) {
-      // Inspect-only mode: any drag pans the camera regardless of what was
-      // clicked. Photos and POIs are click-through; selection is preserved.
-      mode = { type: 'pan' };
-    } else if (tool === TOOL_POI) {
-      const poiHit = hits.find(h => getRole(h.object) === ROLE_POI);
-      const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
-      if (poiHit) {
-        const poiMesh = poiHit.object as THREE.Mesh;
-        overlays.setSelectedPOI(poiMesh);
-        mode = { type: 'poi-drag', poi: poiMesh };
-        viewer.requestRender();
-      } else if (bodyHit?.uv) {
+    const poiHit = hits.find(h => getRole(h.object) === ROLE_POI);
+    const handleHit = hits.find(h => getRole(h.object) === ROLE_HANDLE);
+    const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
+    const selected = overlays.getSelected();
+
+    // 1. POI hits always start a POI drag, regardless of selection state.
+    if (poiHit) {
+      const poiMesh = poiHit.object as THREE.Mesh;
+      overlays.setSelectedPOI(poiMesh);
+      mode = { type: 'poi-drag', poi: poiMesh };
+      viewer.requestRender();
+      if (poiArmed) togglePoiArm();
+    }
+    // 2. "+ POI" armed: click on body adds a POI; miss un-arms and pans.
+    else if (poiArmed) {
+      if (bodyHit?.uv) {
         const o = bodyHit.object.parent as THREE.Group;
         const poi = overlays.addPOI(o, bodyHit.uv.x, bodyHit.uv.y);
         mode = { type: 'poi-drag', poi };
       } else {
-        overlays.setSelectedPOI(null);
         mode = { type: 'pan' };
-        viewer.requestRender();
       }
-    } else {
-      const handleHit = hits.find(h => getRole(h.object) === ROLE_HANDLE);
-      const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
-      const selected = overlays.getSelected();
-      if (handleHit && selected && handleHit.object.parent === selected) {
-        const center = projectToScreen(selected.position);
-        const dx = e.clientX - center.x, dy = e.clientY - center.y;
-        mode = {
-          type: 'resize',
-          dist: Math.hypot(dx, dy) || 1,
-          sizeRad: overlayData(selected).sizeRad,
-        };
-      } else if (bodyHit) {
-        const o = bodyHit.object.parent as THREE.Group;
+      togglePoiArm();
+    }
+    // 3. Corner handle on the selected photo → resize.
+    else if (handleHit && selected && handleHit.object.parent === selected) {
+      const center = projectToScreen(selected.position);
+      const dx = e.clientX - center.x, dy = e.clientY - center.y;
+      mode = { type: 'resize', dist: Math.hypot(dx, dy) || 1, sizeRad: overlayData(selected).sizeRad };
+    }
+    // 4. Body hit. Edge clicks always select+drag; interior clicks only drag if
+    //    the photo is already selected (otherwise treat as click-through).
+    else if (bodyHit?.uv) {
+      const o = bodyHit.object.parent as THREE.Group;
+      if (isOnEdge(bodyHit.uv) || selected === o) {
         if (selected !== o) { overlays.setSelected(o); onChange(); }
         if (e.shiftKey) {
           const center = projectToScreen(o.position);
@@ -136,9 +140,16 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShif
           mode = { type: 'move' };
         }
       } else {
+        // Body interior of an inactive photo → click-through; deselect any
+        // currently active photo (matches "click off the photo deactivates").
         if (selected) { overlays.setSelected(null); onChange(); }
         mode = { type: 'pan' };
       }
+    }
+    // 5. Empty space → deselect + pan.
+    else {
+      if (selected) { overlays.setSelected(null); onChange(); }
+      mode = { type: 'pan' };
     }
     lastX = e.clientX; lastY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
@@ -151,9 +162,24 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShif
   canvas.addEventListener('pointerup', endDrag);
   canvas.addEventListener('pointercancel', endDrag);
   canvas.addEventListener('lostpointercapture', endDrag);
+  canvas.addEventListener('pointerleave', () => {
+    if (!mode && overlays.setHovered(null)) viewer.requestRender();
+  });
 
   canvas.addEventListener('pointermove', (e: PointerEvent) => {
-    if (!mode) return;
+    if (!mode) {
+      // No drag in progress — preview the photo edge under the cursor by
+      // toggling its hover outline. Keeps the photos otherwise click-through.
+      ndcFromEvent(e);
+      raycaster.setFromCamera(ndc, camera);
+      const hits = raycastOverlays();
+      const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
+      const hoverTarget = (bodyHit?.uv && isOnEdge(bodyHit.uv))
+        ? bodyHit.object.parent as THREE.Group
+        : null;
+      if (overlays.setHovered(hoverTarget)) viewer.requestRender();
+      return;
+    }
     switch (mode.type) {
       case 'pan': {
         const dx = e.clientX - lastX, dy = e.clientY - lastY;
@@ -230,7 +256,9 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShif
 
   addEventListener('keydown', (e: KeyboardEvent) => {
     if (e.key === 'Backspace' || e.key === 'Delete') {
-      if (tool === TOOL_POI && overlays.getSelectedPOI()) {
+      // POI selection takes priority: a selected POI is the more specific
+      // target the user is acting on (vs the photo it sits on).
+      if (overlays.getSelectedPOI()) {
         overlays.deleteSelectedPOI();
         endDrag();
         onChange();
@@ -262,8 +290,5 @@ export function attachInput({ viewer, overlays, onChange, onOverlayAdded, onShif
     }
   });
 
-  return {
-    setTool, getTool: () => tool,
-    onToolChange(cb: (tool: Tool) => void): void { toolChangeCbs.push(cb); },
-  };
+  return { togglePoiArm };
 }
