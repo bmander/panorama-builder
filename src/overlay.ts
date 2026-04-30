@@ -26,8 +26,51 @@ export const ROLE_POI = 'poi' satisfies Role;
 
 const POI_COLOR = 0xff5050;
 const POI_COLOR_SELECTED = 0xffff66;
-// POI sphere radius = this fraction of the overlay's world width — scales with the photo.
-const POI_WIDTH_FRACTION = 0.012;
+// POI radius = this fraction of the overlay's world width — scales with the photo.
+const POI_WIDTH_FRACTION = 0.018;
+
+// POI marker: crosshair-inside-a-circle, drawn procedurally on a 2×2 plane so
+// the lines stay crisp at any scale. A small gap at the center exposes the
+// target pixel for precise placement.
+function makePoiMaterial(): THREE.ShaderMaterial {
+  const material = new THREE.ShaderMaterial({
+    uniforms: { color: { value: new THREE.Color(POI_COLOR) } },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      precision highp float;
+      uniform vec3 color;
+      varying vec2 vUv;
+      void main() {
+        vec2 p = (vUv - 0.5) * 2.0;
+        float r = length(p);
+        float ring = 1.0 - smoothstep(0.04, 0.06, abs(r - 0.7));
+        float chh = (1.0 - smoothstep(0.03, 0.05, abs(p.y))) * step(0.10, abs(p.x)) * step(abs(p.x), 0.85);
+        float chv = (1.0 - smoothstep(0.03, 0.05, abs(p.x))) * step(0.10, abs(p.y)) * step(abs(p.y), 0.85);
+        float a = max(ring, max(chh, chv));
+        if (a < 0.01) discard;
+        gl_FragColor = vec4(color, a);
+      }
+    `,
+    transparent: true,
+    depthTest: false,
+    side: THREE.DoubleSide,
+  });
+  material.customProgramCacheKey = (): string => 'poi-reticle';
+  return material;
+}
+
+function setPoiColor(poi: THREE.Mesh, hex: number): void {
+  const mat = poi.material as THREE.ShaderMaterial;
+  (mat.uniforms.color!.value as THREE.Color).setHex(hex);
+}
+
+const POI_GEOM = new THREE.PlaneGeometry(2, 2);
 
 const widthFromSizeRad = (sr: number): number => 2 * OVERLAY_R * Math.tan(sr / 2);
 
@@ -242,10 +285,7 @@ export function createOverlayManager(
       overlaysGroup.add(o);
       for (const p of snapshot.pois) {
         // addPOI assumes selection visuals; bypass it here and add directly.
-        const poi = new THREE.Mesh(
-          new THREE.SphereGeometry(1, 12, 8),
-          new THREE.MeshBasicMaterial({ color: POI_COLOR, depthTest: false, transparent: true }),
-        );
+        const poi = new THREE.Mesh(POI_GEOM, makePoiMaterial());
         const pdata = poiData(poi);
         pdata.role = ROLE_POI;
         pdata.uv = { u: p.u, v: p.v };
@@ -304,8 +344,8 @@ export function createOverlayManager(
       bodyMat.dispose();
       if (data.pois) {
         for (const p of data.pois) {
-          p.geometry.dispose();
-          meshMat(p).dispose();
+          // POIs share POI_GEOM (don't dispose) but each has its own material.
+          (p.material as THREE.Material).dispose();
         }
       }
       notify();
@@ -316,11 +356,8 @@ export function createOverlayManager(
     },
     getSelectedOpacity: () => selected ? meshMat(overlayData(selected).body).opacity : null,
     addPOI(o, u, v) {
-      // Unit sphere; applySize() scales it per overlay width.
-      const poi = new THREE.Mesh(
-        new THREE.SphereGeometry(1, 12, 8),
-        new THREE.MeshBasicMaterial({ color: POI_COLOR, depthTest: false, transparent: true }),
-      );
+      // Unit-radius reticle plane; applySize() scales it per overlay width.
+      const poi = new THREE.Mesh(POI_GEOM, makePoiMaterial());
       const pData = poiData(poi);
       pData.role = ROLE_POI;
       pData.uv = { u, v };
@@ -389,16 +426,16 @@ export function createOverlayManager(
         const i = arr.indexOf(poi);
         if (i >= 0) arr.splice(i, 1);
       }
-      poi.geometry.dispose();
-      meshMat(poi).dispose();
+      // POI shares POI_GEOM; only the material is per-POI.
+      (poi.material as THREE.Material).dispose();
       notify();
     },
     getSelectedPOI: () => selectedPOI,
     setSelectedPOI(poi) {
       if (selectedPOI === poi) return;
-      if (selectedPOI) meshMat(selectedPOI).color.setHex(POI_COLOR);
+      if (selectedPOI) setPoiColor(selectedPOI, POI_COLOR);
       selectedPOI = poi;
-      if (selectedPOI) meshMat(selectedPOI).color.setHex(POI_COLOR_SELECTED);
+      if (selectedPOI) setPoiColor(selectedPOI, POI_COLOR_SELECTED);
     },
     getPOIs() {
       const result: POIBearing[] = [];
