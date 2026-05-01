@@ -541,16 +541,7 @@ export function createOverlayManager(
       const entry = mapMeasurements.find(m => m.id === id);
       if (!entry) return;
       entry.latlng = { lat: latlng.lat, lng: latlng.lng };
-      // v1 mirror: a map measurement's lat/lng is also the CP's estimated
-      // location. Update the CP; downstream consumers (solver, columns,
-      // bearing rays) read the CP estimate directly.
-      if (entry.controlPointId) {
-        const cp = controlPoints.find(c => c.id === entry.controlPointId);
-        if (cp) {
-          cp.estLat = latlng.lat;
-          cp.estLng = latlng.lng;
-        }
-      }
+      // CP est_* is solver-owned; the marker is a soft-prior observation only.
       notify();
     },
     getMapMeasurements() {

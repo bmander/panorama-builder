@@ -5,8 +5,15 @@
 import * as THREE from 'three';
 import { solveJointPose, autoLocalFreeParams } from './solver.js';
 import { overlayData, poiData } from './types.js';
-import type { JointPhoto, LatLng, POIProjection, SolverParam } from './types.js';
+import type {
+  ControlPointSeed, JointPhoto, LatLng, MapPrior, POIProjection, SolverParam,
+} from './types.js';
 import type { OverlayManager } from './overlay.js';
+
+// One global σ in meters for every map prior. Roughly equivalent to ~1.7° of
+// bearing slop at typical anchor distances; image bearings outvote the prior
+// when they agree more strongly than that.
+const MAP_PRIOR_SIGMA_M = 30;
 
 export interface SolverLoop {
   runSolve(): void;
@@ -33,9 +40,8 @@ export function createSolverLoop({
     if (!camLoc) return;
 
     interface PhotoEntry { overlay: THREE.Group; photo: JointPhoto; }
-    // Snapshot CP estimates once so the per-POI lookup below is O(1) instead
-    // of a linear scan inside the inner loop.
     const cpById = new Map(overlays.getControlPoints().map(cp => [cp.id, cp]));
+    const cpsWithImageObs = new Set<string>();
     const entries: PhotoEntry[] = [];
     for (const o of overlays.listOverlays() as THREE.Group[]) {
       const anchored: POIProjection[] = [];
@@ -44,7 +50,8 @@ export function createSolverLoop({
         if (pd.controlPointId === null) continue;
         const cp = cpById.get(pd.controlPointId);
         if (cp?.estLat == null || cp.estLng == null) continue;
-        anchored.push({ u: pd.uv.u, v: pd.uv.v, anchorLat: cp.estLat, anchorLng: cp.estLng });
+        anchored.push({ u: pd.uv.u, v: pd.uv.v, controlPointId: pd.controlPointId });
+        cpsWithImageObs.add(pd.controlPointId);
       }
       if (anchored.length === 0) continue;
       entries.push({
@@ -58,19 +65,35 @@ export function createSolverLoop({
     }
     if (entries.length === 0) return;
 
-    const totalPois = entries.reduce((s, e) => s + e.photo.pois.length, 0);
-    const localUnknowns = entries.reduce((s, e) => s + e.photo.free.length, 0);
+    const controlPoints: ControlPointSeed[] = [...cpsWithImageObs].map(id => {
+      const cp = cpById.get(id)!;
+      return { id, lat: cp.estLat!, lng: cp.estLng! };
+    });
+
+    // Priors only for CPs that also have image observations — a prior alone
+    // has nothing to fight against and would just sit on the dot.
+    const mapPriors: MapPrior[] = overlays.getMapMeasurements()
+      .filter(m => m.controlPointId !== null && cpsWithImageObs.has(m.controlPointId))
+      .map(m => ({
+        cpId: m.controlPointId!, lat: m.latlng.lat, lng: m.latlng.lng,
+        sigmaMeters: MAP_PRIOR_SIGMA_M,
+      }));
+
     const cameraLocked = lockedParams.has('camLat') || lockedParams.has('camLng');
-    const solveCamera = !cameraLocked && totalPois >= localUnknowns + 2;
 
     const proposed: { camLoc: LatLng | null } = { camLoc: null };
     overlays.withBatch(() => {
       const result = solveJointPose({
         camLoc,
         photos: entries.map(e => e.photo),
-        solveCamera,
+        controlPoints,
+        mapPriors,
+        solveCamera: !cameraLocked,
       });
       entries.forEach((e, i) => { overlays.applyPose(e.overlay, result.photos[i]!.pose); });
+      for (const cp of result.controlPoints) {
+        overlays.setControlPointEst(cp.id, { lat: cp.lat, lng: cp.lng });
+      }
       if (result.cameraMoved) proposed.camLoc = result.camLoc;
     });
     if (proposed.camLoc) onCameraMovedBySolver(proposed.camLoc);

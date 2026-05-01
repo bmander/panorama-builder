@@ -1,11 +1,15 @@
-// Joint photo-pose solver. Given many photos sharing a single panorama camera
-// location, runs Gauss-Newton with finite-difference Jacobian to minimize
-// per-POI bearing residuals across ALL photos at once. Camera location is a
-// shared free parameter; each photo's photoAz/sizeRad is local.
+// Joint photo-pose + control-point solver. Given many photos sharing a
+// single panorama camera location, runs Gauss-Newton with finite-difference
+// Jacobian to minimize:
 //
-// Map anchors carry only lat/lng — no elevation. Each POI therefore yields
-// ONE equation (azimuth match); the photos' vertical tilt and the camera's
-// height are unobservable from this data and never enter the solve.
+//   1. Per-image-POI bearing residuals (predicted azimuth from camera + pose
+//      vs. azimuth toward the linked CP's current lat/lng estimate).
+//   2. Per-map-prior penalty residuals: gaussian (1/σ-scaled) pulls on each
+//      CP's lat/lng toward the user's map-measurement observation.
+//
+// Camera location and per-photo photoAz/sizeRad are free; CP lat/lng become
+// free for any CP that has a map prior (otherwise it'd be unbounded along the
+// bearing ray).
 //
 // Pose shape (per photo): { photoAz, photoTilt, photoRoll, sizeRad, aspect, camLat, camLng }
 //   - photoAz:        viewer-azimuth (CCW from −Z) of overlay center — local free
@@ -18,17 +22,18 @@
 //   - aspect:         photo width/height (locked input)
 //   - camLat, camLng: panorama camera location — GLOBAL free, shared across photos
 //
-// POI shape: { u, v, anchorLat, anchorLng }
-//   - u, v ∈ [0,1] image coords; anchor is the map POI's lat/lng.
+// POI shape: { u, v, controlPointId } — the solver dereferences the CP's
+// current working lat/lng each residual evaluation.
 
-import { bearingFromLocation, bearingToViewerAz } from './geo.js';
+import { bearingFromLocation, bearingToViewerAz, latLngToCameraRelativeMeters } from './geo.js';
 import type {
+  ControlPointSeed,
   JointPhoto,
   JointSolveResult,
   LatLng,
   LocalParam,
+  MapPrior,
   Mutable,
-  POIProjection,
   Pose,
 } from './types.js';
 
@@ -52,7 +57,9 @@ function clampSizeRad(p: WorkingPose): void {
 type Slot =
   | { kind: 'camLat' }
   | { kind: 'camLng' }
-  | { kind: 'photo'; photoIndex: number; name: LocalParam };
+  | { kind: 'photo'; photoIndex: number; name: LocalParam }
+  | { kind: 'cpLat'; cpId: string }
+  | { kind: 'cpLng'; cpId: string };
 
 // Decides which per-photo params are worth solving for given a photo's POI
 // count. Camera params are decided globally by the caller (see solveCamera).
@@ -117,21 +124,15 @@ function projectPOI(pose: Pose, u: number, v: number): { az: number; el: number 
   };
 }
 
-function targetBearingFor(
-  pose: Pose,
-  anchor: { anchorLat: number; anchorLng: number },
-): number {
-  const camLoc = { lat: pose.camLat, lng: pose.camLng };
-  return bearingToViewerAz(bearingFromLocation(camLoc, { lat: anchor.anchorLat, lng: anchor.anchorLng }));
+function targetBearing(pose: Pose, anchorLat: number, anchorLng: number): number {
+  return bearingToViewerAz(bearingFromLocation(
+    { lat: pose.camLat, lng: pose.camLng },
+    { lat: anchorLat, lng: anchorLng },
+  ));
 }
 
 const wrapPI = (a: number): number =>
   ((a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
-
-function poiResidual(pose: Pose, poi: POIProjection): number {
-  const img = projectPOI(pose, poi.u, poi.v);
-  return wrapPI(img.az - targetBearingFor(pose, poi));
-}
 
 function residualNorm(r: readonly number[]): number {
   let s = 0;
@@ -168,10 +169,13 @@ function solveLinear(A: number[][], b: number[]): number[] | null {
   return x;
 }
 
-function emptyResult(camLoc: LatLng, photos: readonly JointPhoto[]): JointSolveResult {
+function emptyResult(
+  camLoc: LatLng, photos: readonly JointPhoto[], controlPoints: readonly ControlPointSeed[],
+): JointSolveResult {
   return {
     camLoc,
     photos: photos.map(p => ({ pose: { ...p.pose } })),
+    controlPoints: controlPoints.map(cp => ({ id: cp.id, lat: cp.lat, lng: cp.lng })),
     residualRMS: 0,
     iterations: 0,
     cameraMoved: false,
@@ -181,9 +185,11 @@ function emptyResult(camLoc: LatLng, photos: readonly JointPhoto[]): JointSolveR
 export function solveJointPose(options: {
   readonly camLoc: LatLng;
   readonly photos: readonly JointPhoto[];
+  readonly controlPoints: readonly ControlPointSeed[];
+  readonly mapPriors: readonly MapPrior[];
   readonly solveCamera: boolean;
 }): JointSolveResult {
-  const { camLoc, photos, solveCamera } = options;
+  const { camLoc, photos, controlPoints, mapPriors, solveCamera } = options;
 
   // Build per-photo working poses, all sharing the starting camLoc.
   const work: WorkingPose[] = photos.map(p => ({
@@ -194,17 +200,33 @@ export function solveJointPose(options: {
   let camLat = camLoc.lat;
   let camLng = camLoc.lng;
 
-  // Lay out the joint state vector. Order: camLat, camLng (if free), then for
-  // each photo, its free local params in declaration order. The per-slot kind
-  // tells us which working field to read/write.
+  const cpWork = new Map<string, { lat: number; lng: number }>();
+  for (const cp of controlPoints) cpWork.set(cp.id, { lat: cp.lat, lng: cp.lng });
+
+  const totalImageObs = photos.reduce((s, p) => s + p.pois.length, 0);
+  const sumLocalFree = photos.reduce((s, p) => s + p.free.length, 0);
+  const cpFreeSlotCount = mapPriors.length * 2;
+  const totalObs = totalImageObs + 2 * mapPriors.length;
+
+  // Demote camera-solving if the count makes it underdetermined.
+  let solveCameraFinal = solveCamera;
+  if (solveCameraFinal) {
+    const totalUnknowns = 2 + sumLocalFree + cpFreeSlotCount;
+    if (totalObs < totalUnknowns + 2) solveCameraFinal = false;
+  }
+
+  // Slot layout: camLat, camLng (if free), per-photo locals in declaration
+  // order, then cpLat/cpLng for each CP that has a prior.
   const slots: Slot[] = [];
-  if (solveCamera) slots.push({ kind: 'camLat' }, { kind: 'camLng' });
+  if (solveCameraFinal) slots.push({ kind: 'camLat' }, { kind: 'camLng' });
   photos.forEach((p, photoIndex) => {
     for (const name of p.free) slots.push({ kind: 'photo', photoIndex, name });
   });
+  for (const prior of mapPriors) {
+    slots.push({ kind: 'cpLat', cpId: prior.cpId }, { kind: 'cpLng', cpId: prior.cpId });
+  }
 
-  const totalPois = photos.reduce((s, p) => s + p.pois.length, 0);
-  if (slots.length === 0 || totalPois === 0) return emptyResult(camLoc, photos);
+  if (slots.length === 0 || totalObs === 0) return emptyResult(camLoc, photos, controlPoints);
 
   function syncCamToPhotos(): void {
     for (const p of work) { p.camLat = camLat; p.camLng = camLng; }
@@ -216,7 +238,9 @@ export function solveJointPose(options: {
       const v = state[k]!;
       if (slot.kind === 'camLat') camLat = v;
       else if (slot.kind === 'camLng') camLng = v;
-      else work[slot.photoIndex]![slot.name] = v;
+      else if (slot.kind === 'photo') work[slot.photoIndex]![slot.name] = v;
+      else if (slot.kind === 'cpLat') cpWork.get(slot.cpId)!.lat = v;
+      else cpWork.get(slot.cpId)!.lng = v;
     }
     syncCamToPhotos();
     for (const p of work) clampSizeRad(p);
@@ -226,7 +250,9 @@ export function solveJointPose(options: {
     return slots.map(slot => {
       if (slot.kind === 'camLat') return camLat;
       if (slot.kind === 'camLng') return camLng;
-      return work[slot.photoIndex]![slot.name];
+      if (slot.kind === 'photo') return work[slot.photoIndex]![slot.name];
+      if (slot.kind === 'cpLat') return cpWork.get(slot.cpId)!.lat;
+      return cpWork.get(slot.cpId)!.lng;
     });
   }
 
@@ -234,7 +260,17 @@ export function solveJointPose(options: {
     const r: number[] = [];
     for (let i = 0; i < photos.length; i++) {
       const pose = work[i]!;
-      for (const poi of photos[i]!.pois) r.push(poiResidual(pose, poi));
+      for (const poi of photos[i]!.pois) {
+        const cp = cpWork.get(poi.controlPointId)!;
+        const img = projectPOI(pose, poi.u, poi.v);
+        r.push(wrapPI(img.az - targetBearing(pose, cp.lat, cp.lng)));
+      }
+    }
+    for (const prior of mapPriors) {
+      const cp = cpWork.get(prior.cpId)!;
+      const { x, z } = latLngToCameraRelativeMeters(cp, prior);
+      r.push(-z / prior.sigmaMeters);
+      r.push( x / prior.sigmaMeters);
     }
     return r;
   }
@@ -309,7 +345,7 @@ export function solveJointPose(options: {
     }
   }
 
-  const cameraMoved = solveCamera && (camLat !== camLoc.lat || camLng !== camLoc.lng);
+  const cameraMoved = solveCameraFinal && (camLat !== camLoc.lat || camLng !== camLoc.lng);
   return {
     camLoc: { lat: camLat, lng: camLng },
     photos: work.map(p => ({
@@ -323,6 +359,10 @@ export function solveJointPose(options: {
         camLng,
       },
     })),
+    controlPoints: controlPoints.map(cp => {
+      const w = cpWork.get(cp.id);
+      return w ? { id: cp.id, lat: w.lat, lng: w.lng } : { id: cp.id, lat: cp.lat, lng: cp.lng };
+    }),
     residualRMS: residualNorm(r) / Math.sqrt(Math.max(r.length, 1)),
     iterations: iters,
     cameraMoved,
@@ -330,4 +370,4 @@ export function solveJointPose(options: {
 }
 
 // Re-exported for tests / external use.
-export { projectPOI, targetBearingFor };
+export { projectPOI, targetBearing };

@@ -30,8 +30,21 @@ export interface Pose {
 export interface POIProjection {
   readonly u: number;
   readonly v: number;
-  readonly anchorLat: number;
-  readonly anchorLng: number;
+  readonly controlPointId: string;
+}
+
+export interface ControlPointSeed {
+  readonly id: string;
+  readonly lat: number;
+  readonly lng: number;
+}
+
+// Gaussian penalty pulling a CP toward a map-measurement observation.
+export interface MapPrior {
+  readonly cpId: string;
+  readonly lat: number;
+  readonly lng: number;
+  readonly sigmaMeters: number;
 }
 
 // Snapshot for the HUD readout.
@@ -99,6 +112,7 @@ export interface JointPhoto {
 export interface JointSolveResult {
   readonly camLoc: LatLng;
   readonly photos: readonly { readonly pose: Pose }[];
+  readonly controlPoints: readonly ControlPointSeed[];
   readonly residualRMS: number;
   readonly iterations: number;
   readonly cameraMoved: boolean;
