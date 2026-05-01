@@ -3,14 +3,9 @@
 // the project-mode app shell (no viewer / overlay / sync scaffolding).
 
 import * as api from './api.js';
+import { getElement } from './types.js';
 
 const CP_ID_RE = /^\/cp\/([A-Z2-7]{13})$/;
-
-function el(id: string): HTMLElement {
-  const e = document.getElementById(id);
-  if (!e) throw new Error(`missing #${id}`);
-  return e;
-}
 
 function projectLink(locationId: string, locationName: string | null): HTMLAnchorElement {
   const a = document.createElement('a');
@@ -19,8 +14,25 @@ function projectLink(locationId: string, locationName: string | null): HTMLAncho
   return a;
 }
 
+type ObservationKind = 'map' | 'image';
+
+function appendObservation(
+  list: HTMLElement, kind: ObservationKind, metaText: string,
+  locationId: string, locationName: string | null,
+): void {
+  const li = document.createElement('li');
+  const kindEl = document.createElement('span');
+  kindEl.className = `kind ${kind}`;
+  kindEl.textContent = kind;
+  const meta = document.createElement('span');
+  meta.className = 'meta';
+  meta.textContent = `${metaText} in `;
+  li.append(kindEl, meta, projectLink(locationId, locationName));
+  list.appendChild(li);
+}
+
 function renderObservations(obs: api.ApiControlPointObservations): void {
-  const list = el('observations');
+  const list = getElement('observations');
   list.replaceChildren();
   if (obs.image_measurements.length === 0 && obs.map_measurements.length === 0) {
     const empty = document.createElement('li');
@@ -30,35 +42,21 @@ function renderObservations(obs: api.ApiControlPointObservations): void {
     return;
   }
   for (const m of obs.map_measurements) {
-    const li = document.createElement('li');
-    const kind = document.createElement('span');
-    kind.className = 'kind map';
-    kind.textContent = 'map';
-    const meta = document.createElement('span');
-    meta.className = 'meta';
-    meta.textContent = `${m.lat.toFixed(5)}, ${m.lng.toFixed(5)} in `;
-    li.append(kind, meta, projectLink(m.location_id, m.location_name));
-    list.appendChild(li);
+    appendObservation(list, 'map', `${m.lat.toFixed(5)}, ${m.lng.toFixed(5)}`,
+      m.location_id, m.location_name);
   }
   for (const m of obs.image_measurements) {
-    const li = document.createElement('li');
-    const kind = document.createElement('span');
-    kind.className = 'kind image';
-    kind.textContent = 'image';
-    const meta = document.createElement('span');
-    meta.className = 'meta';
-    meta.textContent = `(u=${m.u.toFixed(2)}, v=${m.v.toFixed(2)}) in `;
-    li.append(kind, meta, projectLink(m.location_id, m.location_name));
-    list.appendChild(li);
+    appendObservation(list, 'image', `(u=${m.u.toFixed(2)}, v=${m.v.toFixed(2)})`,
+      m.location_id, m.location_name);
   }
 }
 
 async function main(): Promise<void> {
   const m = CP_ID_RE.exec(location.pathname);
-  const nameEl = el('name');
-  const idEl = el('id');
-  const locEl = el('loc');
-  const altEl = el('alt');
+  const nameEl = getElement('name');
+  const idEl = getElement('id');
+  const locEl = getElement('loc');
+  const altEl = getElement('alt');
 
   if (!m) {
     nameEl.textContent = 'Bad URL';
@@ -68,14 +66,17 @@ async function main(): Promise<void> {
   idEl.textContent = id;
   nameEl.textContent = 'Loading…';
 
-  let cp: api.ApiControlPoint;
-  try {
-    cp = await api.getControlPoint(id);
-  } catch (err) {
-    console.error('control-point fetch failed:', err);
+  const [cpResult, obsResult] = await Promise.allSettled([
+    api.getControlPoint(id),
+    api.listControlPointObservations(id),
+  ]);
+
+  if (cpResult.status === 'rejected') {
+    console.error('control-point fetch failed:', cpResult.reason);
     nameEl.textContent = 'Not found';
     return;
   }
+  const cp = cpResult.value;
 
   nameEl.textContent = cp.description || '(unnamed)';
   if (cp.est_lat !== null && cp.est_lng !== null) {
@@ -91,11 +92,10 @@ async function main(): Promise<void> {
     altEl.classList.add('empty');
   }
 
-  try {
-    const obs = await api.listControlPointObservations(id);
-    renderObservations(obs);
-  } catch (err) {
-    console.error('observations fetch failed:', err);
+  if (obsResult.status === 'fulfilled') {
+    renderObservations(obsResult.value);
+  } else {
+    console.error('observations fetch failed:', obsResult.reason);
   }
 }
 

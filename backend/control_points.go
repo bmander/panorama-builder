@@ -159,8 +159,8 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 	if id == "" {
 		return
 	}
-	// Confirm the CP exists so the caller gets 404 (not an empty payload) when
-	// the id is wrong. Cheap: control_points is small and id-indexed.
+	// Distinguish "no observations" from "no such CP" — empty payload would
+	// otherwise be ambiguous.
 	var exists bool
 	if err := s.db.QueryRow(r.Context(),
 		`SELECT EXISTS(SELECT 1 FROM control_points WHERE id = $1)`, id).Scan(&exists); err != nil {
@@ -184,16 +184,15 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 		writeErrorFromDB(w, err)
 		return
 	}
+	defer imRows.Close()
 	for imRows.Next() {
 		var o ControlPointImageObservation
 		if err := imRows.Scan(&o.ID, &o.PhotoID, &o.U, &o.V, &o.LocationID, &o.LocationName); err != nil {
-			imRows.Close()
 			writeErrorFromDB(w, err)
 			return
 		}
 		images = append(images, o)
 	}
-	imRows.Close()
 	if err := imRows.Err(); err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -210,16 +209,15 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 		writeErrorFromDB(w, err)
 		return
 	}
+	defer mRows.Close()
 	for mRows.Next() {
 		var o ControlPointMapObservation
 		if err := mRows.Scan(&o.ID, &o.Lat, &o.Lng, &o.LocationID, &o.LocationName); err != nil {
-			mRows.Close()
 			writeErrorFromDB(w, err)
 			return
 		}
 		maps = append(maps, o)
 	}
-	mRows.Close()
 	if err := mRows.Err(); err != nil {
 		writeErrorFromDB(w, err)
 		return
