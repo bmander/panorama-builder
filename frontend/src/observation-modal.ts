@@ -89,6 +89,10 @@ export function createObservationModal({
     if (!pending) return;
     const ctx = pending;
     const description = descEl.value.trim();
+    if (!description) {
+      descEl.focus();
+      return;
+    }
     createBtn.disabled = true;
     onCreateAndObserve(ctx.overlay, ctx.u, ctx.v, description)
       .then(() => { close(); })
