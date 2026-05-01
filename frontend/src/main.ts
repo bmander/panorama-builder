@@ -196,6 +196,7 @@ const mapView = createMapView({
   },
   onMapPoiArmedChange: armed => { addPoiBtnEl.classList.toggle('armed', armed); },
   onProjectMarkerOpen: id => { location.assign('/' + id); },
+  onProjectMarkerPreview: id => { void showProjectPreview(id); },
   onStartProjectHere: loc => { startProjectModal.open(loc); },
 });
 
@@ -333,6 +334,35 @@ async function showProjectMarkers(): Promise<void> {
     latlng: { lat: loc.lat, lng: loc.lng },
     label: loc.name ?? `Untitled ${loc.id.slice(0, 6)}`,
   })));
+}
+
+async function showProjectPreview(id: string): Promise<void> {
+  let data: ApiHydratedLocation;
+  try {
+    data = await api.getLocation(id);
+  } catch (err) {
+    console.error('preview failed:', err);
+    return;
+  }
+  // size_rad is the photo's horizontal angular subtense (applySize derives
+  // plane width = 2·R·tan(sizeRad/2); height = width/aspect). The cone
+  // half-angle is sizeRad/2 directly — aspect doesn't enter here.
+  const cones = data.photos.map(p => ({
+    azL: p.photo_az - p.size_rad / 2,
+    azR: p.photo_az + p.size_rad / 2,
+  }));
+  const linkedIds = new Set<string>();
+  for (const ip of data.image_pois) {
+    if (ip.map_poi_id !== null) linkedIds.add(ip.map_poi_id);
+  }
+  const linkedMapPOIs = data.map_pois
+    .filter(m => linkedIds.has(m.id))
+    .map(m => ({ lat: m.lat, lng: m.lng }));
+  mapView.setProjectPreview({
+    origin: { lat: data.location.lat, lng: data.location.lng },
+    cones,
+    linkedMapPOIs,
+  });
 }
 
 async function bootstrap(): Promise<void> {

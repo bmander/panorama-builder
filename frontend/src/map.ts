@@ -10,6 +10,14 @@ export interface ProjectMarker {
   label: string;
 }
 
+// Fetched-on-click summary of a project, used at the index view to preview
+// what's inside without navigating into it.
+export interface ProjectPreview {
+  origin: LatLng;
+  cones: Cone[];
+  linkedMapPOIs: readonly LatLng[];
+}
+
 export interface MapView {
   getLocation(): LatLng | null;
   setLocation(latlng: LatLng | null): void;
@@ -18,6 +26,7 @@ export interface MapView {
   setPOIBearings(newPOIs: POIBearing[]): void;
   setMapPOIs(mapPois: readonly MapPOIView[]): void;
   setProjectMarkers(projects: readonly ProjectMarker[]): void;
+  setProjectPreview(preview: ProjectPreview | null): void;
   isVisible(): boolean;
   onShow(): void;
   onHide(): void;
@@ -35,6 +44,7 @@ export interface CreateMapViewOptions {
   onMapPoiClick?: (id: string) => void;
   onMapPoiDragged?: (id: string, latlng: LatLng) => void;
   onProjectMarkerOpen?: (id: string) => void;
+  onProjectMarkerPreview?: (id: string) => void;
   onStartProjectHere?: (latlng: LatLng) => void;
   onShowRefresh?: () => void;
   onMapPoiArmedChange?: (armed: boolean) => void;
@@ -155,6 +165,7 @@ export function createMapView({
   onMapPoiClick,
   onMapPoiDragged,
   onProjectMarkerOpen,
+  onProjectMarkerPreview,
   onStartProjectHere,
   onShowRefresh,
   onMapPoiArmedChange,
@@ -227,6 +238,17 @@ export function createMapView({
     iconAnchor: [18, 18],
   });
   const projectMarkers = new Map<string, L.Marker>();
+  // Preview overlay drawn at the index view when a project marker is clicked.
+  // Distinct from the live cone/POI layers (which are driven by the loaded
+  // project's overlay manager) since previews are fed from a separate API
+  // fetch and rendered relative to the project marker's own location.
+  let projectPreview: ProjectPreview | null = null;
+  const previewConeLayers: L.Polygon[] = [];
+  const previewDotLayers: L.CircleMarker[] = [];
+  const PREVIEW_DOT_STYLE: L.PathOptions = {
+    radius: 4, color: '#ff5050', weight: 1, fillColor: '#ff5050',
+    fillOpacity: 0.85, interactive: false,
+  } as L.CircleMarkerOptions;
   const GO_POPUP_OPTS: L.PopupOptions = { className: 'project-popup', closeButton: true };
   const goButtonHtml = (label: string): string => `<button type="button" class="go">${label}</button>`;
   function wireGoButton(popup: L.Popup, onClick: () => void): void {
@@ -340,7 +362,29 @@ export function createMapView({
     }
   }
 
-  function redrawAll(): void { redrawCones(); redrawPOIs(); redrawMapPoiAnchors(); }
+  function redrawProjectPreview(): void {
+    if (!visible) return;
+    while (previewConeLayers.length) map.removeLayer(previewConeLayers.pop()!);
+    while (previewDotLayers.length) map.removeLayer(previewDotLayers.pop()!);
+    if (!projectPreview) return;
+    const distM = screenDiagonalMeters();
+    const origin = projectPreview.origin;
+    for (const c of projectPreview.cones) {
+      const ptL = destination(origin, viewerAzToBearing(c.azL), distM);
+      const ptR = destination(origin, viewerAzToBearing(c.azR), distM);
+      const poly = L.polygon([
+        [origin.lat, origin.lng],
+        [ptL.lat, ptL.lng],
+        [ptR.lat, ptR.lng],
+      ], CONE_STYLE).addTo(map);
+      previewConeLayers.push(poly);
+    }
+    for (const dot of projectPreview.linkedMapPOIs) {
+      previewDotLayers.push(L.circleMarker([dot.lat, dot.lng], PREVIEW_DOT_STYLE).addTo(map));
+    }
+  }
+
+  function redrawAll(): void { redrawCones(); redrawPOIs(); redrawMapPoiAnchors(); redrawProjectPreview(); }
 
   function ensureMarker(latlng: L.LatLngExpression): void {
     if (marker) { marker.setLatLng(latlng); return; }
@@ -395,6 +439,10 @@ export function createMapView({
       mapPoiData = newMapPOIs;
       redrawMapPoiAnchors();
     },
+    setProjectPreview(preview: ProjectPreview | null): void {
+      projectPreview = preview;
+      redrawProjectPreview();
+    },
     setProjectMarkers(projects: readonly ProjectMarker[]): void {
       const wantedIds = new Set(projects.map(p => p.id));
       for (const [id, m] of projectMarkers) {
@@ -407,15 +455,22 @@ export function createMapView({
           continue;
         }
         const m = L.marker([p.latlng.lat, p.latlng.lng]);
-        const popupHtml = `<span class="name">${escapeHtml(p.label)}</span>`
-          + goButtonHtml('Go to project →');
-        m.bindPopup(popupHtml, GO_POPUP_OPTS);
+        // Left-click previews the project (cones + linked landmarks). Navigation
+        // moved to right-click to keep the preview a single, non-confirmatory
+        // action — accidentally clicking a marker shouldn't navigate away.
+        m.on('click', (e: L.LeafletMouseEvent) => {
+          L.DomEvent.stopPropagation(e);
+          onProjectMarkerPreview?.(p.id);
+        });
         m.on('contextmenu', (e: L.LeafletMouseEvent) => {
           L.DomEvent.preventDefault(e.originalEvent);
-          m.openPopup();
-        });
-        m.on('popupopen', (e: L.PopupEvent) => {
-          wireGoButton(e.popup, () => onProjectMarkerOpen?.(p.id));
+          const popupHtml = `<span class="name">${escapeHtml(p.label)}</span>`
+            + goButtonHtml('Go to project →');
+          const popup = L.popup(GO_POPUP_OPTS)
+            .setLatLng([p.latlng.lat, p.latlng.lng])
+            .setContent(popupHtml)
+            .openOn(map);
+          wireGoButton(popup, () => onProjectMarkerOpen?.(p.id));
         });
         m.addTo(map);
         projectMarkers.set(p.id, m);
