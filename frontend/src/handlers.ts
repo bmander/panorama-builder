@@ -11,10 +11,18 @@ import { overlayData, poiData } from './types.js';
 import type { LatLng } from './types.js';
 import type { OverlayManager } from './overlay.js';
 import type { SyncManager } from './sync.js';
+import { mergePrefs } from './prefs.js';
+
+export interface StartProjectInput {
+  readonly loc: LatLng;
+  readonly name: string;
+  readonly dateEstimate: string;
+  readonly photos: readonly File[];
+}
 
 export interface OrchestrationHandlers {
   onSetLocation(loc: LatLng): void;
-  onStartProjectHere(loc: LatLng): Promise<void>;
+  onStartProjectHere(input: StartProjectInput): Promise<void>;
   onPhotoDropped(tex: THREE.Texture, blob: Blob, aspect: number, dir: THREE.Vector3, revokeUrl: () => void): Promise<void>;
   // Unmatched + POI armed click — always creates a new image POI.
   onAddImagePOI(overlay: THREE.Group, u: number, v: number): Promise<void>;
@@ -44,17 +52,75 @@ export function createOrchestration({
     runSolve();
   }
 
-  async function onStartProjectHere(loc: LatLng): Promise<void> {
+  async function onStartProjectHere(input: StartProjectInput): Promise<void> {
+    const { loc, name, dateEstimate, photos } = input;
     let created;
     try {
-      created = await api.createLocation(loc);
+      created = await api.createLocation(loc, name || undefined);
     } catch (err) {
       sync.reportError('start project', err);
       return;
     }
+    // Seed the project's view prefs with the user-provided date so the sun
+    // marker / shaded terrain pick up the right lighting on first hydrate.
+    if (dateEstimate) mergePrefs(created.id, { sunDateTime: dateEstimate });
+
+    // Decode all images in parallel — aspect reads are independent, no need
+    // to serialize behind the per-photo POST/PUT chain. Failed decodes
+    // resolve to null and the corresponding upload is skipped.
+    const aspects: (number | null)[] = await Promise.all(photos.map(file =>
+      readAspectRatio(file).catch((err: unknown) => {
+        console.error(`decode of ${file.name} failed:`, err);
+        return null;
+      })
+    ));
+
+    // Distribute around the horizon at altitude 0 (azimuth = i·2π/N) so photos
+    // don't stack; user can refine in the photosphere afterwards. POST + PUT
+    // for one photo must serialize (the PUT needs the POST's id), but each
+    // photo's pipeline is independent — we still go sequentially to keep
+    // server-side row creation in deterministic order.
+    const N = photos.length;
+    const failed: string[] = [];
+    for (let i = 0; i < N; i++) {
+      const file = photos[i]!;
+      const aspect = aspects[i];
+      if (aspect == null) { failed.push(file.name); continue; }
+      try {
+        const az = (i / N) * 2 * Math.PI;
+        const meta = {
+          aspect, photo_az: az, photo_tilt: 0, photo_roll: 0,
+          size_rad: DEFAULT_SIZE_RAD, opacity: 1,
+        };
+        const photo = await api.createPhoto(created.id, meta);
+        await api.uploadPhotoBlob(photo.id, file);
+      } catch (err) {
+        console.error(`upload of ${file.name} failed:`, err);
+        failed.push(file.name);
+      }
+    }
+    if (failed.length > 0) {
+      alert(`Some photos couldn't be uploaded: ${failed.join(', ')}.\nThe project was created without them.`);
+    }
+
     // Hard navigate so the new project hydrates from a clean state, regardless
     // of whether we were on / or some other /<id>.
     location.assign('/' + created.id);
+  }
+
+  async function readAspectRatio(file: File): Promise<number> {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => { resolve(); };
+        img.onerror = () => { reject(new Error('decode failed')); };
+        img.src = url;
+      });
+      return img.naturalWidth / img.naturalHeight;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   }
 
   async function onPhotoDropped(

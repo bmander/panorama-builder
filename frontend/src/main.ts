@@ -19,6 +19,7 @@ import { createSolverLoop } from './solver-loop.js';
 import { createSettingsPanel } from './settings.js';
 import { createOrchestration } from './handlers.js';
 import { createAdminModal } from './admin-modal.js';
+import { createStartProjectModal } from './start-project-modal.js';
 
 // --- URL ↔ project id ---------------------------------------------------
 
@@ -29,6 +30,10 @@ function parseLocationIdFromURL(): string | null {
 }
 const currentLocationId: string | null = parseLocationIdFromURL();
 const getCurrentLocationId = (): string | null => currentLocationId;
+
+// Index mode (no project in URL) hides the project-scoped chrome — the
+// upper-right buttons + tabs only make sense once a project is loaded.
+if (currentLocationId === null) getElement('top-right').hidden = true;
 
 // --- Viewer + scene singletons -----------------------------------------
 
@@ -171,6 +176,9 @@ const handlers = createOrchestration({
 });
 
 const admin = createAdminModal({ getCurrentLocationId });
+const startProjectModal = createStartProjectModal({
+  onSubmit: input => handlers.onStartProjectHere(input),
+});
 
 // --- Map + input + tabs wiring -----------------------------------------
 
@@ -190,7 +198,7 @@ const mapView = createMapView({
   },
   onMapPoiArmedChange: armed => { addPoiBtnEl.classList.toggle('armed', armed); },
   onProjectMarkerOpen: id => { location.assign('/' + id); },
-  onStartProjectHere: loc => { void handlers.onStartProjectHere(loc); },
+  onStartProjectHere: loc => { startProjectModal.open(loc); },
 });
 
 const SHIFT_WHEEL_LOG_PER_PX = 0.005;

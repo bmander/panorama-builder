@@ -21,13 +21,39 @@
       <button id="tab-map" class="btn tab">Map</button>
     </div>
   </div>
-  <div id="admin-modal" hidden>
-    <div id="admin-modal-panel">
+  <div id="admin-modal" class="modal" hidden>
+    <div class="modal-panel">
       <div class="modal-header">
         <span>Project admin</span>
         <button type="button" id="admin-close" class="btn">✕</button>
       </div>
       <button type="button" id="admin-delete" class="btn danger">Delete project</button>
+    </div>
+  </div>
+  <div id="start-project-modal" class="modal" hidden>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <span>New project</span>
+        <button type="button" id="start-project-close" class="btn">✕</button>
+      </div>
+      <label class="modal-field">Title
+        <input type="text" id="start-project-title" required maxlength="120">
+      </label>
+      <label class="modal-field">Date estimate
+        <input type="datetime-local" id="start-project-date" step="60">
+      </label>
+      <div class="modal-field">
+        <span>Photos</span>
+        <div id="start-project-drop" class="drop-zone">
+          <span>Drop images here, or click to choose</span>
+          <input type="file" id="start-project-files" accept="image/*" multiple hidden>
+        </div>
+        <div id="start-project-photos-preview"></div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="start-project-cancel" class="btn">Cancel</button>
+        <button type="button" id="start-project-submit" class="btn">Create</button>
+      </div>
     </div>
   </div>
   <div id="settings-panel" hidden>

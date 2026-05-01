@@ -40,3 +40,15 @@ export function savePrefs(locationId: string, prefs: Prefs): void {
     // localStorage full / disabled / private mode — non-fatal.
   }
 }
+
+// Merge a partial prefs object onto whatever's already on disk. Used by the
+// project-create flow to seed just sunDateTime without fabricating defaults
+// for every other field.
+export function mergePrefs(locationId: string, partial: Partial<Prefs>): void {
+  const current = loadPrefs(locationId);
+  try {
+    localStorage.setItem(KEY_PREFIX + locationId, JSON.stringify({ ...current, ...partial }));
+  } catch {
+    // localStorage full / disabled / private mode — non-fatal.
+  }
+}
