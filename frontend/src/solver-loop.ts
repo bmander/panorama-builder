@@ -35,7 +35,7 @@ export function createSolverLoop({
     interface PhotoEntry { overlay: THREE.Group; photo: JointPhoto; }
     const entries: PhotoEntry[] = [];
     for (const o of overlays.listOverlays() as THREE.Group[]) {
-      const anchored = (overlayData(o).pois ?? []).filter(p => poiData(p).mapAnchor);
+      const anchored = (overlayData(o).pois ?? []).filter(p => poiData(p).controlPointAnchor);
       if (anchored.length === 0) continue;
       entries.push({
         overlay: o,
@@ -43,7 +43,7 @@ export function createSolverLoop({
           pose: overlays.extractPose(o, camLoc),
           pois: anchored.map(p => {
             const pd = poiData(p);
-            const anchor = pd.mapAnchor!;
+            const anchor = pd.controlPointAnchor!;
             return { u: pd.uv.u, v: pd.uv.v, anchorLat: anchor.lat, anchorLng: anchor.lng };
           }),
           free: autoLocalFreeParams(anchored.length, isSolveRollEnabled()),

@@ -48,6 +48,7 @@ Single Go package under `backend/`:
 - `map_pois.go`, `image_pois.go` — straightforward CRUD; `image_pois.map_poi_id` is the FK that encodes a "match"
 - `migrations.go` + `migrations/NNNN_*.sql` — embedded migrations applied at startup; tracked in `schema_migrations`
 - `types.gen.go` — generated from `../openapi.yaml` (the API contract); regenerate via `make generate`. Mirror file on the frontend is `frontend/src/api-types.gen.ts`
+- Domain vocabulary: **control points** (cross-project landmarks with latent estimated locations), **map measurements** (per-project ground-truth observations on the map; formerly "map POI"), **image measurements** (reticle anchors on photos; formerly "image POI"). Both measurement types FK to a control point
 
 Sole external dep: `github.com/jackc/pgx/v5`. Targets Go 1.22+ for stdlib method-routing.
 

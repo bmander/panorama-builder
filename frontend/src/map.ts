@@ -1,7 +1,7 @@
 import * as L from 'leaflet';
 import type * as THREE from 'three';
 import { R_EARTH, bearingFromLocation, viewerAzToBearing, bearingToViewerAz } from './geo.js';
-import type { Cone, LatLng, MapPOIView, POIBearing } from './types.js';
+import type { Cone, LatLng, MapMeasurementView, ImageMeasurementBearing } from './types.js';
 import { TILE_PX, fetchTileElevations, tileYToLat } from './dem.js';
 
 export interface ProjectMarker {
@@ -23,8 +23,8 @@ export interface MapView {
   setLocation(latlng: LatLng | null): void;
   viewerAzToAnchor(latlng: LatLng): number;
   setOverlayCones(newCones: Cone[]): void;
-  setPOIBearings(newPOIs: POIBearing[]): void;
-  setMapPOIs(mapPois: readonly MapPOIView[]): void;
+  setImageMeasurementBearings(newPOIs: ImageMeasurementBearing[]): void;
+  setMapMeasurements(mapPois: readonly MapMeasurementView[]): void;
   setProjectMarkers(projects: readonly ProjectMarker[]): void;
   setProjectPreview(preview: ProjectPreview | null): void;
   isVisible(): boolean;
@@ -190,13 +190,13 @@ export function createMapView({
   let marker: L.Marker | null = null;
   let cones: Cone[] = [];
   const coneLayers: L.Polygon[] = [];
-  let pois: POIBearing[] = [];
+  let pois: ImageMeasurementBearing[] = [];
   const poiLayers: L.Polyline[] = [];
   // Tracks the last-applied selected state per polyline, so we only call
   // setStyle (an SVG attribute write that can trigger layout) when the
   // color actually needs to change.
   const poiSelectedState: boolean[] = [];
-  let mapPoiData: readonly MapPOIView[] = [];
+  let mapPoiData: readonly MapMeasurementView[] = [];
   // Track the last-applied selected state alongside the marker. Calling
   // setIcon() rebuilds the marker's DOM element, which kills any drag in
   // progress, so we only swap when selection actually changes.
@@ -302,7 +302,7 @@ export function createMapView({
 
   function redrawPOIs(): void {
     if (!visible) return;
-    syncLayerPool<POIBearing, L.Polyline>(pois, poiLayers,
+    syncLayerPool<ImageMeasurementBearing, L.Polyline>(pois, poiLayers,
       () => L.polyline([[0, 0], [0, 0]], POI_STYLE),
       (layer, p, distM) => {
         const loc = location!;
@@ -333,7 +333,7 @@ export function createMapView({
 
   function redrawMapPoiAnchors(): void {
     if (!visible) return;
-    const wanted = new Map<string, MapPOIView>();
+    const wanted = new Map<string, MapMeasurementView>();
     for (const m of mapPoiData) wanted.set(m.id, m);
     for (const [id, entry] of mapPoiMarkers) {
       if (!wanted.has(id)) { map.removeLayer(entry.marker); mapPoiMarkers.delete(id); }
@@ -434,8 +434,8 @@ export function createMapView({
       return bearingToViewerAz(bearingFromLocation(location, latlng));
     },
     setOverlayCones(newCones: Cone[]): void { cones = newCones; redrawCones(); },
-    setPOIBearings(newPOIs: POIBearing[]): void { pois = newPOIs; redrawPOIs(); },
-    setMapPOIs(newMapPOIs: readonly MapPOIView[]): void {
+    setImageMeasurementBearings(newPOIs: ImageMeasurementBearing[]): void { pois = newPOIs; redrawPOIs(); },
+    setMapMeasurements(newMapPOIs: readonly MapMeasurementView[]): void {
       mapPoiData = newMapPOIs;
       redrawMapPoiAnchors();
     },

@@ -16,11 +16,14 @@ type Schemas = components['schemas'];
 
 export type ApiLocation = Schemas['Location'];
 export type ApiPhoto = Schemas['Photo'];
-export type ApiMapPOI = Schemas['MapPOI'];
-export type ApiImagePOI = Schemas['ImagePOI'];
+export type ApiMapMeasurement = Schemas['MapMeasurement'];
+export type ApiImageMeasurement = Schemas['ImageMeasurement'];
+export type ApiControlPoint = Schemas['ControlPoint'];
 export type ApiHydratedLocation = Schemas['HydratedLocation'];
 export type PhotoPosePatch = Schemas['PhotoPosePatch'];
-export type ImagePOIPatch = Schemas['ImagePOIPatch'];
+export type MapMeasurementRequest = Schemas['MapMeasurementRequest'];
+export type ImageMeasurementPatch = Schemas['ImageMeasurementPatch'];
+export type ControlPointPatch = Schemas['ControlPointPatch'];
 
 // --- Helpers ---
 
@@ -102,34 +105,60 @@ export function photoBlobUrl(id: string): string {
   return `${API}/photos/${encodeURIComponent(id)}/blob`;
 }
 
-// --- Map POIs ---
+// --- Map measurements ---
 
-export function createMapPOI(locationId: string, latlng: LatLng): Promise<ApiMapPOI> {
-  return request<ApiMapPOI>('POST', `/locations/${encodeURIComponent(locationId)}/map-pois`, {
-    lat: latlng.lat, lng: latlng.lng,
-  });
+export function createMapMeasurement(
+  locationId: string, body: MapMeasurementRequest,
+): Promise<ApiMapMeasurement> {
+  return request<ApiMapMeasurement>('POST', `/locations/${encodeURIComponent(locationId)}/map-measurements`, body);
 }
 
-export function updateMapPOI(id: string, latlng: LatLng): Promise<ApiMapPOI> {
-  return request<ApiMapPOI>('PUT', `/map-pois/${encodeURIComponent(id)}`, {
-    lat: latlng.lat, lng: latlng.lng,
-  });
+export function updateMapMeasurement(
+  id: string, body: MapMeasurementRequest,
+): Promise<ApiMapMeasurement> {
+  return request<ApiMapMeasurement>('PUT', `/map-measurements/${encodeURIComponent(id)}`, body);
 }
 
-export function deleteMapPOI(id: string): Promise<void> {
-  return requestVoid('DELETE', `/map-pois/${encodeURIComponent(id)}`);
+export function deleteMapMeasurement(id: string): Promise<void> {
+  return requestVoid('DELETE', `/map-measurements/${encodeURIComponent(id)}`);
 }
 
-// --- Image POIs ---
+// --- Image measurements ---
 
-export function createImagePOI(photoId: string, init: ImagePOIPatch): Promise<ApiImagePOI> {
-  return request<ApiImagePOI>('POST', `/photos/${encodeURIComponent(photoId)}/image-pois`, init);
+export function createImageMeasurement(
+  photoId: string, init: ImageMeasurementPatch,
+): Promise<ApiImageMeasurement> {
+  return request<ApiImageMeasurement>('POST', `/photos/${encodeURIComponent(photoId)}/image-measurements`, init);
 }
 
-export function updateImagePOI(id: string, patch: ImagePOIPatch): Promise<ApiImagePOI> {
-  return request<ApiImagePOI>('PUT', `/image-pois/${encodeURIComponent(id)}`, patch);
+export function updateImageMeasurement(
+  id: string, patch: ImageMeasurementPatch,
+): Promise<ApiImageMeasurement> {
+  return request<ApiImageMeasurement>('PUT', `/image-measurements/${encodeURIComponent(id)}`, patch);
 }
 
-export function deleteImagePOI(id: string): Promise<void> {
-  return requestVoid('DELETE', `/image-pois/${encodeURIComponent(id)}`);
+export function deleteImageMeasurement(id: string): Promise<void> {
+  return requestVoid('DELETE', `/image-measurements/${encodeURIComponent(id)}`);
+}
+
+// --- Control points ---
+
+export function createControlPoint(body: ControlPointPatch): Promise<ApiControlPoint> {
+  return request<ApiControlPoint>('POST', '/control-points', body);
+}
+
+export function listControlPoints(): Promise<ApiControlPoint[]> {
+  return request<ApiControlPoint[]>('GET', '/control-points');
+}
+
+export function getControlPoint(id: string): Promise<ApiControlPoint> {
+  return request<ApiControlPoint>('GET', `/control-points/${encodeURIComponent(id)}`);
+}
+
+export function updateControlPoint(id: string, body: ControlPointPatch): Promise<ApiControlPoint> {
+  return request<ApiControlPoint>('PUT', `/control-points/${encodeURIComponent(id)}`, body);
+}
+
+export function deleteControlPoint(id: string): Promise<void> {
+  return requestVoid('DELETE', `/control-points/${encodeURIComponent(id)}`);
 }

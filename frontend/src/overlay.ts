@@ -7,9 +7,10 @@ import {
 } from './types.js';
 import type {
   Cone,
+  ControlPointView,
+  ImageMeasurementBearing,
   LatLng,
-  MapPOIView,
-  POIBearing,
+  MapMeasurementView,
   Pose,
   Role,
 } from './types.js';
@@ -29,9 +30,6 @@ const POI_COLOR_SELECTED = 0xffff66;
 // POI radius = this fraction of the overlay's world width — scales with the photo.
 const POI_WIDTH_FRACTION = 0.018;
 
-// POI marker: crosshair-inside-a-circle, drawn procedurally on a 2×2 plane so
-// the lines stay crisp at any scale. A small gap at the center exposes the
-// target pixel for precise placement.
 function makePoiMaterial(): THREE.ShaderMaterial {
   const material = new THREE.ShaderMaterial({
     uniforms: { color: { value: new THREE.Color(POI_COLOR) } },
@@ -74,8 +72,6 @@ const POI_GEOM = new THREE.PlaneGeometry(2, 2);
 
 const widthFromSizeRad = (sr: number): number => 2 * OVERLAY_R * Math.tan(sr / 2);
 
-// Corner offsets (in unit-rectangle coordinates) for the 4 selection handles,
-// matching the order produced by addSelectionVisuals.
 const HANDLE_CORNERS: readonly (readonly [number, number])[] = [
   [-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5],
 ];
@@ -87,7 +83,6 @@ export function dirFromAzAlt(az: number, alt: number): THREE.Vector3 {
   return v;
 }
 
-// Inverse of dirFromAzAlt for objects placed on the OVERLAY_R sphere via placeAt().
 function posToAzAlt(o: THREE.Object3D): { az: number; alt: number } {
   return {
     az: Math.atan2(-o.position.x, -o.position.z),
@@ -96,18 +91,22 @@ function posToAzAlt(o: THREE.Object3D): { az: number; alt: number } {
 }
 
 export interface AddPhotoOptions {
-  // Server-assigned photo id. Required since we now talk to a backend that
-  // owns identity.
   readonly id: string;
 }
 
-export interface AddPOIOptions {
-  // Server-assigned image-POI id.
+export interface AddImageMeasurementOptions {
   readonly id: string;
-  // Optional initial anchor (cache + FK) — populated when the matcher click
-  // creates a paired POI.
-  readonly mapPOIId?: string | null;
-  readonly mapAnchor?: LatLng | null;
+  // Optional initial link + cached anchor — populated when the matcher click
+  // creates a paired measurement.
+  readonly controlPointId?: string | null;
+  readonly controlPointAnchor?: LatLng | null;
+}
+
+export interface AddControlPointPayload {
+  readonly description: string;
+  readonly estLat: number | null;
+  readonly estLng: number | null;
+  readonly estAlt: number | null;
 }
 
 export interface OverlayManager {
@@ -115,61 +114,62 @@ export interface OverlayManager {
   addOverlay(tex: THREE.Texture, aspect: number, dir: THREE.Vector3, opts: AddPhotoOptions): THREE.Group;
   getSelected(): THREE.Group | null;
   setSelected(o: THREE.Group | null): void;
-  // Marks an overlay as the hover target so its outline becomes visible (the
-  // visual "this is editable" affordance). Independent of selection. Returns
-  // true if the hover target actually changed; lets callers skip a render.
   setHovered(o: THREE.Group | null): boolean;
   moveSelectedTo(point: THREE.Vector3): void;
   resizeSelectedTo(sizeRad: number): void;
-  // In-plane roll (radians, CCW positive). Re-applies position + lookAt so the
-  // rotation lands on top of a clean orientation (otherwise rotateZ would
-  // accumulate against whatever the previous quaternion happened to be).
   setSelectedRoll(roll: number): void;
   deleteSelected(): void;
-  // Per-photo body opacity in [0, 1]. Fires onLightMutate (not onMutate)
-  // since opacity doesn't affect the solver, map cones, or POIs — only the
-  // render and the persisted snapshot need to update.
   setOpacity(o: THREE.Group, opacity: number): void;
   getOpacity(o: THREE.Group): number;
   setSelectedOpacity(opacity: number): void;
   getSelectedOpacity(): number | null;
-  addPOI(o: THREE.Group, u: number, v: number, opts: AddPOIOptions): THREE.Mesh;
-  // Updates both the lat/lng cache and the FK on a POI in lockstep. Pass
-  // (null, null) to clear the anchor entirely.
-  setPOIMapAnchor(poi: THREE.Mesh, latlng: LatLng | null, mapPOIId: string | null): void;
-  // Refreshes mapAnchor caches on every image-POI that references the given
-  // map POI. Called from the orchestration layer after a map POI moves.
-  refreshAnchorsForMapPOI(mapPOIId: string, latlng: LatLng | null): void;
+
+  // --- Image measurements (per-photo reticles) ---
+  addImageMeasurement(o: THREE.Group, u: number, v: number, opts: AddImageMeasurementOptions): THREE.Mesh;
+  // Updates both the cached anchor and the FK on a measurement in lockstep.
+  // Pass (null, null) to clear the link.
+  setMeasurementCP(measurement: THREE.Mesh, latlng: LatLng | null, controlPointId: string | null): void;
+  moveImageMeasurement(measurement: THREE.Mesh, u: number, v: number): void;
+  deleteSelectedMeasurement(): void;
+  getSelectedImageMeasurement(): THREE.Mesh | null;
+  setSelectedImageMeasurement(measurement: THREE.Mesh | null): void;
+  // Sets image-measurement and map-measurement selection together, firing
+  // onSelectionChange exactly once. Used by the matcher click.
+  setSelectedPair(measurement: THREE.Mesh | null, mapMeasurementId: string | null): void;
+  getImageMeasurements(): ImageMeasurementBearing[];
+
+  // --- Map measurements (per-project ground-truth observations) ---
+  addMapMeasurement(id: string, latlng: LatLng, controlPointId: string | null): void;
+  // Moves the measurement marker. If the measurement is linked to a CP, the
+  // CP's est_lat/est_lng are mirrored to the new latlng (v1 behavior).
+  setMapMeasurementLatLng(id: string, latlng: LatLng): void;
+  getMapMeasurements(): MapMeasurementView[];
+  getSelectedMapMeasurement(): string | null;
+  setSelectedMapMeasurement(id: string | null): void;
+
+  // --- Control points (cross-project landmarks) ---
+  addControlPoint(id: string, payload: AddControlPointPayload): void;
+  getControlPoints(): ControlPointView[];
+  getControlPointById(id: string): ControlPointView | null;
+  // Mutates the CP's est_lat/est_lng. Fans out anchor caches on every linked
+  // image measurement so columns/rays redraw at the new location.
+  setControlPointEst(id: string, latlng: LatLng | null): void;
+  setControlPointDescription(id: string, description: string): void;
+  removeControlPoint(id: string): void;
+
+  // --- Scene-graph identity helpers ---
   listOverlays(): THREE.Object3D[];
-  // Server-id lookup. The diff path and orchestration handlers both index by
-  // backend id rather than scene-graph object identity.
   getOverlayById(id: string): THREE.Group | null;
-  getPOIById(id: string): THREE.Mesh | null;
-  // Find the image POI on a given overlay that's anchored to a specific
-  // map POI, or null. Used by the matcher to dedupe re-clicks (one image
-  // POI per (photo, map POI) pair).
-  getPOIOnOverlayByMapPOIId(overlay: THREE.Group, mapPOIId: string): THREE.Mesh | null;
+  getImageMeasurementById(id: string): THREE.Mesh | null;
+  // Find the image measurement on a given overlay that's linked to a specific
+  // control point, or null. Used by the matcher to dedupe re-clicks.
+  getImageMeasurementOnOverlayByControlPointId(overlay: THREE.Group, controlPointId: string): THREE.Mesh | null;
+
   extractPose(o: THREE.Group, camLoc: LatLng | null): Pose;
   applyPose(o: THREE.Group, pose: Pose): void;
   beginBatch(): void;
   endBatch(): void;
   withBatch(fn: () => void): void;
-  movePOI(poi: THREE.Mesh, u: number, v: number): void;
-  deleteSelectedPOI(): void;
-  getSelectedPOI(): THREE.Mesh | null;
-  setSelectedPOI(poi: THREE.Mesh | null): void;
-  // Sets photo-POI and map-POI selection together, firing onSelectionChange
-  // exactly once. Used by the matcher click so refresh paths run once for
-  // the pair instead of twice (one per setter).
-  setSelectedPair(poi: THREE.Mesh | null, mapPOIId: string | null): void;
-  getPOIs(): POIBearing[];
-  // Standalone map-POIs (no parent photo). Stored at the manager level rather
-  // than on any overlay; the joint solver ignores them.
-  addMapPOI(id: string, latlng: LatLng): void;
-  setMapPOILatLng(id: string, latlng: LatLng): void;
-  getMapPOIs(): MapPOIView[];
-  getSelectedMapPOI(): string | null;
-  setSelectedMapPOI(id: string | null): void;
   getCones(): Cone[];
   setVisualsVisible(visible: boolean): void;
 }
@@ -178,12 +178,22 @@ export interface CreateOverlayManagerOptions {
   overlaysGroup: THREE.Group;
   getAnisotropy: () => number;
   onMutate?: () => void;
-  // Separate from onMutate so consumers refresh selection-dependent visuals
-  // without paying the solver/save cascade.
   onSelectionChange?: () => void;
-  // Save-only mutation channel (e.g., opacity). Skips the solver, map
-  // annotations, settings persist — but still wants render + sync flush.
   onLightMutate?: () => void;
+}
+
+interface MapMeasurementEntry {
+  id: string;
+  latlng: LatLng;
+  controlPointId: string | null;
+}
+
+interface ControlPointEntry {
+  id: string;
+  description: string;
+  estLat: number | null;
+  estLng: number | null;
+  estAlt: number | null;
 }
 
 export function createOverlayManager(
@@ -197,17 +207,20 @@ export function createOverlayManager(
     onMutate?.();
   };
   let selected: THREE.Group | null = null;
-  let selectedPOI: THREE.Mesh | null = null;
+  let selectedImageMeasurement: THREE.Mesh | null = null;
   let hoveredOverlay: THREE.Group | null = null;
 
-  // Standalone map-POIs (free-floating landmarks). Mutable {id, latlng} pairs.
-  // selectedMapPOIId is mutually exclusive with selectedPOI — setSelectedPOI
-  // and setSelectedMapPOI clear the other slot. setSelectedPair is the one
-  // exception: the matcher path locks both to the same logical pair.
-  const mapPois: { id: string; latlng: LatLng }[] = [];
-  let selectedMapPOIId: string | null = null;
+  // Per-project map measurements; v1 keeps these scoped under the loaded
+  // location. Columns in the 360° view are drawn from the linked CPs (one
+  // column per CP), not from these directly.
+  const mapMeasurements: MapMeasurementEntry[] = [];
+  let selectedMapMeasurementId: string | null = null;
 
-  // Returns viewer-azimuth (CCW from -Z) of a point given in an overlay's local frame.
+  // Cross-project control points reachable from the loaded location. The
+  // hydrate path populates this on project load; new CPs created at runtime
+  // (via the matcher / +POI flows) get pushed here too.
+  const controlPoints: ControlPointEntry[] = [];
+
   const azScratch = new THREE.Vector3();
   function azFromLocal(o: THREE.Object3D, lx: number, ly: number, lz: number): number {
     o.updateMatrixWorld();
@@ -219,17 +232,11 @@ export function createOverlayManager(
     const o = new THREE.Group();
     const body = new THREE.Mesh(
       new THREE.PlaneGeometry(1, 1),
-      // depthTest: false keeps photos in front of terrain regardless of
-      // whether the photo plane physically intersects it. Photo↔photo order
-      // is handled by Three.js's transparent back-to-front sort.
       new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide, depthTest: false }),
     );
     (body.userData as { role: Role }).role = ROLE_BODY;
     o.add(body);
 
-    // Outline is always present; visibility is driven by selected || hovered.
-    // This lets the input layer "preview" a photo's editable status by toggling
-    // hover, without adding/removing scene-graph objects on every cursor move.
     const outline = new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.PlaneGeometry(1, 1)),
       new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true }),
@@ -308,7 +315,6 @@ export function createOverlayManager(
     if (data.handles) {
       const handles = data.handles;
       for (const m of handles) o.remove(m);
-      // All handles share one geometry & material — dispose once via the first.
       const first = handles[0];
       if (first) {
         first.geometry.dispose();
@@ -319,20 +325,43 @@ export function createOverlayManager(
     applyOverlayDecoration(o);
   }
 
-  // An image POI is "selected" for visual purposes if it's directly selected
-  // OR if its anchored map POI is selected. This makes a click on either side
-  // of an FK match light up the whole pair (ray, column, reticle).
-  function isPOISelected(poi: THREE.Mesh, mapPOIId: string | null): boolean {
-    if (poi === selectedPOI) return true;
-    return mapPOIId !== null && mapPOIId === selectedMapPOIId;
+  // The "selected control point" is derived from whichever measurement
+  // (image or map) is the primary selection. Selecting either side of a
+  // match lights up the CP and every other measurement that references it.
+  function selectedControlPointId(): string | null {
+    if (selectedImageMeasurement) return poiData(selectedImageMeasurement).controlPointId;
+    if (selectedMapMeasurementId) {
+      const m = mapMeasurements.find(mm => mm.id === selectedMapMeasurementId);
+      return m?.controlPointId ?? null;
+    }
+    return null;
   }
+
+  function isImageMeasurementSelected(poi: THREE.Mesh, controlPointId: string | null): boolean {
+    if (poi === selectedImageMeasurement) return true;
+    return controlPointId !== null && controlPointId === selectedControlPointId();
+  }
+
   function applyPOIColors(): void {
     for (const child of overlaysGroup.children) {
       const data = overlayData(child as THREE.Group);
       if (!data.pois) continue;
       for (const poi of data.pois) {
         const pData = poiData(poi);
-        setPoiColor(poi, isPOISelected(poi, pData.mapPOIId) ? POI_COLOR_SELECTED : POI_COLOR);
+        setPoiColor(poi, isImageMeasurementSelected(poi, pData.controlPointId) ? POI_COLOR_SELECTED : POI_COLOR);
+      }
+    }
+  }
+
+  function refreshControlPointAnchorCache(controlPointId: string, latlng: LatLng | null): void {
+    for (const child of overlaysGroup.children) {
+      const o = child as THREE.Group;
+      const data = overlayData(o);
+      if (!data.pois) continue;
+      for (const poi of data.pois) {
+        const pd = poiData(poi);
+        if (pd.controlPointId !== controlPointId) continue;
+        pd.controlPointAnchor = latlng ? { lat: latlng.lat, lng: latlng.lng } : null;
       }
     }
   }
@@ -355,8 +384,6 @@ export function createOverlayManager(
       const prev = selected;
       clearSelectionVisuals(prev);
       selected = o;
-      // applyOverlayDecoration on the previously-selected so its outline
-      // can fall back to hover-only state (or hide).
       if (prev && prev !== o) applyOverlayDecoration(prev);
       if (selected) addSelectionVisuals(selected);
     },
@@ -383,8 +410,6 @@ export function createOverlayManager(
       if (!selected) return;
       if (overlayData(selected).photoRoll === roll) return;
       overlayData(selected).photoRoll = roll;
-      // Re-derive direction from current position so this works mid-drag,
-      // before any move-event has called placeAt on this overlay.
       const dir = new THREE.Vector3().copy(selected.position).normalize();
       placeAt(selected, dir, roll);
       notify();
@@ -394,9 +419,9 @@ export function createOverlayManager(
       const o = selected;
       manager.setSelected(null);
       if (hoveredOverlay === o) hoveredOverlay = null;
-      // Drop selectedPOI if it lived on this overlay; bypass setSelectedPOI so we
-      // don't try to recolor a material that's about to be disposed.
-      if (selectedPOI && poiData(selectedPOI).parentOverlay === o) selectedPOI = null;
+      if (selectedImageMeasurement && poiData(selectedImageMeasurement).parentOverlay === o) {
+        selectedImageMeasurement = null;
+      }
       overlaysGroup.remove(o);
       const data = overlayData(o);
       data.body.geometry.dispose();
@@ -409,7 +434,6 @@ export function createOverlayManager(
       }
       if (data.pois) {
         for (const p of data.pois) {
-          // POIs share POI_GEOM (don't dispose) but each has its own material.
           (p.material as THREE.Material).dispose();
         }
       }
@@ -425,46 +449,214 @@ export function createOverlayManager(
       manager.setOpacity(selected, opacity);
     },
     getSelectedOpacity: () => selected ? manager.getOpacity(selected) : null,
-    addPOI(o, u, v, opts) {
-      // Unit-radius reticle plane; applySize() scales it per overlay width.
-      const poi = new THREE.Mesh(POI_GEOM, makePoiMaterial());
-      const pData = poiData(poi);
+
+    addImageMeasurement(o, u, v, opts) {
+      const measurement = new THREE.Mesh(POI_GEOM, makePoiMaterial());
+      const pData = poiData(measurement);
       pData.id = opts.id;
       pData.role = ROLE_POI;
       pData.uv = { u, v };
       pData.parentOverlay = o;
-      pData.mapAnchor = opts.mapAnchor ? { lat: opts.mapAnchor.lat, lng: opts.mapAnchor.lng } : null;
-      pData.mapPOIId = opts.mapPOIId ?? null;
-      poi.renderOrder = 3;
-      o.add(poi);
+      pData.controlPointAnchor = opts.controlPointAnchor
+        ? { lat: opts.controlPointAnchor.lat, lng: opts.controlPointAnchor.lng } : null;
+      pData.controlPointId = opts.controlPointId ?? null;
+      measurement.renderOrder = 3;
+      o.add(measurement);
       const data = overlayData(o);
       const pois = data.pois ?? (data.pois = []);
-      pois.push(poi);
+      pois.push(measurement);
       applySize(o);
-      manager.setSelectedPOI(poi);
+      manager.setSelectedImageMeasurement(measurement);
       notify();
-      return poi;
+      return measurement;
     },
-    setPOIMapAnchor(poi, latlng, mapPOIId) {
-      const pd = poiData(poi);
-      pd.mapAnchor = latlng ? { lat: latlng.lat, lng: latlng.lng } : null;
-      pd.mapPOIId = mapPOIId;
+    setMeasurementCP(measurement, latlng, controlPointId) {
+      const pd = poiData(measurement);
+      pd.controlPointAnchor = latlng ? { lat: latlng.lat, lng: latlng.lng } : null;
+      pd.controlPointId = controlPointId;
       notify();
     },
-    refreshAnchorsForMapPOI(mapPOIId, latlng) {
-      // No notify() — the orchestration layer that triggered this also fires
-      // its own mutation path (e.g., setMapPOILatLng's notify).
+    moveImageMeasurement(measurement, u, v) {
+      const pData = poiData(measurement);
+      pData.uv.u = u;
+      pData.uv.v = v;
+      applySize(pData.parentOverlay);
+      notify();
+    },
+    deleteSelectedMeasurement() {
+      if (selectedMapMeasurementId) {
+        const deletedId = selectedMapMeasurementId;
+        const i = mapMeasurements.findIndex(m => m.id === deletedId);
+        if (i >= 0) mapMeasurements.splice(i, 1);
+        // The CP this map measurement linked to (if any) is unaffected — it
+        // lives cross-project. Image measurements that used that same CP
+        // keep their FK; their column simply lacks a ground-truth observation
+        // until another map measurement is added.
+        selectedMapMeasurementId = null;
+        onSelectionChange?.();
+        notify();
+        return;
+      }
+      if (!selectedImageMeasurement) return;
+      const measurement = selectedImageMeasurement;
+      manager.setSelectedImageMeasurement(null);
+      const parent = poiData(measurement).parentOverlay;
+      parent.remove(measurement);
+      const arr = overlayData(parent).pois;
+      if (arr) {
+        const i = arr.indexOf(measurement);
+        if (i >= 0) arr.splice(i, 1);
+      }
+      (measurement.material as THREE.Material).dispose();
+      notify();
+    },
+    getSelectedImageMeasurement: () => selectedImageMeasurement,
+    setSelectedImageMeasurement(measurement) {
+      // Mutually exclusive with selectedMapMeasurementId — see the matching
+      // setSelectedMapMeasurement below for rationale. Linked highlighting
+      // still flows through poiData(measurement).controlPointId.
+      if (selectedImageMeasurement === measurement
+          && (measurement === null || selectedMapMeasurementId === null)) return;
+      selectedImageMeasurement = measurement;
+      if (measurement !== null) selectedMapMeasurementId = null;
+      applyPOIColors();
+      onSelectionChange?.();
+    },
+    setSelectedPair(measurement, mapMeasurementId) {
+      const photoChanged = selectedImageMeasurement !== measurement;
+      const mapChanged = selectedMapMeasurementId !== mapMeasurementId;
+      if (!photoChanged && !mapChanged) return;
+      if (photoChanged) selectedImageMeasurement = measurement;
+      if (mapChanged) selectedMapMeasurementId = mapMeasurementId;
+      applyPOIColors();
+      onSelectionChange?.();
+    },
+    getImageMeasurements() {
+      const result: ImageMeasurementBearing[] = [];
       for (const child of overlaysGroup.children) {
         const o = child as THREE.Group;
         const data = overlayData(o);
         if (!data.pois) continue;
         for (const poi of data.pois) {
-          const pd = poiData(poi);
-          if (pd.mapPOIId !== mapPOIId) continue;
-          pd.mapAnchor = latlng ? { lat: latlng.lat, lng: latlng.lng } : null;
+          const pData = poiData(poi);
+          result.push({
+            id: pData.id,
+            handle: poi,
+            az: azFromLocal(o, poi.position.x, poi.position.y, poi.position.z),
+            uv: { ...pData.uv },
+            controlPointAnchor: pData.controlPointAnchor,
+            controlPointId: pData.controlPointId,
+            selected: isImageMeasurementSelected(poi, pData.controlPointId),
+          });
         }
       }
+      return result;
     },
+
+    addMapMeasurement(id, latlng, controlPointId) {
+      mapMeasurements.push({ id, latlng: { lat: latlng.lat, lng: latlng.lng }, controlPointId });
+      notify();
+    },
+    setMapMeasurementLatLng(id, latlng) {
+      const entry = mapMeasurements.find(m => m.id === id);
+      if (!entry) return;
+      entry.latlng = { lat: latlng.lat, lng: latlng.lng };
+      // v1 mirror: a map measurement's lat/lng is also the CP's estimated
+      // location. Update the CP and fan out anchor caches so columns / rays
+      // redraw at the new location.
+      if (entry.controlPointId) {
+        const cp = controlPoints.find(c => c.id === entry.controlPointId);
+        if (cp) {
+          cp.estLat = latlng.lat;
+          cp.estLng = latlng.lng;
+          refreshControlPointAnchorCache(cp.id, { lat: latlng.lat, lng: latlng.lng });
+        }
+      }
+      notify();
+    },
+    getMapMeasurements() {
+      const cpId = selectedControlPointId();
+      return mapMeasurements.map(m => ({
+        id: m.id,
+        latlng: m.latlng,
+        controlPointId: m.controlPointId,
+        selected: m.id === selectedMapMeasurementId
+          || (m.controlPointId !== null && m.controlPointId === cpId),
+      }));
+    },
+    getSelectedMapMeasurement: () => selectedMapMeasurementId,
+    setSelectedMapMeasurement(id) {
+      if (selectedMapMeasurementId === id
+          && (id === null || selectedImageMeasurement === null)) return;
+      selectedMapMeasurementId = id;
+      if (id !== null) selectedImageMeasurement = null;
+      applyPOIColors();
+      onSelectionChange?.();
+    },
+
+    addControlPoint(id, payload) {
+      controlPoints.push({
+        id, description: payload.description,
+        estLat: payload.estLat, estLng: payload.estLng, estAlt: payload.estAlt,
+      });
+      notify();
+    },
+    getControlPoints() {
+      const sel = selectedControlPointId();
+      return controlPoints.map(cp => ({
+        id: cp.id,
+        description: cp.description,
+        estLat: cp.estLat,
+        estLng: cp.estLng,
+        estAlt: cp.estAlt,
+        selected: cp.id === sel,
+      }));
+    },
+    getControlPointById(id) {
+      const cp = controlPoints.find(c => c.id === id);
+      if (!cp) return null;
+      const sel = selectedControlPointId();
+      return {
+        id: cp.id, description: cp.description,
+        estLat: cp.estLat, estLng: cp.estLng, estAlt: cp.estAlt,
+        selected: cp.id === sel,
+      };
+    },
+    setControlPointEst(id, latlng) {
+      const cp = controlPoints.find(c => c.id === id);
+      if (!cp) return;
+      cp.estLat = latlng?.lat ?? null;
+      cp.estLng = latlng?.lng ?? null;
+      refreshControlPointAnchorCache(id, latlng);
+      notify();
+    },
+    setControlPointDescription(id, description) {
+      const cp = controlPoints.find(c => c.id === id);
+      if (!cp || cp.description === description) return;
+      cp.description = description;
+      notify();
+    },
+    removeControlPoint(id) {
+      const i = controlPoints.findIndex(c => c.id === id);
+      if (i < 0) return;
+      controlPoints.splice(i, 1);
+      // Clear linkage on dependent measurements (mirrors backend ON DELETE SET NULL).
+      for (const m of mapMeasurements) {
+        if (m.controlPointId === id) m.controlPointId = null;
+      }
+      for (const child of overlaysGroup.children) {
+        const data = overlayData(child as THREE.Group);
+        if (!data.pois) continue;
+        for (const poi of data.pois) {
+          const pd = poiData(poi);
+          if (pd.controlPointId !== id) continue;
+          pd.controlPointId = null;
+          pd.controlPointAnchor = null;
+        }
+      }
+      notify();
+    },
+
     listOverlays: () => overlaysGroup.children,
     getOverlayById(id) {
       for (const child of overlaysGroup.children) {
@@ -473,7 +665,7 @@ export function createOverlayManager(
       }
       return null;
     },
-    getPOIById(id) {
+    getImageMeasurementById(id) {
       for (const child of overlaysGroup.children) {
         const data = overlayData(child as THREE.Group);
         if (!data.pois) continue;
@@ -483,21 +675,22 @@ export function createOverlayManager(
       }
       return null;
     },
-    getPOIOnOverlayByMapPOIId(overlay, mapPOIId) {
+    getImageMeasurementOnOverlayByControlPointId(overlay, controlPointId) {
       const data = overlayData(overlay);
       if (!data.pois) return null;
       for (const p of data.pois) {
-        if (poiData(p).mapPOIId === mapPOIId) return p;
+        if (poiData(p).controlPointId === controlPointId) return p;
       }
       return null;
     },
+
     extractPose(o, camLoc) {
       const { az, alt } = posToAzAlt(o);
       const data = overlayData(o);
       return {
         photoAz: az,
-        photoTilt: alt,                 // input only; solver does not modify
-        photoRoll: data.photoRoll,      // input only; solver does not modify
+        photoTilt: alt,
+        photoRoll: data.photoRoll,
         sizeRad: data.sizeRad,
         aspect: data.aspect,
         camLat: camLoc?.lat ?? 0,
@@ -505,9 +698,6 @@ export function createOverlayManager(
       };
     },
     applyPose(o, pose) {
-      // photoTilt is always preserved (solver never touches it). photoRoll is
-      // preserved unless the user enabled "Auto-solve photo rotation," in
-      // which case the solver may have refined it.
       overlayData(o).photoRoll = pose.photoRoll;
       placeAt(o, dirFromAzAlt(pose.photoAz, pose.photoTilt), pose.photoRoll);
       overlayData(o).sizeRad = THREE.MathUtils.clamp(pose.sizeRad, SIZE_MIN, SIZE_MAX);
@@ -523,127 +713,7 @@ export function createOverlayManager(
       manager.beginBatch();
       try { fn(); } finally { manager.endBatch(); }
     },
-    movePOI(poi, u, v) {
-      const pData = poiData(poi);
-      pData.uv.u = u;
-      pData.uv.v = v;
-      applySize(pData.parentOverlay);
-      notify();
-    },
-    deleteSelectedPOI() {
-      if (selectedMapPOIId) {
-        const deletedId = selectedMapPOIId;
-        const i = mapPois.findIndex(m => m.id === deletedId);
-        if (i >= 0) mapPois.splice(i, 1);
-        // Break the FK on every image POI that referenced this map POI.
-        // Backend cascades ON DELETE SET NULL on its side; the frontend has
-        // to mirror that, otherwise the next sync diff sees stale mapPOIId
-        // and tries to PUT an FK that no longer exists.
-        for (const child of overlaysGroup.children) {
-          const data = overlayData(child as THREE.Group);
-          if (!data.pois) continue;
-          for (const poi of data.pois) {
-            const pd = poiData(poi);
-            if (pd.mapPOIId !== deletedId) continue;
-            pd.mapPOIId = null;
-            pd.mapAnchor = null;
-          }
-        }
-        selectedMapPOIId = null;
-        onSelectionChange?.();
-        notify();
-        return;
-      }
-      if (!selectedPOI) return;
-      const poi = selectedPOI;
-      manager.setSelectedPOI(null);
-      const parent = poiData(poi).parentOverlay;
-      parent.remove(poi);
-      const arr = overlayData(parent).pois;
-      if (arr) {
-        const i = arr.indexOf(poi);
-        if (i >= 0) arr.splice(i, 1);
-      }
-      // POI shares POI_GEOM; only the material is per-POI.
-      (poi.material as THREE.Material).dispose();
-      notify();
-    },
-    getSelectedPOI: () => selectedPOI,
-    setSelectedPOI(poi) {
-      // Mutually exclusive with selectedMapPOIId: clicking an image POI
-      // claims the "primary" selection slot, so any standalone map-POI
-      // selection clears. Linked highlighting still happens via
-      // poiData(poi).mapPOIId in getMapPOIs / applyPOIColors.
-      if (selectedPOI === poi && (poi === null || selectedMapPOIId === null)) return;
-      selectedPOI = poi;
-      if (poi !== null) selectedMapPOIId = null;
-      applyPOIColors();
-      onSelectionChange?.();
-    },
-    setSelectedPair(poi, mapPOIId) {
-      const photoChanged = selectedPOI !== poi;
-      const mapChanged = selectedMapPOIId !== mapPOIId;
-      if (!photoChanged && !mapChanged) return;
-      if (photoChanged) selectedPOI = poi;
-      if (mapChanged) selectedMapPOIId = mapPOIId;
-      applyPOIColors();
-      onSelectionChange?.();
-    },
-    getPOIs() {
-      const result: POIBearing[] = [];
-      for (const child of overlaysGroup.children) {
-        const o = child as THREE.Group;
-        const data = overlayData(o);
-        if (!data.pois) continue;
-        for (const poi of data.pois) {
-          const pData = poiData(poi);
-          result.push({
-            id: pData.id,
-            handle: poi,
-            az: azFromLocal(o, poi.position.x, poi.position.y, poi.position.z),
-            uv: { ...pData.uv },
-            mapAnchor: pData.mapAnchor,
-            mapPOIId: pData.mapPOIId,
-            selected: isPOISelected(poi, pData.mapPOIId),
-          });
-        }
-      }
-      return result;
-    },
-    addMapPOI(id, latlng) {
-      mapPois.push({ id, latlng: { lat: latlng.lat, lng: latlng.lng } });
-      notify();
-    },
-    setMapPOILatLng(id, latlng) {
-      const entry = mapPois.find(m => m.id === id);
-      if (!entry) return;
-      entry.latlng = { lat: latlng.lat, lng: latlng.lng };
-      // Fan out: any image POI that references this map POI gets its anchor
-      // cache refreshed so the next render uses the new lat/lng.
-      manager.refreshAnchorsForMapPOI(id, latlng);
-      notify();
-    },
-    getMapPOIs() {
-      const linkedFromSelectedPOI = selectedPOI ? poiData(selectedPOI).mapPOIId : null;
-      return mapPois.map(m => ({
-        id: m.id,
-        latlng: m.latlng,
-        selected: m.id === selectedMapPOIId || m.id === linkedFromSelectedPOI,
-      }));
-    },
-    getSelectedMapPOI: () => selectedMapPOIId,
-    setSelectedMapPOI(id) {
-      // Mutually exclusive with selectedPOI — see setSelectedPOI for rationale.
-      if (selectedMapPOIId === id && (id === null || selectedPOI === null)) return;
-      selectedMapPOIId = id;
-      if (id !== null) selectedPOI = null;
-      applyPOIColors();
-      onSelectionChange?.();
-    },
     getCones() {
-      // Sample each vertical edge at its centerline (y=0). For tilted overlays the
-      // local Y axis isn't purely world-vertical, so picking y=0 (the edge midpoint)
-      // gives a stable bearing instead of biasing toward the bottom corner.
       const cones: Cone[] = [];
       for (const child of overlaysGroup.children) {
         const o = child as THREE.Group;
@@ -661,8 +731,6 @@ export function createOverlayManager(
         if (data.outline) data.outline.visible = visible;
         if (data.handles) for (const m of data.handles) m.visible = visible;
       }
-      // POIs are authoring markers — hide them along with the selection visuals
-      // so the bake captures only the photographic content.
       for (const child of overlaysGroup.children) {
         const data = overlayData(child as THREE.Group);
         if (!data.pois) continue;

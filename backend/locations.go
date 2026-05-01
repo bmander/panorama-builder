@@ -102,21 +102,27 @@ func (s *Server) getLocation(w http.ResponseWriter, r *http.Request) {
 		writeErrorFromDB(w, err)
 		return
 	}
-	mapPOIs, err := s.mapPOIsByLocation(ctx, id)
+	mapMeasurements, err := s.mapMeasurementsByLocation(ctx, id)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
-	imagePOIs, err := s.imagePOIsByLocation(ctx, id)
+	imageMeasurements, err := s.imageMeasurementsByLocation(ctx, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	controlPoints, err := s.controlPointsByLocation(ctx, id)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, HydratedLocation{
-		Location:  loc,
-		Photos:    photos,
-		MapPois:   mapPOIs,
-		ImagePois: imagePOIs,
+		Location:          loc,
+		Photos:            photos,
+		MapMeasurements:   mapMeasurements,
+		ImageMeasurements: imageMeasurements,
+		ControlPoints:     controlPoints,
 	})
 }
 
@@ -213,18 +219,18 @@ func (s *Server) photosByLocation(ctx context.Context, locID string) ([]Photo, e
 	return out, rows.Err()
 }
 
-func (s *Server) mapPOIsByLocation(ctx context.Context, locID string) ([]MapPOI, error) {
-	out := []MapPOI{}
+func (s *Server) mapMeasurementsByLocation(ctx context.Context, locID string) ([]MapMeasurement, error) {
+	out := []MapMeasurement{}
 	rows, err := s.db.Query(ctx, `
-		SELECT id, location_id, lat, lng, created_at, updated_at
-		FROM map_pois WHERE location_id = $1 ORDER BY created_at`, locID)
+		SELECT `+mapMeasurementCols+`
+		FROM map_measurements WHERE location_id = $1 ORDER BY created_at`, locID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var m MapPOI
-		if err := rows.Scan(&m.ID, &m.LocationID, &m.Lat, &m.Lng, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		var m MapMeasurement
+		if err := rows.Scan(&m.ID, &m.LocationID, &m.Lat, &m.Lng, &m.ControlPointID, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -232,11 +238,11 @@ func (s *Server) mapPOIsByLocation(ctx context.Context, locID string) ([]MapPOI,
 	return out, rows.Err()
 }
 
-func (s *Server) imagePOIsByLocation(ctx context.Context, locID string) ([]ImagePOI, error) {
-	out := []ImagePOI{}
+func (s *Server) imageMeasurementsByLocation(ctx context.Context, locID string) ([]ImageMeasurement, error) {
+	out := []ImageMeasurement{}
 	rows, err := s.db.Query(ctx, `
-		SELECT i.id, i.photo_id, i.u, i.v, i.map_poi_id, i.created_at, i.updated_at
-		FROM image_pois i
+		SELECT i.id, i.photo_id, i.u, i.v, i.control_point_id, i.created_at, i.updated_at
+		FROM image_measurements i
 		JOIN photos p ON p.id = i.photo_id
 		WHERE p.location_id = $1
 		ORDER BY i.created_at`, locID)
@@ -245,11 +251,11 @@ func (s *Server) imagePOIsByLocation(ctx context.Context, locID string) ([]Image
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var ip ImagePOI
-		if err := rows.Scan(&ip.ID, &ip.PhotoID, &ip.U, &ip.V, &ip.MapPoiID, &ip.CreatedAt, &ip.UpdatedAt); err != nil {
+		var im ImageMeasurement
+		if err := rows.Scan(&im.ID, &im.PhotoID, &im.U, &im.V, &im.ControlPointID, &im.CreatedAt, &im.UpdatedAt); err != nil {
 			return nil, err
 		}
-		out = append(out, ip)
+		out = append(out, im)
 	}
 	return out, rows.Err()
 }

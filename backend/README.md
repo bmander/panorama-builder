@@ -59,12 +59,17 @@ falling back to `index.html` (SPA `/<id>` deep-links).
 | DELETE | `/api/photos/{id}`                  |
 | PUT    | `/api/photos/{id}/blob`             |
 | GET    | `/api/photos/{id}/blob`             |
-| POST   | `/api/locations/{id}/map-pois`      |
-| PUT    | `/api/map-pois/{id}`                |
-| DELETE | `/api/map-pois/{id}`                |
-| POST   | `/api/photos/{id}/image-pois`       |
-| PUT    | `/api/image-pois/{id}`              |
-| DELETE | `/api/image-pois/{id}`              |
+| POST   | `/api/locations/{id}/map-measurements`   |
+| PUT    | `/api/map-measurements/{id}`             |
+| DELETE | `/api/map-measurements/{id}`             |
+| POST   | `/api/photos/{id}/image-measurements`    |
+| PUT    | `/api/image-measurements/{id}`           |
+| DELETE | `/api/image-measurements/{id}`           |
+| POST   | `/api/control-points`                    |
+| GET    | `/api/control-points` (`?bbox=...`)      |
+| GET    | `/api/control-points/{id}`               |
+| PUT    | `/api/control-points/{id}`               |
+| DELETE | `/api/control-points/{id}`               |
 
 ## Smoke test
 

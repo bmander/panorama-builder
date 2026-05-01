@@ -7,8 +7,8 @@ import { createHud, attachViewTabs, attachDownload } from './ui.js';
 import { createMapView } from './map.js';
 import { createTerrainView } from './terrain.js';
 import { createSunMarker } from './sun-marker.js';
-import { createMapPoiColumns, findHitColumn } from './map-poi-columns.js';
-import type { MapPoiColumn } from './map-poi-columns.js';
+import { createControlPointColumns, findHitColumn } from './map-poi-columns.js';
+import type { ControlPointColumn } from './map-poi-columns.js';
 import { getElement, overlayData } from './types.js';
 import type { LatLng } from './types.js';
 import * as api from './api.js';
@@ -49,7 +49,7 @@ const overlays = createOverlayManager({
     viewer.requestRender();
     baker.markDirty();
     if (mapView.isVisible()) refreshMapAnnotations();
-    refreshMapPoiColumns();
+    refreshControlPointColumns();
     solver.runSolve();
     sync.flush();
     settings.persist();
@@ -57,7 +57,7 @@ const overlays = createOverlayManager({
   onSelectionChange: () => {
     viewer.requestRender();
     if (mapView.isVisible()) refreshMapAnnotations();
-    refreshMapPoiColumns();
+    refreshControlPointColumns();
   },
   onLightMutate: () => {
     viewer.requestRender();
@@ -74,7 +74,7 @@ const sunMarker = createSunMarker({
   scene: viewer.scene,
   requestRender: () => { viewer.requestRender(); },
 });
-const mapPoiColumns = createMapPoiColumns({
+const cpColumns = createControlPointColumns({
   scene: viewer.scene,
   requestRender: () => { viewer.requestRender(); },
 });
@@ -83,7 +83,7 @@ const baker = createBaker({
   scene: viewer.scene,
   setVisualsVisible: visible => {
     overlays.setVisualsVisible(visible);
-    mapPoiColumns.setVisible(visible);
+    cpColumns.setVisible(visible);
   },
 });
 const hud = createHud(() => {
@@ -101,21 +101,19 @@ const hud = createHud(() => {
 
 function refreshMapAnnotations(): void {
   mapView.setOverlayCones(overlays.getCones());
-  mapView.setPOIBearings(overlays.getPOIs());
-  mapView.setMapPOIs(overlays.getMapPOIs());
+  mapView.setImageMeasurementBearings(overlays.getImageMeasurements());
+  mapView.setMapMeasurements(overlays.getMapMeasurements());
 }
 
-function refreshMapPoiColumns(): void {
+function refreshControlPointColumns(): void {
   if (viewTabs.getMode() !== '360') return;
   const camLoc = mapView.getLocation();
-  const columns: MapPoiColumn[] = [];
-  for (const p of overlays.getPOIs()) {
-    if (p.mapAnchor) columns.push({ id: p.handle.uuid, anchor: p.mapAnchor, selected: p.selected });
+  const columns: ControlPointColumn[] = [];
+  for (const cp of overlays.getControlPoints()) {
+    if (cp.estLat === null || cp.estLng === null) continue;
+    columns.push({ id: cp.id, anchor: { lat: cp.estLat, lng: cp.estLng }, selected: cp.selected });
   }
-  for (const m of overlays.getMapPOIs()) {
-    columns.push({ id: m.id, anchor: m.latlng, selected: m.selected });
-  }
-  mapPoiColumns.update(camLoc, columns);
+  cpColumns.update(camLoc, columns);
 }
 
 const coordsEl = getElement('map-coords');
@@ -125,7 +123,7 @@ function applyCameraLocation(loc: LatLng): void {
   coordsEl.textContent = `lat ${loc.lat.toFixed(5)}  lng ${loc.lng.toFixed(5)}`;
   terrain.setLocation(loc);
   settings.refreshSunDirection();
-  refreshMapPoiColumns();
+  refreshControlPointColumns();
   applyLocationGate();
   // Mark the location dirty so the next flush PUTs it.
   sync.flush();
@@ -188,11 +186,11 @@ const mapView = createMapView({
   container: getElement('map'),
   onShowRefresh: () => { refreshMapAnnotations(); },
   onLocationChange: loc => { handlers.onSetLocation(loc); },
-  onPOIAnchorClick: (handle, latlng) => { void handlers.onAnchorImagePOIByMapClick(handle, latlng); },
-  onMapPoiArmedAddClick: latlng => { void handlers.onAddMapPOI(latlng); },
-  onMapPoiClick: id => { overlays.setSelectedMapPOI(id); },
+  onPOIAnchorClick: (handle, latlng) => { void handlers.onAnchorImageMeasurementByMapClick(handle, latlng); },
+  onMapPoiArmedAddClick: latlng => { void handlers.onAddMapMeasurement(latlng); },
+  onMapPoiClick: id => { overlays.setSelectedMapMeasurement(id); },
   onMapPoiDragged: (id, latlng) => {
-    overlays.withBatch(() => { overlays.setMapPOILatLng(id, latlng); });
+    overlays.withBatch(() => { overlays.setMapMeasurementLatLng(id, latlng); });
   },
   onMapPoiArmedChange: armed => { addPoiBtnEl.classList.toggle('armed', armed); },
   onProjectMarkerOpen: id => { location.assign('/' + id); },
@@ -227,9 +225,9 @@ const input = attachInput({
   onPhotoDropped: (tex, blob, aspect, dir, revokeUrl) => {
     void handlers.onPhotoDropped(tex, blob, aspect, dir, revokeUrl);
   },
-  onAddImagePOI: (overlay, u, v) => { void handlers.onAddImagePOI(overlay, u, v); },
-  onMatchImagePOI: (overlay, u, v, mapPOIId, latlng) => {
-    void handlers.onMatchImagePOI(overlay, u, v, mapPOIId, latlng);
+  onAddImagePOI: (overlay, u, v) => { void handlers.onAddImageMeasurement(overlay, u, v); },
+  onMatchImagePOI: (overlay, u, v, controlPointId, latlng) => {
+    void handlers.onMatchImageMeasurement(overlay, u, v, controlPointId, latlng);
   },
   onShiftWheel: deltaPx => {
     const h = terrain.getCameraHeight();
@@ -243,9 +241,9 @@ const input = attachInput({
   findColumnAtNDC: ndc => {
     const camLoc = mapView.getLocation();
     if (!camLoc) return null;
-    return findHitColumn(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, camLoc, overlays.getMapPOIs());
+    return findHitColumn(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, camLoc, overlays.getControlPoints());
   },
-  onHoveredColumnChange: id => { mapPoiColumns.setHoveredColumn(id); },
+  onHoveredColumnChange: id => { cpColumns.setHoveredColumn(id); },
 });
 
 addPoiBtnEl.addEventListener('click', () => {
@@ -257,7 +255,7 @@ const viewTabs = attachViewTabs({ viewer, hud, mapView });
 viewTabs.onModeChange(mode => {
   input.disarmPoi();
   mapView.disarmAll();
-  if (mode === '360') refreshMapPoiColumns();
+  if (mode === '360') refreshControlPointColumns();
   settings.persist();
 });
 
@@ -300,24 +298,36 @@ async function hydrateFromAPI(id: string): Promise<void> {
     }, undefined, () => { resolve(); });
   })));
 
-  // Add map POIs first so image POIs can resolve their cached anchors.
-  const mapPoiByID = new Map<string, LatLng>();
-  for (const m of data.map_pois) {
-    mapPoiByID.set(m.id, { lat: m.lat, lng: m.lng });
-    overlays.addMapPOI(m.id, { lat: m.lat, lng: m.lng });
-    sync.registerMapPOI(m.id, { lat: m.lat, lng: m.lng });
+  // Control points first — image measurements pull their anchor cache from
+  // the linked CP's est_lat/est_lng.
+  const cpAnchorById = new Map<string, LatLng | null>();
+  for (const cp of data.control_points) {
+    const anchor = (cp.est_lat !== null && cp.est_lng !== null)
+      ? { lat: cp.est_lat, lng: cp.est_lng } : null;
+    cpAnchorById.set(cp.id, anchor);
+    overlays.addControlPoint(cp.id, {
+      description: cp.description, estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,
+    });
+    sync.registerControlPoint(cp.id, {
+      description: cp.description, est_lat: cp.est_lat, est_lng: cp.est_lng, est_alt: cp.est_alt,
+    });
   }
 
-  for (const ip of data.image_pois) {
-    const overlay = overlays.getOverlayById(ip.photo_id);
+  for (const m of data.map_measurements) {
+    overlays.addMapMeasurement(m.id, { lat: m.lat, lng: m.lng }, m.control_point_id);
+    sync.registerMapMeasurement(m.id, { lat: m.lat, lng: m.lng, control_point_id: m.control_point_id });
+  }
+
+  for (const im of data.image_measurements) {
+    const overlay = overlays.getOverlayById(im.photo_id);
     if (!overlay) continue;
-    const anchor = ip.map_poi_id ? mapPoiByID.get(ip.map_poi_id) ?? null : null;
-    overlays.addPOI(overlay, ip.u, ip.v, {
-      id: ip.id,
-      mapPOIId: ip.map_poi_id,
-      mapAnchor: anchor,
+    const anchor = im.control_point_id ? cpAnchorById.get(im.control_point_id) ?? null : null;
+    overlays.addImageMeasurement(overlay, im.u, im.v, {
+      id: im.id,
+      controlPointId: im.control_point_id,
+      controlPointAnchor: anchor,
     });
-    sync.registerImagePOI(ip.id, { u: ip.u, v: ip.v, map_poi_id: ip.map_poi_id });
+    sync.registerImageMeasurement(im.id, { u: im.u, v: im.v, control_point_id: im.control_point_id });
   }
 }
 
@@ -351,13 +361,15 @@ async function showProjectPreview(id: string): Promise<void> {
     azL: p.photo_az - p.size_rad / 2,
     azR: p.photo_az + p.size_rad / 2,
   }));
-  const linkedIds = new Set<string>();
-  for (const ip of data.image_pois) {
-    if (ip.map_poi_id !== null) linkedIds.add(ip.map_poi_id);
+  // Linked CPs: any CP referenced by at least one image measurement, drawn at
+  // its est_lat/est_lng. CPs without an estimate are excluded from the dots.
+  const linkedCPIds = new Set<string>();
+  for (const im of data.image_measurements) {
+    if (im.control_point_id !== null) linkedCPIds.add(im.control_point_id);
   }
-  const linkedMapPOIs = data.map_pois
-    .filter(m => linkedIds.has(m.id))
-    .map(m => ({ lat: m.lat, lng: m.lng }));
+  const linkedMapPOIs = data.control_points
+    .filter(cp => linkedCPIds.has(cp.id) && cp.est_lat !== null && cp.est_lng !== null)
+    .map(cp => ({ lat: cp.est_lat!, lng: cp.est_lng! }));
   mapView.setProjectPreview({
     origin: { lat: data.location.lat, lng: data.location.lng },
     cones,
@@ -372,8 +384,8 @@ async function bootstrap(): Promise<void> {
     settings.apply(prefs);
     if (prefs.tab !== undefined) viewTabs.setMode(prefs.tab);
     overlays.setSelected(null);
-    overlays.setSelectedPOI(null);
-    overlays.setSelectedMapPOI(null);
+    overlays.setSelectedImageMeasurement(null);
+    overlays.setSelectedMapMeasurement(null);
     admin.setVisible(true);
   } else {
     void showProjectMarkers();

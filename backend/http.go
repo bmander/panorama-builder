@@ -68,22 +68,25 @@ func validUV(v float64) bool  { return inRange(v, 0, 1) }
 // the generated types-only mode doesn't ship runtime validation; we keep
 // these as the runtime gate.
 
-func validateMapPOIRequest(req MapPOIRequest) string {
+func validateMapMeasurementRequest(req MapMeasurementRequest) string {
 	if !validLat(req.Lat) {
 		return "lat out of range"
 	}
 	if !validLng(req.Lng) {
 		return "lng out of range"
 	}
+	if req.ControlPointID != nil && !validID(*req.ControlPointID) {
+		return "invalid control_point_id"
+	}
 	return ""
 }
 
-func validateImagePOIPatch(req ImagePOIPatch) string {
+func validateImageMeasurementPatch(req ImageMeasurementPatch) string {
 	if !validUV(req.U) || !validUV(req.V) {
 		return "u/v must be in [0, 1]"
 	}
-	if req.MapPoiID != nil && !validID(*req.MapPoiID) {
-		return "invalid map_poi_id"
+	if req.ControlPointID != nil && !validID(*req.ControlPointID) {
+		return "invalid control_point_id"
 	}
 	return ""
 }
@@ -97,6 +100,16 @@ func validatePhotoPosePatch(req PhotoPosePatch) string {
 	}
 	if req.Opacity != nil && !inRange(*req.Opacity, 0, 1) {
 		return "opacity must be in [0, 1]"
+	}
+	return ""
+}
+
+func validateControlPointPatch(req ControlPointPatch) string {
+	if req.EstLat != nil && !validLat(*req.EstLat) {
+		return "est_lat out of range"
+	}
+	if req.EstLng != nil && !validLng(*req.EstLng) {
+		return "est_lng out of range"
 	}
 	return ""
 }

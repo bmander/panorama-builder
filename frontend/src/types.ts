@@ -49,29 +49,43 @@ export interface Cone {
   readonly azR: number;
 }
 
-// Per-POI viewer bearing, paired with its scene-graph handle so the map view
-// can correlate clicks back to the POI it represents.
-export interface POIBearing {
-  // Server-assigned id; matches the row in the API's image_pois table.
+// Per-image-measurement viewer bearing, paired with its scene-graph handle so
+// the map view can correlate clicks back to the measurement it represents.
+export interface ImageMeasurementBearing {
+  // Server-assigned id; matches the row in the API's image_measurements table.
   readonly id: string;
   readonly handle: THREE.Mesh;
   readonly az: number;
   readonly uv: { readonly u: number; readonly v: number };
-  // Cached lat/lng of the linked map-POI, kept in sync by the orchestration
-  // layer for cheap render-time access. Null when the POI has no anchor.
-  readonly mapAnchor: LatLng | null;
-  // FK to the map-POI this POI is anchored to. Sync layer reads this when
-  // PUTing image_pois rows. Null = unanchored.
-  readonly mapPOIId: string | null;
+  // Cached lat/lng of the linked control point's estimated location, kept in
+  // sync by the orchestration layer for cheap render-time access. Null when
+  // the measurement has no link or its CP has a NULL estimate.
+  readonly controlPointAnchor: LatLng | null;
+  // FK to the linked control point. Sync layer reads this when PUTing
+  // image_measurements rows. Null = unlinked.
+  readonly controlPointId: string | null;
   readonly selected: boolean;
 }
 
-// Standalone map-POI: a free-floating landmark on the map with no parent
-// photo. Rendered as an anchor marker on the map and a vertical column in
-// the 360° viewer (same blue/yellow vocabulary as photo-anchored POIs).
-export interface MapPOIView {
+// Map measurement: a user-asserted ground-truth observation on the map. A
+// measurement may be linked to a control point (the latent landmark it
+// observes); the column in the 360° viewer is drawn at the linked CP's
+// estimated location, not the measurement's own lat/lng.
+export interface MapMeasurementView {
   readonly id: string;
   readonly latlng: LatLng;
+  readonly controlPointId: string | null;
+  readonly selected: boolean;
+}
+
+// Control point: a real-world landmark with a latent location. May be
+// referenced by image and map measurements across photos / projects.
+export interface ControlPointView {
+  readonly id: string;
+  readonly description: string;
+  readonly estLat: number | null;
+  readonly estLng: number | null;
+  readonly estAlt: number | null;
   readonly selected: boolean;
 }
 
@@ -126,18 +140,18 @@ export interface OverlayUserData {
 }
 
 export interface POIUserData {
-  // Server-assigned id; same as the row in the API's image_pois table.
+  // Server-assigned id; same as the row in the API's image_measurements table.
   id: string;
   role: 'poi';
   uv: { u: number; v: number };
   parentOverlay: THREE.Group;
-  // Cached lat/lng of the linked map-POI. Cleared / refreshed by the
-  // orchestration layer whenever the linked map POI moves or the link
-  // changes. Null = unanchored.
-  mapAnchor: LatLng | null;
-  // FK to the linked map POI. Source of truth for sync; mapAnchor is the
-  // render-time cache. Null = unanchored.
-  mapPOIId: string | null;
+  // Cached lat/lng of the linked control point's estimated location. Cleared
+  // / refreshed by the orchestration layer whenever the CP's estimate moves
+  // or the link changes. Null = unlinked, or CP has no estimate.
+  controlPointAnchor: LatLng | null;
+  // FK to the linked control point. Source of truth for sync;
+  // controlPointAnchor is the render-time cache. Null = unlinked.
+  controlPointId: string | null;
 }
 
 // Roles tagged on every interactive scene-graph object so input.ts can

@@ -3,9 +3,13 @@ info:
   title: panorama-builder API
   description: |
     JSON API for compositing flat photos into a 360° panorama. Stores
-    locations (camera positions), photos (with embedded pose), map POIs
-    (free-floating landmarks), and image POIs (reticle anchors on photos
-    that may link to a map POI).
+    locations (camera setups, scoped per-project), photos (with embedded
+    pose), map measurements (user-asserted ground truth on the map),
+    image measurements (reticle anchors on photos), and control points
+    (cross-project landmarks with a latent estimated location).
+
+    Image and map measurements both link directly to a control point;
+    the control point is the latent real-world feature both observe.
 
     All resources use server-assigned 13-character base32 IDs.
     Authentication is out of scope — anyone with the URL has read+write
@@ -20,8 +24,9 @@ tags:
   - name: meta
   - name: locations
   - name: photos
-  - name: map-pois
-  - name: image-pois
+  - name: map-measurements
+  - name: image-measurements
+  - name: control-points
 
 paths:
   /healthz:
@@ -88,7 +93,7 @@ paths:
       - $ref: '#/components/parameters/LocationId'
     get:
       tags: [locations]
-      summary: Get a location with its photos, map POIs, and image POIs
+      summary: Get a location with its photos, measurements, and referenced control points
       operationId: getLocation
       responses:
         '200':
@@ -118,8 +123,11 @@ paths:
       tags: [locations]
       summary: Delete a location and cascade
       description: |
-        Cascades to photos and image POIs in the database, and removes
-        photo blob files from disk.
+        Cascades to photos and image measurements in the database, and
+        removes photo blob files from disk. Control points referenced
+        only from the deleted project are NOT cascade-deleted (they
+        live cross-project) — they survive without measurements until
+        explicitly removed.
       operationId: deleteLocation
       responses:
         '204': { description: Deleted }
@@ -225,103 +233,189 @@ paths:
                 format: binary
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /locations/{id}/map-pois:
+  /locations/{id}/map-measurements:
     parameters:
       - $ref: '#/components/parameters/LocationId'
     post:
-      tags: [map-pois]
-      summary: Create a map POI on a location
-      operationId: createMapPOI
+      tags: [map-measurements]
+      summary: Create a map measurement on a location
+      operationId: createMapMeasurement
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/MapPOIRequest' }
+            schema: { $ref: '#/components/schemas/MapMeasurementRequest' }
       responses:
         '201':
           description: Created
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/MapPOI' }
+              schema: { $ref: '#/components/schemas/MapMeasurement' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /map-pois/{id}:
+  /map-measurements/{id}:
     parameters:
-      - $ref: '#/components/parameters/MapPOIId'
+      - $ref: '#/components/parameters/MapMeasurementId'
     put:
-      tags: [map-pois]
-      summary: Move a map POI
-      operationId: updateMapPOI
+      tags: [map-measurements]
+      summary: Update a map measurement's lat/lng or control point link
+      operationId: updateMapMeasurement
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/MapPOIRequest' }
+            schema: { $ref: '#/components/schemas/MapMeasurementRequest' }
       responses:
         '200':
           description: OK
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/MapPOI' }
+              schema: { $ref: '#/components/schemas/MapMeasurement' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
-      tags: [map-pois]
-      summary: Delete a map POI
-      description: |
-        Cascades `ON DELETE SET NULL` on `image_pois.map_poi_id` —
-        anchored image POIs survive but lose their link.
-      operationId: deleteMapPOI
+      tags: [map-measurements]
+      summary: Delete a map measurement
+      operationId: deleteMapMeasurement
       responses:
         '204': { description: Deleted }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /photos/{id}/image-pois:
+  /photos/{id}/image-measurements:
     parameters:
       - $ref: '#/components/parameters/PhotoId'
     post:
-      tags: [image-pois]
-      summary: Create an image POI on a photo
-      operationId: createImagePOI
+      tags: [image-measurements]
+      summary: Create an image measurement on a photo
+      operationId: createImageMeasurement
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ImagePOIPatch' }
+            schema: { $ref: '#/components/schemas/ImageMeasurementPatch' }
       responses:
         '201':
           description: Created
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ImagePOI' }
+              schema: { $ref: '#/components/schemas/ImageMeasurement' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /image-pois/{id}:
+  /image-measurements/{id}:
     parameters:
-      - $ref: '#/components/parameters/ImagePOIId'
+      - $ref: '#/components/parameters/ImageMeasurementId'
     put:
-      tags: [image-pois]
-      summary: Update an image POI's u/v or anchor
-      operationId: updateImagePOI
+      tags: [image-measurements]
+      summary: Update an image measurement's u/v or control point link
+      operationId: updateImageMeasurement
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ImagePOIPatch' }
+            schema: { $ref: '#/components/schemas/ImageMeasurementPatch' }
       responses:
         '200':
           description: OK
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ImagePOI' }
+              schema: { $ref: '#/components/schemas/ImageMeasurement' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
-      tags: [image-pois]
-      summary: Delete an image POI
-      operationId: deleteImagePOI
+      tags: [image-measurements]
+      summary: Delete an image measurement
+      operationId: deleteImageMeasurement
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /control-points:
+    post:
+      tags: [control-points]
+      summary: Create a control point
+      description: |
+        Control points are global (cross-project). Initial est_lat /
+        est_lng / est_alt are optional; a CP without estimates is
+        a "latent" landmark whose location is unknown until the solver
+        triangulates from observations.
+      operationId: createControlPoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlPointPatch' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ControlPoint' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+    get:
+      tags: [control-points]
+      summary: List control points, optionally filtered by bbox
+      operationId: listControlPoints
+      parameters:
+        - name: bbox
+          in: query
+          description: |
+            Bounding box as `minLng,minLat,maxLng,maxLat`. Filter is
+            applied to the CPs' est_lat/est_lng — CPs with NULL
+            estimates are excluded when bbox is set. Returns up to 1000.
+          required: false
+          schema:
+            type: string
+            pattern: '^-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?$'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ControlPoint' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /control-points/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ControlPointId'
+    get:
+      tags: [control-points]
+      summary: Get a control point
+      operationId: getControlPoint
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ControlPoint' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [control-points]
+      summary: Update a control point's description / estimates
+      operationId: updateControlPoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ControlPointPatch' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ControlPoint' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [control-points]
+      summary: Delete a control point
+      description: |
+        Cascades `ON DELETE SET NULL` on referencing image and map
+        measurements; both survive without their link.
+      operationId: deleteControlPoint
       responses:
         '204': { description: Deleted }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -338,12 +432,17 @@ components:
       in: path
       required: true
       schema: { $ref: '#/components/schemas/Id' }
-    MapPOIId:
+    MapMeasurementId:
       name: id
       in: path
       required: true
       schema: { $ref: '#/components/schemas/Id' }
-    ImagePOIId:
+    ImageMeasurementId:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    ControlPointId:
       name: id
       in: path
       required: true
@@ -421,45 +520,79 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
-    MapPOI:
+    MapMeasurement:
       type: object
-      required: [id, location_id, lat, lng, created_at, updated_at]
+      description: |
+        User-asserted ground-truth observation: the user clicked on the
+        map and asserts that some control point is here.
+      required: [id, location_id, lat, lng, control_point_id, created_at, updated_at]
       properties:
         id: { $ref: '#/components/schemas/Id' }
         location_id: { $ref: '#/components/schemas/Id' }
         lat: { type: number, format: double, minimum: -90, maximum: 90 }
         lng: { type: number, format: double, minimum: -180, maximum: 180 }
-        created_at: { type: string, format: date-time }
-        updated_at: { type: string, format: date-time }
-
-    ImagePOI:
-      type: object
-      required: [id, photo_id, u, v, map_poi_id, created_at, updated_at]
-      properties:
-        id: { $ref: '#/components/schemas/Id' }
-        photo_id: { $ref: '#/components/schemas/Id' }
-        u: { type: number, format: double, minimum: 0, maximum: 1 }
-        v: { type: number, format: double, minimum: 0, maximum: 1 }
-        map_poi_id:
+        control_point_id:
           allOf: [{ $ref: '#/components/schemas/Id' }]
           nullable: true
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
+    ImageMeasurement:
+      type: object
+      description: |
+        Reticle anchor on a photo at (u, v): the user identifies that
+        some control point is visible at this image-space position.
+      required: [id, photo_id, u, v, control_point_id, created_at, updated_at]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        photo_id: { $ref: '#/components/schemas/Id' }
+        u: { type: number, format: double, minimum: 0, maximum: 1 }
+        v: { type: number, format: double, minimum: 0, maximum: 1 }
+        control_point_id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          nullable: true
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ControlPoint:
+      type: object
+      description: |
+        A real-world landmark with a latent location. May be referenced
+        by image measurements (across photos / projects) and map
+        measurements. The estimated location (est_lat / est_lng /
+        est_alt) is updated by the solver as observations accumulate;
+        for v1 the estimate mirrors any linked map measurement.
+      required: [id, description, est_lat, est_lng, est_alt, created_at, updated_at]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        description: { type: string }
+        est_lat: { type: number, format: double, nullable: true, minimum: -90, maximum: 90 }
+        est_lng: { type: number, format: double, nullable: true, minimum: -180, maximum: 180 }
+        est_alt: { type: number, format: double, nullable: true, description: meters above sea level }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
     HydratedLocation:
       type: object
-      required: [location, photos, map_pois, image_pois]
+      required: [location, photos, map_measurements, image_measurements, control_points]
       properties:
         location: { $ref: '#/components/schemas/Location' }
         photos:
           type: array
           items: { $ref: '#/components/schemas/Photo' }
-        map_pois:
+        map_measurements:
           type: array
-          items: { $ref: '#/components/schemas/MapPOI' }
-        image_pois:
+          items: { $ref: '#/components/schemas/MapMeasurement' }
+        image_measurements:
           type: array
-          items: { $ref: '#/components/schemas/ImagePOI' }
+          items: { $ref: '#/components/schemas/ImageMeasurement' }
+        control_points:
+          type: array
+          description: |
+            Control points reachable from this project — i.e., those
+            referenced by at least one of this location's measurements.
+            Other CPs (in other projects) are not included.
+          items: { $ref: '#/components/schemas/ControlPoint' }
 
     CreateLocationRequest:
       type: object
@@ -480,19 +613,30 @@ components:
         size_rad: { type: number, format: double }
         opacity: { type: number, format: double, minimum: 0, maximum: 1 }
 
-    MapPOIRequest:
+    MapMeasurementRequest:
       type: object
       required: [lat, lng]
       properties:
         lat: { type: number, format: double, minimum: -90, maximum: 90 }
         lng: { type: number, format: double, minimum: -180, maximum: 180 }
+        control_point_id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          nullable: true
 
-    ImagePOIPatch:
+    ImageMeasurementPatch:
       type: object
       required: [u, v]
       properties:
         u: { type: number, format: double, minimum: 0, maximum: 1 }
         v: { type: number, format: double, minimum: 0, maximum: 1 }
-        map_poi_id:
+        control_point_id:
           allOf: [{ $ref: '#/components/schemas/Id' }]
           nullable: true
+
+    ControlPointPatch:
+      type: object
+      properties:
+        description: { type: string }
+        est_lat: { type: number, format: double, nullable: true, minimum: -90, maximum: 90 }
+        est_lng: { type: number, format: double, nullable: true, minimum: -180, maximum: 180 }
+        est_alt: { type: number, format: double, nullable: true }

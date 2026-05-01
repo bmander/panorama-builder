@@ -13,7 +13,7 @@
 // (single-instance for the page lifetime).
 
 import * as THREE from 'three';
-import type { LatLng, MapPOIView } from './types.js';
+import type { LatLng, ControlPointView } from './types.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
 
 // Vertical extent relative to the camera origin: well below ground and well
@@ -27,14 +27,14 @@ const COLUMN_COLOR = 0x5080ff;
 const COLUMN_COLOR_SELECTED = 0xffff66;
 const COLUMN_RENDER_ORDER = 999;
 
-export interface MapPoiColumn {
+export interface ControlPointColumn {
   readonly id: string;
   readonly anchor: LatLng;
   readonly selected: boolean;
 }
 
-export interface MapPoiColumns {
-  update(camLoc: LatLng | null, columns: readonly MapPoiColumn[]): void;
+export interface ControlPointColumns {
+  update(camLoc: LatLng | null, columns: readonly ControlPointColumn[]): void;
   // Highlights one column as the matcher target. The hover treatment uses
   // the same yellow material as selection — pre-click feedback that "this
   // is what would be matched if you clicked now."
@@ -42,12 +42,12 @@ export interface MapPoiColumns {
   setVisible(visible: boolean): void;
 }
 
-export interface CreateMapPoiColumnsOptions {
+export interface CreateControlPointColumnsOptions {
   scene: THREE.Scene;
   requestRender: () => void;
 }
 
-export function createMapPoiColumns({ scene, requestRender }: CreateMapPoiColumnsOptions): MapPoiColumns {
+export function createControlPointColumns({ scene, requestRender }: CreateControlPointColumnsOptions): ControlPointColumns {
   // Single vertical segment along +Y, centered on the origin so each instance
   // can be placed by setting position to the anchor's world coords.
   const lineGeom = new THREE.BufferGeometry();
@@ -73,8 +73,8 @@ export function createMapPoiColumns({ scene, requestRender }: CreateMapPoiColumn
   scene.add(group);
 
   let hoveredId: string | null = null;
-  let lastColumns: readonly MapPoiColumn[] = [];
-  function pickMaterial(c: MapPoiColumn): THREE.LineBasicMaterial {
+  let lastColumns: readonly ControlPointColumn[] = [];
+  function pickMaterial(c: ControlPointColumn): THREE.LineBasicMaterial {
     return (c.selected || c.id === hoveredId) ? materialSelected : material;
   }
 
@@ -121,26 +121,28 @@ function ndcSegmentDistance(p: { x: number; y: number }, a: THREE.Vector3, b: TH
   return Math.hypot(apx - t * abx, apy - t * aby);
 }
 
-// Pick the closest map-POI column to an NDC point within `hitRadius`. Uses the
-// same Y bounds the columns are rendered at, so visual position matches hit
-// position. Returns null when nothing's in range or when both endpoints are
-// behind the camera (segment is offscreen).
+// Pick the closest control-point column to an NDC point within `hitRadius`.
+// CPs without an estimate (est_lat/est_lng = null) are excluded. Returns
+// null when nothing's in range or when both segment endpoints are behind
+// the camera (offscreen).
 export function findHitColumn(
   ndc: { x: number; y: number },
   hitRadius: number,
   camera: THREE.Camera,
   cameraLocation: LatLng,
-  mapPois: readonly MapPOIView[],
-): { id: string; latlng: LatLng } | null {
-  let best: { id: string; latlng: LatLng } | null = null;
+  controlPoints: readonly ControlPointView[],
+): { controlPointId: string; latlng: LatLng } | null {
+  let best: { controlPointId: string; latlng: LatLng } | null = null;
   let bestDist = hitRadius;
-  for (const m of mapPois) {
-    const { x, z } = latLngToCameraRelativeMeters(m.latlng, cameraLocation);
+  for (const cp of controlPoints) {
+    if (cp.estLat === null || cp.estLng === null) continue;
+    const latlng = { lat: cp.estLat, lng: cp.estLng };
+    const { x, z } = latLngToCameraRelativeMeters(latlng, cameraLocation);
     _baseProjected.set(x, COLUMN_Y_MIN_M, z).project(camera);
     _topProjected.set(x, COLUMN_Y_MAX_M, z).project(camera);
     if (_baseProjected.z > 1 && _topProjected.z > 1) continue;
     const d = ndcSegmentDistance(ndc, _baseProjected, _topProjected);
-    if (d < bestDist) { bestDist = d; best = { id: m.id, latlng: m.latlng }; }
+    if (d < bestDist) { bestDist = d; best = { controlPointId: cp.id, latlng }; }
   }
   return best;
 }

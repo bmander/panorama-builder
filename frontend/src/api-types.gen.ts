@@ -48,15 +48,18 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Get a location with its photos, map POIs, and image POIs */
+        /** Get a location with its photos, measurements, and referenced control points */
         get: operations["getLocation"];
         /** Update a location's lat/lng/name */
         put: operations["updateLocation"];
         post?: never;
         /**
          * Delete a location and cascade
-         * @description Cascades to photos and image POIs in the database, and removes
-         *     photo blob files from disk.
+         * @description Cascades to photos and image measurements in the database, and
+         *     removes photo blob files from disk. Control points referenced
+         *     only from the deleted project are NOT cascade-deleted (they
+         *     live cross-project) — they survive without measurements until
+         *     explicitly removed.
          */
         delete: operations["deleteLocation"];
         options?: never;
@@ -128,7 +131,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/locations/{id}/map-pois": {
+    "/locations/{id}/map-measurements": {
         parameters: {
             query?: never;
             header?: never;
@@ -139,39 +142,35 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create a map POI on a location */
-        post: operations["createMapPOI"];
+        /** Create a map measurement on a location */
+        post: operations["createMapMeasurement"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/map-pois/{id}": {
+    "/map-measurements/{id}": {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: components["parameters"]["MapPOIId"];
+                id: components["parameters"]["MapMeasurementId"];
             };
             cookie?: never;
         };
         get?: never;
-        /** Move a map POI */
-        put: operations["updateMapPOI"];
+        /** Update a map measurement's lat/lng or control point link */
+        put: operations["updateMapMeasurement"];
         post?: never;
-        /**
-         * Delete a map POI
-         * @description Cascades `ON DELETE SET NULL` on `image_pois.map_poi_id` —
-         *     anchored image POIs survive but lose their link.
-         */
-        delete: operations["deleteMapPOI"];
+        /** Delete a map measurement */
+        delete: operations["deleteMapMeasurement"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/photos/{id}/image-pois": {
+    "/photos/{id}/image-measurements": {
         parameters: {
             query?: never;
             header?: never;
@@ -182,29 +181,78 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create an image POI on a photo */
-        post: operations["createImagePOI"];
+        /** Create an image measurement on a photo */
+        post: operations["createImageMeasurement"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/image-pois/{id}": {
+    "/image-measurements/{id}": {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: components["parameters"]["ImagePOIId"];
+                id: components["parameters"]["ImageMeasurementId"];
             };
             cookie?: never;
         };
         get?: never;
-        /** Update an image POI's u/v or anchor */
-        put: operations["updateImagePOI"];
+        /** Update an image measurement's u/v or control point link */
+        put: operations["updateImageMeasurement"];
         post?: never;
-        /** Delete an image POI */
-        delete: operations["deleteImagePOI"];
+        /** Delete an image measurement */
+        delete: operations["deleteImageMeasurement"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control-points": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List control points, optionally filtered by bbox */
+        get: operations["listControlPoints"];
+        put?: never;
+        /**
+         * Create a control point
+         * @description Control points are global (cross-project). Initial est_lat /
+         *     est_lng / est_alt are optional; a CP without estimates is
+         *     a "latent" landmark whose location is unknown until the solver
+         *     triangulates from observations.
+         */
+        post: operations["createControlPoint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control-points/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ControlPointId"];
+            };
+            cookie?: never;
+        };
+        /** Get a control point */
+        get: operations["getControlPoint"];
+        /** Update a control point's description / estimates */
+        put: operations["updateControlPoint"];
+        post?: never;
+        /**
+         * Delete a control point
+         * @description Cascades `ON DELETE SET NULL` on referencing image and map
+         *     measurements; both survive without their link.
+         */
+        delete: operations["deleteControlPoint"];
         options?: never;
         head?: never;
         patch?: never;
@@ -274,26 +322,59 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
-        MapPOI: {
+        /**
+         * @description User-asserted ground-truth observation: the user clicked on the
+         *     map and asserts that some control point is here.
+         */
+        MapMeasurement: {
             id: components["schemas"]["Id"];
             location_id: components["schemas"]["Id"];
             /** Format: double */
             lat: number;
             /** Format: double */
             lng: number;
+            control_point_id: components["schemas"]["Id"] | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             updated_at: string;
         };
-        ImagePOI: {
+        /**
+         * @description Reticle anchor on a photo at (u, v): the user identifies that
+         *     some control point is visible at this image-space position.
+         */
+        ImageMeasurement: {
             id: components["schemas"]["Id"];
             photo_id: components["schemas"]["Id"];
             /** Format: double */
             u: number;
             /** Format: double */
             v: number;
-            map_poi_id: components["schemas"]["Id"] | null;
+            control_point_id: components["schemas"]["Id"] | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /**
+         * @description A real-world landmark with a latent location. May be referenced
+         *     by image measurements (across photos / projects) and map
+         *     measurements. The estimated location (est_lat / est_lng /
+         *     est_alt) is updated by the solver as observations accumulate;
+         *     for v1 the estimate mirrors any linked map measurement.
+         */
+        ControlPoint: {
+            id: components["schemas"]["Id"];
+            description: string;
+            /** Format: double */
+            est_lat: number | null;
+            /** Format: double */
+            est_lng: number | null;
+            /**
+             * Format: double
+             * @description meters above sea level
+             */
+            est_alt: number | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -302,8 +383,14 @@ export interface components {
         HydratedLocation: {
             location: components["schemas"]["Location"];
             photos: components["schemas"]["Photo"][];
-            map_pois: components["schemas"]["MapPOI"][];
-            image_pois: components["schemas"]["ImagePOI"][];
+            map_measurements: components["schemas"]["MapMeasurement"][];
+            image_measurements: components["schemas"]["ImageMeasurement"][];
+            /**
+             * @description Control points reachable from this project — i.e., those
+             *     referenced by at least one of this location's measurements.
+             *     Other CPs (in other projects) are not included.
+             */
+            control_points: components["schemas"]["ControlPoint"][];
         };
         CreateLocationRequest: {
             /** Format: double */
@@ -326,18 +413,28 @@ export interface components {
             /** Format: double */
             opacity?: number;
         };
-        MapPOIRequest: {
+        MapMeasurementRequest: {
             /** Format: double */
             lat: number;
             /** Format: double */
             lng: number;
+            control_point_id?: components["schemas"]["Id"] | null;
         };
-        ImagePOIPatch: {
+        ImageMeasurementPatch: {
             /** Format: double */
             u: number;
             /** Format: double */
             v: number;
-            map_poi_id?: components["schemas"]["Id"] | null;
+            control_point_id?: components["schemas"]["Id"] | null;
+        };
+        ControlPointPatch: {
+            description?: string;
+            /** Format: double */
+            est_lat?: number | null;
+            /** Format: double */
+            est_lng?: number | null;
+            /** Format: double */
+            est_alt?: number | null;
         };
     };
     responses: {
@@ -363,8 +460,9 @@ export interface components {
     parameters: {
         LocationId: components["schemas"]["Id"];
         PhotoId: components["schemas"]["Id"];
-        MapPOIId: components["schemas"]["Id"];
-        ImagePOIId: components["schemas"]["Id"];
+        MapMeasurementId: components["schemas"]["Id"];
+        ImageMeasurementId: components["schemas"]["Id"];
+        ControlPointId: components["schemas"]["Id"];
     };
     requestBodies: never;
     headers: never;
@@ -684,7 +782,7 @@ export interface operations {
             };
         };
     };
-    createMapPOI: {
+    createMapMeasurement: {
         parameters: {
             query?: never;
             header?: never;
@@ -695,7 +793,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["MapPOIRequest"];
+                "application/json": components["schemas"]["MapMeasurementRequest"];
             };
         };
         responses: {
@@ -705,25 +803,25 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MapPOI"];
+                    "application/json": components["schemas"]["MapMeasurement"];
                 };
             };
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
         };
     };
-    updateMapPOI: {
+    updateMapMeasurement: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: components["parameters"]["MapPOIId"];
+                id: components["parameters"]["MapMeasurementId"];
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["MapPOIRequest"];
+                "application/json": components["schemas"]["MapMeasurementRequest"];
             };
         };
         responses: {
@@ -733,19 +831,19 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MapPOI"];
+                    "application/json": components["schemas"]["MapMeasurement"];
                 };
             };
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
         };
     };
-    deleteMapPOI: {
+    deleteMapMeasurement: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: components["parameters"]["MapPOIId"];
+                id: components["parameters"]["MapMeasurementId"];
             };
             cookie?: never;
         };
@@ -761,7 +859,7 @@ export interface operations {
             404: components["responses"]["NotFound"];
         };
     };
-    createImagePOI: {
+    createImageMeasurement: {
         parameters: {
             query?: never;
             header?: never;
@@ -772,7 +870,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ImagePOIPatch"];
+                "application/json": components["schemas"]["ImageMeasurementPatch"];
             };
         };
         responses: {
@@ -782,25 +880,25 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ImagePOI"];
+                    "application/json": components["schemas"]["ImageMeasurement"];
                 };
             };
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
         };
     };
-    updateImagePOI: {
+    updateImageMeasurement: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: components["parameters"]["ImagePOIId"];
+                id: components["parameters"]["ImageMeasurementId"];
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ImagePOIPatch"];
+                "application/json": components["schemas"]["ImageMeasurementPatch"];
             };
         };
         responses: {
@@ -810,19 +908,144 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ImagePOI"];
+                    "application/json": components["schemas"]["ImageMeasurement"];
                 };
             };
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
         };
     };
-    deleteImagePOI: {
+    deleteImageMeasurement: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: components["parameters"]["ImagePOIId"];
+                id: components["parameters"]["ImageMeasurementId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listControlPoints: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Bounding box as `minLng,minLat,maxLng,maxLat`. Filter is
+                 *     applied to the CPs' est_lat/est_lng — CPs with NULL
+                 *     estimates are excluded when bbox is set. Returns up to 1000.
+                 */
+                bbox?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControlPoint"][];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    createControlPoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControlPointPatch"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControlPoint"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    getControlPoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ControlPointId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControlPoint"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateControlPoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ControlPointId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControlPointPatch"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControlPoint"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteControlPoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ControlPointId"];
             };
             cookie?: never;
         };

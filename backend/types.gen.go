@@ -7,6 +7,33 @@ import (
 	"time"
 )
 
+// ControlPoint A real-world landmark with a latent location. May be referenced
+// by image measurements (across photos / projects) and map
+// measurements. The estimated location (est_lat / est_lng /
+// est_alt) is updated by the solver as observations accumulate;
+// for v1 the estimate mirrors any linked map measurement.
+type ControlPoint struct {
+	CreatedAt   time.Time `json:"created_at"`
+	Description string    `json:"description"`
+
+	// EstAlt meters above sea level
+	EstAlt *float64 `json:"est_alt"`
+	EstLat *float64 `json:"est_lat"`
+	EstLng *float64 `json:"est_lng"`
+
+	// ID 13-character base32 server-assigned id
+	ID        ID        `json:"id"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ControlPointPatch defines model for ControlPointPatch.
+type ControlPointPatch struct {
+	Description *string  `json:"description,omitempty"`
+	EstAlt      *float64 `json:"est_alt,omitempty"`
+	EstLat      *float64 `json:"est_lat,omitempty"`
+	EstLng      *float64 `json:"est_lng,omitempty"`
+}
+
 // CreateLocationRequest defines model for CreateLocationRequest.
 type CreateLocationRequest struct {
 	Lat  float64 `json:"lat"`
@@ -26,22 +53,27 @@ type Health struct {
 
 // HydratedLocation defines model for HydratedLocation.
 type HydratedLocation struct {
-	ImagePois []ImagePOI `json:"image_pois"`
-	Location  Location   `json:"location"`
-	MapPois   []MapPOI   `json:"map_pois"`
-	Photos    []Photo    `json:"photos"`
+	// ControlPoints Control points reachable from this project — i.e., those
+	// referenced by at least one of this location's measurements.
+	// Other CPs (in other projects) are not included.
+	ControlPoints     []ControlPoint     `json:"control_points"`
+	ImageMeasurements []ImageMeasurement `json:"image_measurements"`
+	Location          Location           `json:"location"`
+	MapMeasurements   []MapMeasurement   `json:"map_measurements"`
+	Photos            []Photo            `json:"photos"`
 }
 
 // ID 13-character base32 server-assigned id
 type ID = string
 
-// ImagePOI defines model for ImagePOI.
-type ImagePOI struct {
-	CreatedAt time.Time `json:"created_at"`
+// ImageMeasurement Reticle anchor on a photo at (u, v): the user identifies that
+// some control point is visible at this image-space position.
+type ImageMeasurement struct {
+	ControlPointID *ID       `json:"control_point_id"`
+	CreatedAt      time.Time `json:"created_at"`
 
 	// ID 13-character base32 server-assigned id
-	ID       ID  `json:"id"`
-	MapPoiID *ID `json:"map_poi_id"`
+	ID ID `json:"id"`
 
 	// PhotoID 13-character base32 server-assigned id
 	PhotoID   ID        `json:"photo_id"`
@@ -50,11 +82,11 @@ type ImagePOI struct {
 	V         float64   `json:"v"`
 }
 
-// ImagePOIPatch defines model for ImagePOIPatch.
-type ImagePOIPatch struct {
-	MapPoiID *ID     `json:"map_poi_id,omitempty"`
-	U        float64 `json:"u"`
-	V        float64 `json:"v"`
+// ImageMeasurementPatch defines model for ImageMeasurementPatch.
+type ImageMeasurementPatch struct {
+	ControlPointID *ID     `json:"control_point_id,omitempty"`
+	U              float64 `json:"u"`
+	V              float64 `json:"v"`
 }
 
 // Location defines model for Location.
@@ -69,9 +101,11 @@ type Location struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// MapPOI defines model for MapPOI.
-type MapPOI struct {
-	CreatedAt time.Time `json:"created_at"`
+// MapMeasurement User-asserted ground-truth observation: the user clicked on the
+// map and asserts that some control point is here.
+type MapMeasurement struct {
+	ControlPointID *ID       `json:"control_point_id"`
+	CreatedAt      time.Time `json:"created_at"`
 
 	// ID 13-character base32 server-assigned id
 	ID  ID      `json:"id"`
@@ -83,10 +117,11 @@ type MapPOI struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-// MapPOIRequest defines model for MapPOIRequest.
-type MapPOIRequest struct {
-	Lat float64 `json:"lat"`
-	Lng float64 `json:"lng"`
+// MapMeasurementRequest defines model for MapMeasurementRequest.
+type MapMeasurementRequest struct {
+	ControlPointID *ID     `json:"control_point_id,omitempty"`
+	Lat            float64 `json:"lat"`
+	Lng            float64 `json:"lng"`
 }
 
 // Photo defines model for Photo.
@@ -129,14 +164,17 @@ type PhotoPosePatch struct {
 	SizeRad   float64  `json:"size_rad"`
 }
 
-// ImagePOIId 13-character base32 server-assigned id
-type ImagePOIId = ID
+// ControlPointID 13-character base32 server-assigned id
+type ControlPointID = ID
+
+// ImageMeasurementID 13-character base32 server-assigned id
+type ImageMeasurementID = ID
 
 // LocationID 13-character base32 server-assigned id
 type LocationID = ID
 
-// MapPOIId 13-character base32 server-assigned id
-type MapPOIId = ID
+// MapMeasurementID 13-character base32 server-assigned id
+type MapMeasurementID = ID
 
 // PhotoID 13-character base32 server-assigned id
 type PhotoID = ID
@@ -147,6 +185,14 @@ type BadRequest = Error
 // NotFound defines model for NotFound.
 type NotFound = Error
 
+// ListControlPointsParams defines parameters for ListControlPoints.
+type ListControlPointsParams struct {
+	// Bbox Bounding box as `minLng,minLat,maxLng,maxLat`. Filter is
+	// applied to the CPs' est_lat/est_lng — CPs with NULL
+	// estimates are excluded when bbox is set. Returns up to 1000.
+	Bbox *string `form:"bbox,omitempty" json:"bbox,omitempty"`
+}
+
 // ListLocationsParams defines parameters for ListLocations.
 type ListLocationsParams struct {
 	// Bbox Bounding box as `minLng,minLat,maxLng,maxLat` (four
@@ -155,8 +201,14 @@ type ListLocationsParams struct {
 	Bbox *string `form:"bbox,omitempty" json:"bbox,omitempty"`
 }
 
-// UpdateImagePOIJSONRequestBody defines body for UpdateImagePOI for application/json ContentType.
-type UpdateImagePOIJSONRequestBody = ImagePOIPatch
+// CreateControlPointJSONRequestBody defines body for CreateControlPoint for application/json ContentType.
+type CreateControlPointJSONRequestBody = ControlPointPatch
+
+// UpdateControlPointJSONRequestBody defines body for UpdateControlPoint for application/json ContentType.
+type UpdateControlPointJSONRequestBody = ControlPointPatch
+
+// UpdateImageMeasurementJSONRequestBody defines body for UpdateImageMeasurement for application/json ContentType.
+type UpdateImageMeasurementJSONRequestBody = ImageMeasurementPatch
 
 // CreateLocationJSONRequestBody defines body for CreateLocation for application/json ContentType.
 type CreateLocationJSONRequestBody = CreateLocationRequest
@@ -164,17 +216,17 @@ type CreateLocationJSONRequestBody = CreateLocationRequest
 // UpdateLocationJSONRequestBody defines body for UpdateLocation for application/json ContentType.
 type UpdateLocationJSONRequestBody = CreateLocationRequest
 
-// CreateMapPOIJSONRequestBody defines body for CreateMapPOI for application/json ContentType.
-type CreateMapPOIJSONRequestBody = MapPOIRequest
+// CreateMapMeasurementJSONRequestBody defines body for CreateMapMeasurement for application/json ContentType.
+type CreateMapMeasurementJSONRequestBody = MapMeasurementRequest
 
 // CreatePhotoJSONRequestBody defines body for CreatePhoto for application/json ContentType.
 type CreatePhotoJSONRequestBody = PhotoPosePatch
 
-// UpdateMapPOIJSONRequestBody defines body for UpdateMapPOI for application/json ContentType.
-type UpdateMapPOIJSONRequestBody = MapPOIRequest
+// UpdateMapMeasurementJSONRequestBody defines body for UpdateMapMeasurement for application/json ContentType.
+type UpdateMapMeasurementJSONRequestBody = MapMeasurementRequest
 
 // UpdatePhotoJSONRequestBody defines body for UpdatePhoto for application/json ContentType.
 type UpdatePhotoJSONRequestBody = PhotoPosePatch
 
-// CreateImagePOIJSONRequestBody defines body for CreateImagePOI for application/json ContentType.
-type CreateImagePOIJSONRequestBody = ImagePOIPatch
+// CreateImageMeasurementJSONRequestBody defines body for CreateImageMeasurement for application/json ContentType.
+type CreateImageMeasurementJSONRequestBody = ImageMeasurementPatch

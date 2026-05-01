@@ -24,13 +24,22 @@ export interface OrchestrationHandlers {
   onSetLocation(loc: LatLng): void;
   onStartProjectHere(input: StartProjectInput): Promise<void>;
   onPhotoDropped(tex: THREE.Texture, blob: Blob, aspect: number, dir: THREE.Vector3, revokeUrl: () => void): Promise<void>;
-  // Unmatched + POI armed click — always creates a new image POI.
-  onAddImagePOI(overlay: THREE.Group, u: number, v: number): Promise<void>;
+  // Unmatched + POI armed click — always creates a new image measurement
+  // (no control-point link).
+  onAddImageMeasurement(overlay: THREE.Group, u: number, v: number): Promise<void>;
   // Matched click (column hover → photo click). Moves the existing pin if
-  // this overlay already has one anchored to mapPOIId; otherwise creates.
-  onMatchImagePOI(overlay: THREE.Group, u: number, v: number, mapPOIId: string, latlng: LatLng): Promise<void>;
-  onAddMapPOI(latlng: LatLng): Promise<void>;
-  onAnchorImagePOIByMapClick(handle: THREE.Mesh, latlng: LatLng): Promise<void>;
+  // this overlay already has one linked to controlPointId; otherwise creates.
+  onMatchImageMeasurement(
+    overlay: THREE.Group, u: number, v: number, controlPointId: string, latlng: LatLng,
+  ): Promise<void>;
+  // Map "+ POI" armed click. v1 creates a CP and a map measurement linked to
+  // it; the CP carries the est_lat/est_lng (mirroring the measurement).
+  onAddMapMeasurement(latlng: LatLng): Promise<void>;
+  // Bearing-ray click on the map (or column drag) for an image measurement.
+  // If the measurement is already linked to a CP, moves the linked map
+  // measurement (and the CP estimate). If not, creates a new CP + map
+  // measurement at the click latlng and links the image measurement.
+  onAnchorImageMeasurementByMapClick(handle: THREE.Mesh, latlng: LatLng): Promise<void>;
 }
 
 export interface CreateOrchestrationOptions {
@@ -46,8 +55,6 @@ export function createOrchestration({
 }: CreateOrchestrationOptions): OrchestrationHandlers {
   function onSetLocation(loc: LatLng): void {
     if (!getCurrentLocationId()) return;
-    // applyCameraLocation triggers sync.flush(), which diffs map.getLocation()
-    // against synced.location and PUTs the change.
     applyCameraLocation(loc);
     runSolve();
   }
@@ -61,13 +68,8 @@ export function createOrchestration({
       sync.reportError('start project', err);
       return;
     }
-    // Seed the project's view prefs with the user-provided date so the sun
-    // marker / shaded terrain pick up the right lighting on first hydrate.
     if (dateEstimate) mergePrefs(created.id, { sunDateTime: dateEstimate });
 
-    // Decode all images in parallel — aspect reads are independent, no need
-    // to serialize behind the per-photo POST/PUT chain. Failed decodes
-    // resolve to null and the corresponding upload is skipped.
     const aspects: (number | null)[] = await Promise.all(photos.map(file =>
       readAspectRatio(file).catch((err: unknown) => {
         console.error(`decode of ${file.name} failed:`, err);
@@ -75,11 +77,6 @@ export function createOrchestration({
       })
     ));
 
-    // Distribute around the horizon at altitude 0 (azimuth = i·2π/N) so photos
-    // don't stack; user can refine in the photosphere afterwards. POST + PUT
-    // for one photo must serialize (the PUT needs the POST's id), but each
-    // photo's pipeline is independent — we still go sequentially to keep
-    // server-side row creation in deterministic order.
     const N = photos.length;
     const failed: string[] = [];
     for (let i = 0; i < N; i++) {
@@ -103,8 +100,6 @@ export function createOrchestration({
       alert(`Some photos couldn't be uploaded: ${failed.join(', ')}.\nThe project was created without them.`);
     }
 
-    // Hard navigate so the new project hydrates from a clean state, regardless
-    // of whether we were on / or some other /<id>.
     location.assign('/' + created.id);
   }
 
@@ -132,7 +127,6 @@ export function createOrchestration({
       alert('Set a camera location before dropping photos.');
       return;
     }
-    // Recover az/alt from the placement direction.
     const az = Math.atan2(-dir.x, -dir.z);
     const alt = Math.asin(Math.max(-1, Math.min(1, dir.y)));
     const pose = { aspect, photo_az: az, photo_tilt: alt, photo_roll: 0, size_rad: DEFAULT_SIZE_RAD, opacity: 1 };
@@ -149,7 +143,6 @@ export function createOrchestration({
       await api.uploadPhotoBlob(photo.id, blob);
     } catch (err) {
       revokeUrl();
-      // Roll back the metadata row so failed uploads don't accumulate orphans.
       await api.deletePhoto(photo.id).catch((e: unknown) => { console.error('orphan photo cleanup failed:', e); });
       sync.reportError('upload photo', err);
       return;
@@ -159,88 +152,154 @@ export function createOrchestration({
     revokeUrl();
   }
 
-  async function createImagePOI(
-    overlay: THREE.Group, u: number, v: number, mapPOIId: string | null, latlng: LatLng | null,
+  async function createImageMeasurement(
+    overlay: THREE.Group, u: number, v: number,
+    controlPointId: string | null, latlng: LatLng | null,
   ): Promise<THREE.Mesh | null> {
     const photoId = overlayData(overlay).id;
     let created;
     try {
-      created = await api.createImagePOI(photoId, { u, v, map_poi_id: mapPOIId });
+      created = await api.createImageMeasurement(photoId, { u, v, control_point_id: controlPointId });
     } catch (err) {
-      sync.reportError('add POI', err);
+      sync.reportError('add measurement', err);
       return null;
     }
-    sync.registerImagePOI(created.id, { u, v, map_poi_id: mapPOIId });
-    overlays.addPOI(overlay, u, v, { id: created.id, mapPOIId, mapAnchor: latlng });
-    return overlays.getPOIById(created.id);
+    sync.registerImageMeasurement(created.id, { u, v, control_point_id: controlPointId });
+    overlays.addImageMeasurement(overlay, u, v, {
+      id: created.id, controlPointId, controlPointAnchor: latlng,
+    });
+    return overlays.getImageMeasurementById(created.id);
   }
 
-  async function onAddImagePOI(overlay: THREE.Group, u: number, v: number): Promise<void> {
-    await createImagePOI(overlay, u, v, null, null);
+  async function onAddImageMeasurement(overlay: THREE.Group, u: number, v: number): Promise<void> {
+    await createImageMeasurement(overlay, u, v, null, null);
   }
 
-  async function onMatchImagePOI(
-    overlay: THREE.Group, u: number, v: number, mapPOIId: string, latlng: LatLng,
+  // Register a fetched CP both with sync (snake-case) and the overlay
+  // manager (camelCase) — same payload, different naming conventions.
+  function pushControlPoint(cp: api.ApiControlPoint): void {
+    sync.registerControlPoint(cp.id, {
+      description: cp.description, est_lat: cp.est_lat, est_lng: cp.est_lng, est_alt: cp.est_alt,
+    });
+    overlays.addControlPoint(cp.id, {
+      description: cp.description, estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,
+    });
+  }
+
+  // POST a fresh CP at latlng, register it. Returns null on API failure (the
+  // banner has already been surfaced via reportError).
+  async function createControlPointAt(latlng: LatLng): Promise<api.ApiControlPoint | null> {
+    try {
+      const cp = await api.createControlPoint({
+        description: '', est_lat: latlng.lat, est_lng: latlng.lng,
+      });
+      pushControlPoint(cp);
+      return cp;
+    } catch (err) {
+      sync.reportError('add control point', err);
+      return null;
+    }
+  }
+
+  // POST a map measurement linked to controlPointId at latlng, register it.
+  // On API failure surfaces the banner and returns null; caller can treat
+  // the CP as orphaned and roll it back if appropriate.
+  async function createLinkedMapMeasurement(
+    locId: string, latlng: LatLng, controlPointId: string,
+  ): Promise<{ id: string } | null> {
+    try {
+      const mm = await api.createMapMeasurement(locId, {
+        lat: latlng.lat, lng: latlng.lng, control_point_id: controlPointId,
+      });
+      sync.registerMapMeasurement(mm.id, {
+        lat: latlng.lat, lng: latlng.lng, control_point_id: controlPointId,
+      });
+      overlays.addMapMeasurement(mm.id, latlng, controlPointId);
+      return { id: mm.id };
+    } catch (err) {
+      sync.reportError('add map measurement', err);
+      return null;
+    }
+  }
+
+  async function onMatchImageMeasurement(
+    overlay: THREE.Group, u: number, v: number, controlPointId: string, latlng: LatLng,
   ): Promise<void> {
     // Re-match: move the existing pin instead of stacking a duplicate.
-    // movePOI fires notify(), so the diff path PUTs the new u/v on next flush.
-    const existing = overlays.getPOIOnOverlayByMapPOIId(overlay, mapPOIId);
+    const existing = overlays.getImageMeasurementOnOverlayByControlPointId(overlay, controlPointId);
     if (existing) {
-      overlays.movePOI(existing, u, v);
-      overlays.setSelectedPair(existing, mapPOIId);
+      overlays.moveImageMeasurement(existing, u, v);
+      // Surfaces the linked map measurement if any (the FK ↔ FK link via CP).
+      overlays.setSelectedPair(existing, findMapMeasurementByControlPointId(controlPointId));
       return;
     }
-    const created = await createImagePOI(overlay, u, v, mapPOIId, latlng);
-    if (created) overlays.setSelectedPair(created, mapPOIId);
+    const created = await createImageMeasurement(overlay, u, v, controlPointId, latlng);
+    if (created) overlays.setSelectedPair(created, findMapMeasurementByControlPointId(controlPointId));
   }
 
-  async function onAddMapPOI(latlng: LatLng): Promise<void> {
+  async function onAddMapMeasurement(latlng: LatLng): Promise<void> {
     const locId = getCurrentLocationId();
     if (!locId) return;
-    let created;
-    try {
-      created = await api.createMapPOI(locId, latlng);
-    } catch (err) {
-      sync.reportError('add map POI', err);
-      return;
+    // Create the CP first; the map measurement attaches to it. v1 mirrors
+    // the measurement's lat/lng into the CP's est_*.
+    const cp = await createControlPointAt(latlng);
+    if (!cp) return;
+    const mm = await createLinkedMapMeasurement(locId, latlng, cp.id);
+    if (!mm) {
+      // Roll back the CP — would otherwise be an orphan.
+      await api.deleteControlPoint(cp.id).catch((e: unknown) => { console.error('orphan CP cleanup failed:', e); });
+      overlays.removeControlPoint(cp.id);
     }
-    sync.registerMapPOI(created.id, latlng);
-    overlays.addMapPOI(created.id, latlng);
   }
 
-  async function onAnchorImagePOIByMapClick(handle: THREE.Mesh, latlng: LatLng): Promise<void> {
+  async function onAnchorImageMeasurementByMapClick(handle: THREE.Mesh, latlng: LatLng): Promise<void> {
     const locId = getCurrentLocationId();
     if (!locId) return;
     const pd = poiData(handle);
-    // Bearing-ray click / anchor-marker drag both update the *linked* map POI.
-    // If the image POI is already linked, move that map POI in place — this
-    // also moves any other image POIs sharing the same map POI, which is the
-    // intended behavior of the FK model: a landmark is shared.
-    if (pd.mapPOIId) {
-      overlays.withBatch(() => { overlays.setMapPOILatLng(pd.mapPOIId!, latlng); });
+    // Already linked: find the linked map measurement (if any) and move it.
+    // The setMapMeasurementLatLng path mirrors the new lat/lng onto the CP's
+    // estimate, so the column / ray / anchor cache all follow.
+    if (pd.controlPointId) {
+      const linkedMM = findMapMeasurementByControlPointId(pd.controlPointId);
+      if (linkedMM) {
+        overlays.withBatch(() => { overlays.setMapMeasurementLatLng(linkedMM, latlng); });
+        return;
+      }
+      // Linked to a CP that has no map measurement (e.g., the user pressed
+      // anchor-by-map on an image-only CP). Create a fresh map measurement
+      // and update the CP's estimate.
+      const mm = await createLinkedMapMeasurement(locId, latlng, pd.controlPointId);
+      if (!mm) return;
+      // Mirror to CP estimate (would otherwise stay null until next setLatLng).
+      overlays.setControlPointEst(pd.controlPointId, latlng);
       return;
     }
-    // Unlinked: create a fresh map POI at the click latlng and bind this image
-    // POI to it.
-    let newMapPOI;
-    try {
-      newMapPOI = await api.createMapPOI(locId, latlng);
-    } catch (err) {
-      sync.reportError('anchor POI', err);
+    // Unlinked: create a fresh CP + map measurement, link the image measurement.
+    const cp = await createControlPointAt(latlng);
+    if (!cp) return;
+    const mm = await createLinkedMapMeasurement(locId, latlng, cp.id);
+    if (!mm) {
+      await api.deleteControlPoint(cp.id).catch((e: unknown) => { console.error('orphan CP cleanup failed:', e); });
+      overlays.removeControlPoint(cp.id);
       return;
     }
-    sync.registerMapPOI(newMapPOI.id, latlng);
-    overlays.addMapPOI(newMapPOI.id, latlng);
-    overlays.setPOIMapAnchor(handle, latlng, newMapPOI.id);
+    overlays.setMeasurementCP(handle, latlng, cp.id);
+  }
+
+  function findMapMeasurementByControlPointId(controlPointId: string): string | null {
+    for (const mm of overlays.getMapMeasurements()) {
+      if (mm.controlPointId === controlPointId) return mm.id;
+    }
+    return null;
   }
 
   return {
     onSetLocation,
     onStartProjectHere,
     onPhotoDropped,
-    onAddImagePOI,
-    onMatchImagePOI,
-    onAddMapPOI,
-    onAnchorImagePOIByMapClick,
+    onAddImageMeasurement,
+    onMatchImageMeasurement,
+    onAddMapMeasurement,
+    onAnchorImageMeasurementByMapClick,
   };
 }

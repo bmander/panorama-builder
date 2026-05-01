@@ -18,14 +18,21 @@ export interface SyncedPhoto {
   size_rad: number;
   opacity: number;
 }
-export interface SyncedMapPOI { lat: number; lng: number; }
-export interface SyncedImagePOI { u: number; v: number; map_poi_id: string | null; }
+export interface SyncedMapMeasurement { lat: number; lng: number; control_point_id: string | null; }
+export interface SyncedImageMeasurement { u: number; v: number; control_point_id: string | null; }
+export interface SyncedControlPoint {
+  description: string;
+  est_lat: number | null;
+  est_lng: number | null;
+  est_alt: number | null;
+}
 
 export interface SyncManager {
   registerLocation(loc: LatLng): void;
   registerPhoto(id: string, pose: SyncedPhoto): void;
-  registerMapPOI(id: string, latlng: LatLng): void;
-  registerImagePOI(id: string, payload: SyncedImagePOI): void;
+  registerMapMeasurement(id: string, payload: SyncedMapMeasurement): void;
+  registerImageMeasurement(id: string, payload: SyncedImageMeasurement): void;
+  registerControlPoint(id: string, payload: SyncedControlPoint): void;
   flush(): void;
   markLoaded(): void;
   reportError(label: string, err: unknown): void;
@@ -44,18 +51,15 @@ export function createSyncManager({
   const synced = {
     location: null as SyncedLocation | null,
     photos: new Map<string, SyncedPhoto>(),
-    mapPois: new Map<string, SyncedMapPOI>(),
-    imagePois: new Map<string, SyncedImagePOI>(),
+    mapMeasurements: new Map<string, SyncedMapMeasurement>(),
+    imageMeasurements: new Map<string, SyncedImageMeasurement>(),
+    controlPoints: new Map<string, SyncedControlPoint>(),
   };
 
-  // While !loaded, flush() is a no-op so initial scene reconstruction doesn't
-  // look like a flood of new entities.
   let loaded = false;
-  // Re-entrancy guard; at most one flushSync runs at a time.
   let flushing = false;
   let flushPending = false;
 
-  // Error banner — looked up once at construct time.
   const errorEl = getElement('save-error');
   const errorMsgEl = getElement('save-error-msg');
   const errorRetryEl = getElement<HTMLButtonElement>('save-error-retry');
@@ -70,7 +74,6 @@ export function createSyncManager({
   });
 
   function buildCurrentPhoto(o: THREE.Group): SyncedPhoto {
-    // camLoc isn't part of the per-photo sync payload — pass null to skip lookup.
     const pose = overlays.extractPose(o, null);
     return {
       aspect: pose.aspect,
@@ -86,11 +89,15 @@ export function createSyncManager({
     return a.aspect === b.aspect && a.photo_az === b.photo_az && a.photo_tilt === b.photo_tilt
       && a.photo_roll === b.photo_roll && a.size_rad === b.size_rad && a.opacity === b.opacity;
   }
-  function mapPOIsEqual(a: SyncedMapPOI, b: SyncedMapPOI): boolean {
-    return a.lat === b.lat && a.lng === b.lng;
+  function mapMeasurementsEqual(a: SyncedMapMeasurement, b: SyncedMapMeasurement): boolean {
+    return a.lat === b.lat && a.lng === b.lng && a.control_point_id === b.control_point_id;
   }
-  function imagePOIsEqual(a: SyncedImagePOI, b: SyncedImagePOI): boolean {
-    return a.u === b.u && a.v === b.v && a.map_poi_id === b.map_poi_id;
+  function imageMeasurementsEqual(a: SyncedImageMeasurement, b: SyncedImageMeasurement): boolean {
+    return a.u === b.u && a.v === b.v && a.control_point_id === b.control_point_id;
+  }
+  function controlPointsEqual(a: SyncedControlPoint, b: SyncedControlPoint): boolean {
+    return a.description === b.description
+      && a.est_lat === b.est_lat && a.est_lng === b.est_lng && a.est_alt === b.est_alt;
   }
 
   function syncResource<T>(
@@ -105,9 +112,6 @@ export function createSyncManager({
     for (const [id, val] of current) {
       const last = cached.get(id);
       if (!last) {
-        // onCreate is null for resources whose creates always go through an
-        // explicit handler (e.g., image POIs). A diff-detected new entity for
-        // such a resource means a bug in the orchestration layer; skip silently.
         if (onCreate) tasks.push(onCreate(id, val).then(() => { cached.set(id, val); }));
       } else if (!equal(val, last)) {
         tasks.push(onUpdate(id, val).then(() => { cached.set(id, val); }));
@@ -135,28 +139,39 @@ export function createSyncManager({
     for (const o of overlays.listOverlays() as THREE.Group[]) {
       currentPhotos.set(overlayData(o).id, buildCurrentPhoto(o));
     }
-    const currentMapPois = new Map<string, SyncedMapPOI>();
-    for (const m of overlays.getMapPOIs()) {
-      currentMapPois.set(m.id, { lat: m.latlng.lat, lng: m.latlng.lng });
+    const currentMapMeasurements = new Map<string, SyncedMapMeasurement>();
+    for (const m of overlays.getMapMeasurements()) {
+      currentMapMeasurements.set(m.id, { lat: m.latlng.lat, lng: m.latlng.lng, control_point_id: m.controlPointId });
     }
-    const currentImagePois = new Map<string, SyncedImagePOI>();
-    for (const p of overlays.getPOIs()) {
-      currentImagePois.set(p.id, { u: p.uv.u, v: p.uv.v, map_poi_id: p.mapPOIId });
+    const currentImageMeasurements = new Map<string, SyncedImageMeasurement>();
+    for (const p of overlays.getImageMeasurements()) {
+      currentImageMeasurements.set(p.id, { u: p.uv.u, v: p.uv.v, control_point_id: p.controlPointId });
+    }
+    const currentControlPoints = new Map<string, SyncedControlPoint>();
+    for (const cp of overlays.getControlPoints()) {
+      currentControlPoints.set(cp.id, {
+        description: cp.description,
+        est_lat: cp.estLat, est_lng: cp.estLng, est_alt: cp.estAlt,
+      });
     }
 
     syncResource(currentPhotos, synced.photos, photosEqual,
       (_id, val) => api.createPhoto(locId, val),
       (id, val) => api.updatePhoto(id, val),
       api.deletePhoto, tasks);
-    syncResource(currentMapPois, synced.mapPois, mapPOIsEqual,
-      (_id, val) => api.createMapPOI(locId, val),
-      (id, val) => api.updateMapPOI(id, val),
-      api.deleteMapPOI, tasks);
-    // Image POIs are always created via the explicit handler, never diff.
-    syncResource(currentImagePois, synced.imagePois, imagePOIsEqual,
+    syncResource(currentMapMeasurements, synced.mapMeasurements, mapMeasurementsEqual,
+      (_id, val) => api.createMapMeasurement(locId, val),
+      (id, val) => api.updateMapMeasurement(id, val),
+      api.deleteMapMeasurement, tasks);
+    // Image measurements + control points are created via explicit handlers.
+    syncResource(currentImageMeasurements, synced.imageMeasurements, imageMeasurementsEqual,
       null,
-      (id, val) => api.updateImagePOI(id, val),
-      api.deleteImagePOI, tasks);
+      (id, val) => api.updateImageMeasurement(id, val),
+      api.deleteImageMeasurement, tasks);
+    syncResource(currentControlPoints, synced.controlPoints, controlPointsEqual,
+      null,
+      (id, val) => api.updateControlPoint(id, val),
+      api.deleteControlPoint, tasks);
 
     if (tasks.length > 0) await Promise.all(tasks);
   }
@@ -171,8 +186,6 @@ export function createSyncManager({
         try {
           await flushOnce();
         } catch (err) {
-          // Failed entries stay un-committed in `synced`, so the next mutation
-          // (or a manual retry) re-issues them via the diff path.
           console.error('sync failed:', err);
           showError('Some changes could not be saved.');
           return;
@@ -187,8 +200,9 @@ export function createSyncManager({
   return {
     registerLocation(loc) { synced.location = { lat: loc.lat, lng: loc.lng }; },
     registerPhoto(id, pose) { synced.photos.set(id, pose); },
-    registerMapPOI(id, latlng) { synced.mapPois.set(id, { lat: latlng.lat, lng: latlng.lng }); },
-    registerImagePOI(id, payload) { synced.imagePois.set(id, payload); },
+    registerMapMeasurement(id, payload) { synced.mapMeasurements.set(id, payload); },
+    registerImageMeasurement(id, payload) { synced.imageMeasurements.set(id, payload); },
+    registerControlPoint(id, payload) { synced.controlPoints.set(id, payload); },
     flush() {
       if (!loaded) return;
       void flushSync();

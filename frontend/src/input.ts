@@ -50,7 +50,7 @@ export interface AttachInputOptions {
   onAddImagePOI?: (overlay: THREE.Group, u: number, v: number) => void;
   // Fired when the user matches a hovered column to a photo body. Host POSTs
   // an image-poi with map_poi_id set, then calls overlays.addPOI with both.
-  onMatchImagePOI?: (overlay: THREE.Group, u: number, v: number, mapPOIId: string, latlng: LatLng) => void;
+  onMatchImagePOI?: (overlay: THREE.Group, u: number, v: number, controlPointId: string, latlng: LatLng) => void;
   // Fired on shift+wheel with the same normalized px-delta the FOV path uses.
   // Routed out so the host module decides what shift-wheel does.
   onShiftWheel?: (deltaPx: number) => void;
@@ -60,7 +60,7 @@ export interface AttachInputOptions {
   // id and lat/lng if the cursor is within the host's screen-space radius,
   // else null. The host owns the projection math (it has the camera and
   // column list in scope).
-  findColumnAtNDC?: (ndc: { x: number; y: number }) => { id: string; latlng: LatLng } | null;
+  findColumnAtNDC?: (ndc: { x: number; y: number }) => { controlPointId: string; latlng: LatLng } | null;
   // Fired whenever the cursor enters or leaves a map-POI column. The host
   // forwards the id to the columns module so the column re-renders with the
   // hover (yellow) treatment, signalling "click here to match."
@@ -95,7 +95,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
   // The map-POI column under the cursor (if any). Set by pointermove via the
   // host's findColumnAtNDC. While non-null the next click will create a paired
   // image-POI on the underlying photo, anchored to this column's lat/lng.
-  let hoveredColumn: { id: string; latlng: LatLng } | null = null;
+  let hoveredColumn: { controlPointId: string; latlng: LatLng } | null = null;
 
   // Crosshair cursor is on for both +POI arming and column-hover (which is
   // implicit arming for matching).
@@ -103,9 +103,9 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
     canvas.classList.toggle('tool-poi', poiArmed || hoveredColumn !== null);
   }
 
-  function setHoveredColumn(next: { id: string; latlng: LatLng } | null): void {
-    const prevId = hoveredColumn?.id ?? null;
-    const nextId = next?.id ?? null;
+  function setHoveredColumn(next: { controlPointId: string; latlng: LatLng } | null): void {
+    const prevId = hoveredColumn?.controlPointId ?? null;
+    const nextId = next?.controlPointId ?? null;
     hoveredColumn = next;
     if (prevId !== nextId) {
       onHoveredColumnChange?.(nextId);
@@ -147,7 +147,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
     // 1. POI hits always start a POI drag, regardless of selection state.
     if (poiHit) {
       const poiMesh = poiHit.object as THREE.Mesh;
-      overlays.setSelectedPOI(poiMesh);
+      overlays.setSelectedImageMeasurement(poiMesh);
       mode = { type: 'poi-drag', poi: poiMesh };
       viewer.requestRender();
       if (poiArmed) togglePoiArm();
@@ -164,12 +164,12 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
       mode = { type: 'pan' };
       togglePoiArm();
     }
-    // Hovered column + photo body hit → match. Host POSTs an image-POI with
-    // map_poi_id set then calls overlays.addPOI with both.
+    // Hovered column + photo body hit → match. Host POSTs an image measurement
+    // with control_point_id set then calls overlays.addImageMeasurement.
     else if (hoveredColumn && bodyHit?.uv) {
       const o = bodyHit.object.parent as THREE.Group;
       const col = hoveredColumn;
-      onMatchImagePOI?.(o, bodyHit.uv.x, bodyHit.uv.y, col.id, col.latlng);
+      onMatchImagePOI?.(o, bodyHit.uv.x, bodyHit.uv.y, col.controlPointId, col.latlng);
       // Clear the hover now that the click has been consumed; the cursor
       // hasn't moved yet, but the next pointermove will recompute.
       setHoveredColumn(null);
@@ -300,7 +300,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
         const body = overlayData(poiData(mode.poi).parentOverlay).body;
         const hit = raycaster.intersectObject(body)[0];
         if (hit?.uv) {
-          overlays.movePOI(mode.poi, hit.uv.x, hit.uv.y);
+          overlays.moveImageMeasurement(mode.poi, hit.uv.x, hit.uv.y);
           viewer.requestRender();
         }
         break;
@@ -329,9 +329,9 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
     if (e.key === 'Backspace' || e.key === 'Delete') {
       // POI selection takes priority: a selected POI (photo-attached OR
       // standalone map-POI) is the more specific target the user is acting
-      // on (vs the photo it sits on). deleteSelectedPOI handles both kinds.
-      if (overlays.getSelectedPOI() || overlays.getSelectedMapPOI()) {
-        overlays.deleteSelectedPOI();
+      // on (vs the photo it sits on). deleteSelectedMeasurement handles both kinds.
+      if (overlays.getSelectedImageMeasurement() || overlays.getSelectedMapMeasurement()) {
+        overlays.deleteSelectedMeasurement();
         endDrag();
         onChange();
       } else if (overlays.getSelected()) {

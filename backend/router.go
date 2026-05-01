@@ -27,13 +27,19 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PUT /api/photos/{id}/blob", s.putPhotoBlob)
 	mux.HandleFunc("GET /api/photos/{id}/blob", s.getPhotoBlob)
 
-	mux.HandleFunc("POST /api/locations/{id}/map-pois", s.postMapPOI)
-	mux.HandleFunc("PUT /api/map-pois/{id}", s.putMapPOI)
-	mux.HandleFunc("DELETE /api/map-pois/{id}", s.deleteMapPOI)
+	mux.HandleFunc("POST /api/locations/{id}/map-measurements", s.postMapMeasurement)
+	mux.HandleFunc("PUT /api/map-measurements/{id}", s.putMapMeasurement)
+	mux.HandleFunc("DELETE /api/map-measurements/{id}", s.deleteMapMeasurement)
 
-	mux.HandleFunc("POST /api/photos/{id}/image-pois", s.postImagePOI)
-	mux.HandleFunc("PUT /api/image-pois/{id}", s.putImagePOI)
-	mux.HandleFunc("DELETE /api/image-pois/{id}", s.deleteImagePOI)
+	mux.HandleFunc("POST /api/photos/{id}/image-measurements", s.postImageMeasurement)
+	mux.HandleFunc("PUT /api/image-measurements/{id}", s.putImageMeasurement)
+	mux.HandleFunc("DELETE /api/image-measurements/{id}", s.deleteImageMeasurement)
+
+	mux.HandleFunc("POST /api/control-points", s.postControlPoint)
+	mux.HandleFunc("GET /api/control-points", s.listControlPoints)
+	mux.HandleFunc("GET /api/control-points/{id}", s.getControlPoint)
+	mux.HandleFunc("PUT /api/control-points/{id}", s.putControlPoint)
+	mux.HandleFunc("DELETE /api/control-points/{id}", s.deleteControlPoint)
 
 	// Catch-all: serve static frontend with SPA fallback for unknown paths.
 	mux.HandleFunc("/", s.spaFallback)
