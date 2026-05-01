@@ -9,3 +9,16 @@ dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px;
 dt { color: #aaa; margin: 0; }
 dd { margin: 0; }
 dd.empty { color: #888; font-style: italic; }
+h2 { font-size: 14px; color: #aaa; margin: 32px 0 8px; font-weight: normal;
+     text-transform: uppercase; letter-spacing: 0.05em; }
+.observations { list-style: none; margin: 0; padding: 0;
+                display: flex; flex-direction: column; gap: 4px; }
+.observations li { display: flex; gap: 12px; padding: 6px 8px;
+                   background: rgba(255,255,255,0.04); font-size: 12px; }
+.observations .kind { color: #aaa; min-width: 48px; }
+.observations .kind.image { color: #5080ff; }
+.observations .kind.map { color: #ff5050; }
+.observations a { color: #5080ff; text-decoration: none; }
+.observations a:hover { text-decoration: underline; }
+.observations .meta { color: #888; }
+.observations .empty { color: #888; font-style: italic; padding: 6px 8px; }

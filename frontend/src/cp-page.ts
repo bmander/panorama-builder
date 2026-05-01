@@ -12,6 +12,47 @@ function el(id: string): HTMLElement {
   return e;
 }
 
+function projectLink(locationId: string, locationName: string | null): HTMLAnchorElement {
+  const a = document.createElement('a');
+  a.href = `/${locationId}`;
+  a.textContent = locationName ?? `(untitled ${locationId.slice(0, 6)})`;
+  return a;
+}
+
+function renderObservations(obs: api.ApiControlPointObservations): void {
+  const list = el('observations');
+  list.replaceChildren();
+  if (obs.image_measurements.length === 0 && obs.map_measurements.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'empty';
+    empty.textContent = 'no observations yet';
+    list.appendChild(empty);
+    return;
+  }
+  for (const m of obs.map_measurements) {
+    const li = document.createElement('li');
+    const kind = document.createElement('span');
+    kind.className = 'kind map';
+    kind.textContent = 'map';
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.textContent = `${m.lat.toFixed(5)}, ${m.lng.toFixed(5)} in `;
+    li.append(kind, meta, projectLink(m.location_id, m.location_name));
+    list.appendChild(li);
+  }
+  for (const m of obs.image_measurements) {
+    const li = document.createElement('li');
+    const kind = document.createElement('span');
+    kind.className = 'kind image';
+    kind.textContent = 'image';
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.textContent = `(u=${m.u.toFixed(2)}, v=${m.v.toFixed(2)}) in `;
+    li.append(kind, meta, projectLink(m.location_id, m.location_name));
+    list.appendChild(li);
+  }
+}
+
 async function main(): Promise<void> {
   const m = CP_ID_RE.exec(location.pathname);
   const nameEl = el('name');
@@ -48,6 +89,13 @@ async function main(): Promise<void> {
   } else {
     altEl.textContent = '—';
     altEl.classList.add('empty');
+  }
+
+  try {
+    const obs = await api.listControlPointObservations(id);
+    renderObservations(obs);
+  } catch (err) {
+    console.error('observations fetch failed:', err);
   }
 }
 

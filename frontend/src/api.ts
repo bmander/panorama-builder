@@ -24,6 +24,7 @@ export type PhotoPosePatch = Schemas['PhotoPosePatch'];
 export type MapMeasurementRequest = Schemas['MapMeasurementRequest'];
 export type ImageMeasurementPatch = Schemas['ImageMeasurementPatch'];
 export type ControlPointPatch = Schemas['ControlPointPatch'];
+export type ApiControlPointObservations = Schemas['ControlPointObservations'];
 
 // --- Helpers ---
 
@@ -153,6 +154,12 @@ export function listControlPoints(): Promise<ApiControlPoint[]> {
 
 export function getControlPoint(id: string): Promise<ApiControlPoint> {
   return request<ApiControlPoint>('GET', `/control-points/${encodeURIComponent(id)}`);
+}
+
+export function listControlPointObservations(id: string): Promise<ApiControlPointObservations> {
+  return request<ApiControlPointObservations>(
+    'GET', `/control-points/${encodeURIComponent(id)}/observations`,
+  );
 }
 
 export function updateControlPoint(id: string, body: ControlPointPatch): Promise<ApiControlPoint> {

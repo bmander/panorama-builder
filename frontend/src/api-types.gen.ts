@@ -258,6 +258,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/control-points/{id}/observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ControlPointId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List every observation referencing this control point
+         * @description Returns image and map measurements across every project that
+         *     link back to the given control point. Each row carries enough
+         *     context (location id + name) for the caller to deep-link.
+         */
+        get: operations["listControlPointObservations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -379,6 +403,29 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        ControlPointImageObservation: {
+            id: components["schemas"]["Id"];
+            photo_id: components["schemas"]["Id"];
+            /** Format: double */
+            u: number;
+            /** Format: double */
+            v: number;
+            location_id: components["schemas"]["Id"];
+            location_name: string | null;
+        };
+        ControlPointMapObservation: {
+            id: components["schemas"]["Id"];
+            /** Format: double */
+            lat: number;
+            /** Format: double */
+            lng: number;
+            location_id: components["schemas"]["Id"];
+            location_name: string | null;
+        };
+        ControlPointObservations: {
+            image_measurements: components["schemas"]["ControlPointImageObservation"][];
+            map_measurements: components["schemas"]["ControlPointMapObservation"][];
         };
         HydratedLocation: {
             location: components["schemas"]["Location"];
@@ -1057,6 +1104,29 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listControlPointObservations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ControlPointId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControlPointObservations"];
+                };
             };
             404: components["responses"]["NotFound"];
         };

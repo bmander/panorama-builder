@@ -26,6 +26,39 @@ type ControlPoint struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// ControlPointImageObservation defines model for ControlPointImageObservation.
+type ControlPointImageObservation struct {
+	// ID 13-character base32 server-assigned id
+	ID ID `json:"id"`
+
+	// LocationID 13-character base32 server-assigned id
+	LocationID   ID      `json:"location_id"`
+	LocationName *string `json:"location_name"`
+
+	// PhotoID 13-character base32 server-assigned id
+	PhotoID ID      `json:"photo_id"`
+	U       float64 `json:"u"`
+	V       float64 `json:"v"`
+}
+
+// ControlPointMapObservation defines model for ControlPointMapObservation.
+type ControlPointMapObservation struct {
+	// ID 13-character base32 server-assigned id
+	ID  ID      `json:"id"`
+	Lat float64 `json:"lat"`
+	Lng float64 `json:"lng"`
+
+	// LocationID 13-character base32 server-assigned id
+	LocationID   ID      `json:"location_id"`
+	LocationName *string `json:"location_name"`
+}
+
+// ControlPointObservations defines model for ControlPointObservations.
+type ControlPointObservations struct {
+	ImageMeasurements []ControlPointImageObservation `json:"image_measurements"`
+	MapMeasurements   []ControlPointMapObservation   `json:"map_measurements"`
+}
+
 // ControlPointPatch defines model for ControlPointPatch.
 type ControlPointPatch struct {
 	Description *string  `json:"description,omitempty"`

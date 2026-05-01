@@ -154,6 +154,83 @@ func (s *Server) deleteControlPoint(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Request) {
+	id := requireID(w, r, "id")
+	if id == "" {
+		return
+	}
+	// Confirm the CP exists so the caller gets 404 (not an empty payload) when
+	// the id is wrong. Cheap: control_points is small and id-indexed.
+	var exists bool
+	if err := s.db.QueryRow(r.Context(),
+		`SELECT EXISTS(SELECT 1 FROM control_points WHERE id = $1)`, id).Scan(&exists); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if !exists {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	images := []ControlPointImageObservation{}
+	imRows, err := s.db.Query(r.Context(), `
+		SELECT im.id, im.photo_id, im.u, im.v, p.location_id, l.name
+		FROM image_measurements im
+		JOIN photos p    ON p.id = im.photo_id
+		JOIN locations l ON l.id = p.location_id
+		WHERE im.control_point_id = $1
+		ORDER BY im.created_at`, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	for imRows.Next() {
+		var o ControlPointImageObservation
+		if err := imRows.Scan(&o.ID, &o.PhotoID, &o.U, &o.V, &o.LocationID, &o.LocationName); err != nil {
+			imRows.Close()
+			writeErrorFromDB(w, err)
+			return
+		}
+		images = append(images, o)
+	}
+	imRows.Close()
+	if err := imRows.Err(); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+
+	maps := []ControlPointMapObservation{}
+	mRows, err := s.db.Query(r.Context(), `
+		SELECT m.id, m.lat, m.lng, m.location_id, l.name
+		FROM map_measurements m
+		JOIN locations l ON l.id = m.location_id
+		WHERE m.control_point_id = $1
+		ORDER BY m.created_at`, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	for mRows.Next() {
+		var o ControlPointMapObservation
+		if err := mRows.Scan(&o.ID, &o.Lat, &o.Lng, &o.LocationID, &o.LocationName); err != nil {
+			mRows.Close()
+			writeErrorFromDB(w, err)
+			return
+		}
+		maps = append(maps, o)
+	}
+	mRows.Close()
+	if err := mRows.Err(); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ControlPointObservations{
+		ImageMeasurements: images,
+		MapMeasurements:   maps,
+	})
+}
+
 // controlPointsByLocation returns CPs referenced by any image or map measurement
 // of this location. Cross-project CPs that aren't referenced from this project
 // are excluded.

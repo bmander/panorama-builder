@@ -420,6 +420,25 @@ paths:
         '204': { description: Deleted }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /control-points/{id}/observations:
+    parameters:
+      - $ref: '#/components/parameters/ControlPointId'
+    get:
+      tags: [control-points]
+      summary: List every observation referencing this control point
+      description: |
+        Returns image and map measurements across every project that
+        link back to the given control point. Each row carries enough
+        context (location id + name) for the caller to deep-link.
+      operationId: listControlPointObservations
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ControlPointObservations' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
   parameters:
     LocationId:
@@ -571,6 +590,38 @@ components:
         est_alt: { type: number, format: double, nullable: true, description: meters above sea level }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    ControlPointImageObservation:
+      type: object
+      required: [id, photo_id, u, v, location_id, location_name]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        photo_id: { $ref: '#/components/schemas/Id' }
+        u: { type: number, format: double, minimum: 0, maximum: 1 }
+        v: { type: number, format: double, minimum: 0, maximum: 1 }
+        location_id: { $ref: '#/components/schemas/Id' }
+        location_name: { type: string, nullable: true }
+
+    ControlPointMapObservation:
+      type: object
+      required: [id, lat, lng, location_id, location_name]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        lat: { type: number, format: double, minimum: -90, maximum: 90 }
+        lng: { type: number, format: double, minimum: -180, maximum: 180 }
+        location_id: { $ref: '#/components/schemas/Id' }
+        location_name: { type: string, nullable: true }
+
+    ControlPointObservations:
+      type: object
+      required: [image_measurements, map_measurements]
+      properties:
+        image_measurements:
+          type: array
+          items: { $ref: '#/components/schemas/ControlPointImageObservation' }
+        map_measurements:
+          type: array
+          items: { $ref: '#/components/schemas/ControlPointMapObservation' }
 
     HydratedLocation:
       type: object
