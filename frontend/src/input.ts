@@ -50,7 +50,7 @@ export interface AttachInputOptions {
   onAddImagePOI?: (overlay: THREE.Group, u: number, v: number) => void;
   // Fired when the user matches a hovered column to a photo body. Host POSTs
   // an image-poi with map_poi_id set, then calls overlays.addPOI with both.
-  onMatchImagePOI?: (overlay: THREE.Group, u: number, v: number, controlPointId: string, latlng: LatLng) => void;
+  onMatchImagePOI?: (overlay: THREE.Group, u: number, v: number, controlPointId: string) => void;
   // Fired on shift+wheel with the same normalized px-delta the FOV path uses.
   // Routed out so the host module decides what shift-wheel does.
   onShiftWheel?: (deltaPx: number) => void;
@@ -169,7 +169,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
     else if (hoveredColumn && bodyHit?.uv) {
       const o = bodyHit.object.parent as THREE.Group;
       const col = hoveredColumn;
-      onMatchImagePOI?.(o, bodyHit.uv.x, bodyHit.uv.y, col.controlPointId, col.latlng);
+      onMatchImagePOI?.(o, bodyHit.uv.x, bodyHit.uv.y, col.controlPointId);
       // Clear the hover now that the click has been consumed; the cursor
       // hasn't moved yet, but the next pointermove will recompute.
       setHoveredColumn(null);

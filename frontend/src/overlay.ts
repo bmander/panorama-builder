@@ -96,10 +96,9 @@ export interface AddPhotoOptions {
 
 export interface AddImageMeasurementOptions {
   readonly id: string;
-  // Optional initial link + cached anchor — populated when the matcher click
-  // creates a paired measurement.
+  // Optional initial link to a control point — populated when the matcher
+  // click creates a paired measurement.
   readonly controlPointId?: string | null;
-  readonly controlPointAnchor?: LatLng | null;
 }
 
 export interface AddControlPointPayload {
@@ -126,9 +125,8 @@ export interface OverlayManager {
 
   // --- Image measurements (per-photo reticles) ---
   addImageMeasurement(o: THREE.Group, u: number, v: number, opts: AddImageMeasurementOptions): THREE.Mesh;
-  // Updates both the cached anchor and the FK on a measurement in lockstep.
-  // Pass (null, null) to clear the link.
-  setMeasurementCP(measurement: THREE.Mesh, latlng: LatLng | null, controlPointId: string | null): void;
+  // Update the FK link to a control point. Pass null to clear.
+  setMeasurementCP(measurement: THREE.Mesh, controlPointId: string | null): void;
   moveImageMeasurement(measurement: THREE.Mesh, u: number, v: number): void;
   deleteSelectedMeasurement(): void;
   getSelectedImageMeasurement(): THREE.Mesh | null;
@@ -353,19 +351,6 @@ export function createOverlayManager(
     }
   }
 
-  function refreshControlPointAnchorCache(controlPointId: string, latlng: LatLng | null): void {
-    for (const child of overlaysGroup.children) {
-      const o = child as THREE.Group;
-      const data = overlayData(o);
-      if (!data.pois) continue;
-      for (const poi of data.pois) {
-        const pd = poiData(poi);
-        if (pd.controlPointId !== controlPointId) continue;
-        pd.controlPointAnchor = latlng ? { lat: latlng.lat, lng: latlng.lng } : null;
-      }
-    }
-  }
-
   const manager: OverlayManager = {
     overlaySphere,
     addOverlay(tex, aspect, dir, opts) {
@@ -457,8 +442,6 @@ export function createOverlayManager(
       pData.role = ROLE_POI;
       pData.uv = { u, v };
       pData.parentOverlay = o;
-      pData.controlPointAnchor = opts.controlPointAnchor
-        ? { lat: opts.controlPointAnchor.lat, lng: opts.controlPointAnchor.lng } : null;
       pData.controlPointId = opts.controlPointId ?? null;
       measurement.renderOrder = 3;
       o.add(measurement);
@@ -470,10 +453,8 @@ export function createOverlayManager(
       notify();
       return measurement;
     },
-    setMeasurementCP(measurement, latlng, controlPointId) {
-      const pd = poiData(measurement);
-      pd.controlPointAnchor = latlng ? { lat: latlng.lat, lng: latlng.lng } : null;
-      pd.controlPointId = controlPointId;
+    setMeasurementCP(measurement, controlPointId) {
+      poiData(measurement).controlPointId = controlPointId;
       notify();
     },
     moveImageMeasurement(measurement, u, v) {
@@ -544,7 +525,6 @@ export function createOverlayManager(
             handle: poi,
             az: azFromLocal(o, poi.position.x, poi.position.y, poi.position.z),
             uv: { ...pData.uv },
-            controlPointAnchor: pData.controlPointAnchor,
             controlPointId: pData.controlPointId,
             selected: isImageMeasurementSelected(poi, pData.controlPointId),
           });
@@ -562,14 +542,13 @@ export function createOverlayManager(
       if (!entry) return;
       entry.latlng = { lat: latlng.lat, lng: latlng.lng };
       // v1 mirror: a map measurement's lat/lng is also the CP's estimated
-      // location. Update the CP and fan out anchor caches so columns / rays
-      // redraw at the new location.
+      // location. Update the CP; downstream consumers (solver, columns,
+      // bearing rays) read the CP estimate directly.
       if (entry.controlPointId) {
         const cp = controlPoints.find(c => c.id === entry.controlPointId);
         if (cp) {
           cp.estLat = latlng.lat;
           cp.estLng = latlng.lng;
-          refreshControlPointAnchorCache(cp.id, { lat: latlng.lat, lng: latlng.lng });
         }
       }
       notify();
@@ -627,7 +606,6 @@ export function createOverlayManager(
       if (!cp) return;
       cp.estLat = latlng?.lat ?? null;
       cp.estLng = latlng?.lng ?? null;
-      refreshControlPointAnchorCache(id, latlng);
       notify();
     },
     setControlPointDescription(id, description) {
@@ -649,9 +627,7 @@ export function createOverlayManager(
         if (!data.pois) continue;
         for (const poi of data.pois) {
           const pd = poiData(poi);
-          if (pd.controlPointId !== id) continue;
-          pd.controlPointId = null;
-          pd.controlPointAnchor = null;
+          if (pd.controlPointId === id) pd.controlPointId = null;
         }
       }
       notify();

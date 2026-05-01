@@ -30,7 +30,7 @@ export interface OrchestrationHandlers {
   // Matched click (column hover → photo click). Moves the existing pin if
   // this overlay already has one linked to controlPointId; otherwise creates.
   onMatchImageMeasurement(
-    overlay: THREE.Group, u: number, v: number, controlPointId: string, latlng: LatLng,
+    overlay: THREE.Group, u: number, v: number, controlPointId: string,
   ): Promise<void>;
   // Map "+ POI" armed click. v1 creates a CP and a map measurement linked to
   // it; the CP carries the est_lat/est_lng (mirroring the measurement).
@@ -153,8 +153,7 @@ export function createOrchestration({
   }
 
   async function createImageMeasurement(
-    overlay: THREE.Group, u: number, v: number,
-    controlPointId: string | null, latlng: LatLng | null,
+    overlay: THREE.Group, u: number, v: number, controlPointId: string | null,
   ): Promise<THREE.Mesh | null> {
     const photoId = overlayData(overlay).id;
     let created;
@@ -165,14 +164,12 @@ export function createOrchestration({
       return null;
     }
     sync.registerImageMeasurement(created.id, { u, v, control_point_id: controlPointId });
-    overlays.addImageMeasurement(overlay, u, v, {
-      id: created.id, controlPointId, controlPointAnchor: latlng,
-    });
+    overlays.addImageMeasurement(overlay, u, v, { id: created.id, controlPointId });
     return overlays.getImageMeasurementById(created.id);
   }
 
   async function onAddImageMeasurement(overlay: THREE.Group, u: number, v: number): Promise<void> {
-    await createImageMeasurement(overlay, u, v, null, null);
+    await createImageMeasurement(overlay, u, v, null);
   }
 
   // Register a fetched CP both with sync (snake-case) and the overlay
@@ -223,7 +220,7 @@ export function createOrchestration({
   }
 
   async function onMatchImageMeasurement(
-    overlay: THREE.Group, u: number, v: number, controlPointId: string, latlng: LatLng,
+    overlay: THREE.Group, u: number, v: number, controlPointId: string,
   ): Promise<void> {
     // Re-match: move the existing pin instead of stacking a duplicate.
     const existing = overlays.getImageMeasurementOnOverlayByControlPointId(overlay, controlPointId);
@@ -233,7 +230,7 @@ export function createOrchestration({
       overlays.setSelectedPair(existing, findMapMeasurementByControlPointId(controlPointId));
       return;
     }
-    const created = await createImageMeasurement(overlay, u, v, controlPointId, latlng);
+    const created = await createImageMeasurement(overlay, u, v, controlPointId);
     if (created) overlays.setSelectedPair(created, findMapMeasurementByControlPointId(controlPointId));
   }
 
@@ -283,7 +280,7 @@ export function createOrchestration({
       overlays.removeControlPoint(cp.id);
       return;
     }
-    overlays.setMeasurementCP(handle, latlng, cp.id);
+    overlays.setMeasurementCP(handle, cp.id);
   }
 
   function findMapMeasurementByControlPointId(controlPointId: string): string | null {

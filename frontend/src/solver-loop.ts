@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { solveJointPose, autoLocalFreeParams } from './solver.js';
 import { overlayData, poiData } from './types.js';
-import type { JointPhoto, LatLng, SolverParam } from './types.js';
+import type { JointPhoto, LatLng, POIProjection, SolverParam } from './types.js';
 import type { OverlayManager } from './overlay.js';
 
 export interface SolverLoop {
@@ -33,19 +33,25 @@ export function createSolverLoop({
     if (!camLoc) return;
 
     interface PhotoEntry { overlay: THREE.Group; photo: JointPhoto; }
+    // Snapshot CP estimates once so the per-POI lookup below is O(1) instead
+    // of a linear scan inside the inner loop.
+    const cpById = new Map(overlays.getControlPoints().map(cp => [cp.id, cp]));
     const entries: PhotoEntry[] = [];
     for (const o of overlays.listOverlays() as THREE.Group[]) {
-      const anchored = (overlayData(o).pois ?? []).filter(p => poiData(p).controlPointAnchor);
+      const anchored: POIProjection[] = [];
+      for (const p of overlayData(o).pois ?? []) {
+        const pd = poiData(p);
+        if (pd.controlPointId === null) continue;
+        const cp = cpById.get(pd.controlPointId);
+        if (cp?.estLat == null || cp.estLng == null) continue;
+        anchored.push({ u: pd.uv.u, v: pd.uv.v, anchorLat: cp.estLat, anchorLng: cp.estLng });
+      }
       if (anchored.length === 0) continue;
       entries.push({
         overlay: o,
         photo: {
           pose: overlays.extractPose(o, camLoc),
-          pois: anchored.map(p => {
-            const pd = poiData(p);
-            const anchor = pd.controlPointAnchor!;
-            return { u: pd.uv.u, v: pd.uv.v, anchorLat: anchor.lat, anchorLng: anchor.lng };
-          }),
+          pois: anchored,
           free: autoLocalFreeParams(anchored.length, isSolveRollEnabled()),
         },
       });

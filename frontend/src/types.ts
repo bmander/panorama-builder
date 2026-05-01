@@ -57,12 +57,9 @@ export interface ImageMeasurementBearing {
   readonly handle: THREE.Mesh;
   readonly az: number;
   readonly uv: { readonly u: number; readonly v: number };
-  // Cached lat/lng of the linked control point's estimated location, kept in
-  // sync by the orchestration layer for cheap render-time access. Null when
-  // the measurement has no link or its CP has a NULL estimate.
-  readonly controlPointAnchor: LatLng | null;
   // FK to the linked control point. Sync layer reads this when PUTing
-  // image_measurements rows. Null = unlinked.
+  // image_measurements rows. Null = unlinked. Consumers that need the CP's
+  // estimated lat/lng dereference via overlays.getControlPointById().
   readonly controlPointId: string | null;
   readonly selected: boolean;
 }
@@ -145,12 +142,9 @@ export interface POIUserData {
   role: 'poi';
   uv: { u: number; v: number };
   parentOverlay: THREE.Group;
-  // Cached lat/lng of the linked control point's estimated location. Cleared
-  // / refreshed by the orchestration layer whenever the CP's estimate moves
-  // or the link changes. Null = unlinked, or CP has no estimate.
-  controlPointAnchor: LatLng | null;
-  // FK to the linked control point. Source of truth for sync;
-  // controlPointAnchor is the render-time cache. Null = unlinked.
+  // FK to the linked control point. Null = unlinked. Render-time consumers
+  // that want the CP's estimated lat/lng look it up directly via
+  // overlays.getControlPointById(controlPointId).
   controlPointId: string | null;
 }
 

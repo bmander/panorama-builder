@@ -226,8 +226,8 @@ const input = attachInput({
     void handlers.onPhotoDropped(tex, blob, aspect, dir, revokeUrl);
   },
   onAddImagePOI: (overlay, u, v) => { void handlers.onAddImageMeasurement(overlay, u, v); },
-  onMatchImagePOI: (overlay, u, v, controlPointId, latlng) => {
-    void handlers.onMatchImageMeasurement(overlay, u, v, controlPointId, latlng);
+  onMatchImagePOI: (overlay, u, v, controlPointId) => {
+    void handlers.onMatchImageMeasurement(overlay, u, v, controlPointId);
   },
   onShiftWheel: deltaPx => {
     const h = terrain.getCameraHeight();
@@ -298,13 +298,8 @@ async function hydrateFromAPI(id: string): Promise<void> {
     }, undefined, () => { resolve(); });
   })));
 
-  // Control points first — image measurements pull their anchor cache from
-  // the linked CP's est_lat/est_lng.
-  const cpAnchorById = new Map<string, LatLng | null>();
+  // Control points first so subsequent measurement adds reference an existing CP entry.
   for (const cp of data.control_points) {
-    const anchor = (cp.est_lat !== null && cp.est_lng !== null)
-      ? { lat: cp.est_lat, lng: cp.est_lng } : null;
-    cpAnchorById.set(cp.id, anchor);
     overlays.addControlPoint(cp.id, {
       description: cp.description, estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,
     });
@@ -321,11 +316,9 @@ async function hydrateFromAPI(id: string): Promise<void> {
   for (const im of data.image_measurements) {
     const overlay = overlays.getOverlayById(im.photo_id);
     if (!overlay) continue;
-    const anchor = im.control_point_id ? cpAnchorById.get(im.control_point_id) ?? null : null;
     overlays.addImageMeasurement(overlay, im.u, im.v, {
       id: im.id,
       controlPointId: im.control_point_id,
-      controlPointAnchor: anchor,
     });
     sync.registerImageMeasurement(im.id, { u: im.u, v: im.v, control_point_id: im.control_point_id });
   }
