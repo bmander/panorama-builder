@@ -1,80 +1,26 @@
 // Typed fetch wrappers around the Go backend at /api/*. Hand-rolled, no dep.
 // Server-assigned IDs throughout: every create returns the new entity with
 // its id; updates and deletes take the id as a path param.
+//
+// Wire shapes are imported from api-types.gen.ts which is regenerated from
+// ../../openapi.yaml via `make generate` (or `npm run generate-types`). The
+// `Api*` aliases here are the call-site-facing names — keeping them stable
+// avoids churn in main.ts / sync.ts / handlers.ts on spec changes.
 
 import type { LatLng } from './types.js';
+import type { components } from './api-types.gen.js';
 
 const API = '/api';
 
-// --- Wire shapes (snake_case to match the backend JSON schema) ---
+type Schemas = components['schemas'];
 
-export interface ApiLocation {
-  readonly id: string;
-  readonly lat: number;
-  readonly lng: number;
-  readonly name: string | null;
-  readonly created_at: string;
-  readonly updated_at: string;
-}
-
-export interface ApiPhoto {
-  readonly id: string;
-  readonly location_id: string;
-  readonly blob_path: string | null;
-  readonly mime_type: string | null;
-  readonly size_bytes: number | null;
-  readonly aspect: number;
-  readonly photo_az: number;
-  readonly photo_tilt: number;
-  readonly photo_roll: number;
-  readonly size_rad: number;
-  readonly opacity: number;
-  readonly created_at: string;
-  readonly updated_at: string;
-}
-
-export interface ApiMapPOI {
-  readonly id: string;
-  readonly location_id: string;
-  readonly lat: number;
-  readonly lng: number;
-  readonly created_at: string;
-  readonly updated_at: string;
-}
-
-export interface ApiImagePOI {
-  readonly id: string;
-  readonly photo_id: string;
-  readonly u: number;
-  readonly v: number;
-  readonly map_poi_id: string | null;
-  readonly created_at: string;
-  readonly updated_at: string;
-}
-
-export interface ApiHydratedLocation {
-  readonly location: ApiLocation;
-  readonly photos: readonly ApiPhoto[];
-  readonly map_pois: readonly ApiMapPOI[];
-  readonly image_pois: readonly ApiImagePOI[];
-}
-
-// --- Request shapes ---
-
-export interface PhotoPosePatch {
-  readonly aspect: number;
-  readonly photo_az: number;
-  readonly photo_tilt: number;
-  readonly photo_roll: number;
-  readonly size_rad: number;
-  readonly opacity?: number;
-}
-
-export interface ImagePOIPatch {
-  readonly u: number;
-  readonly v: number;
-  readonly map_poi_id?: string | null;
-}
+export type ApiLocation = Schemas['Location'];
+export type ApiPhoto = Schemas['Photo'];
+export type ApiMapPOI = Schemas['MapPOI'];
+export type ApiImagePOI = Schemas['ImagePOI'];
+export type ApiHydratedLocation = Schemas['HydratedLocation'];
+export type PhotoPosePatch = Schemas['PhotoPosePatch'];
+export type ImagePOIPatch = Schemas['ImagePOIPatch'];
 
 // --- Helpers ---
 

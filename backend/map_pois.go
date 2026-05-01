@@ -2,31 +2,16 @@ package main
 
 import "net/http"
 
-type latLngReq struct {
-	Lat float64 `json:"lat"`
-	Lng float64 `json:"lng"`
-}
-
-func (req latLngReq) validate() string {
-	if !validLat(req.Lat) {
-		return "lat out of range"
-	}
-	if !validLng(req.Lng) {
-		return "lng out of range"
-	}
-	return ""
-}
-
 func (s *Server) postMapPOI(w http.ResponseWriter, r *http.Request) {
 	locID := requireID(w, r, "id")
 	if locID == "" {
 		return
 	}
-	var req latLngReq
+	var req MapPOIRequest
 	if !parseJSON(w, r, &req) {
 		return
 	}
-	if msg := req.validate(); msg != "" {
+	if msg := validateMapPOIRequest(req); msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -48,11 +33,11 @@ func (s *Server) putMapPOI(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		return
 	}
-	var req latLngReq
+	var req MapPOIRequest
 	if !parseJSON(w, r, &req) {
 		return
 	}
-	if msg := req.validate(); msg != "" {
+	if msg := validateMapPOIRequest(req); msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}

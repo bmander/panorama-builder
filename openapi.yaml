@@ -1,0 +1,498 @@
+openapi: 3.0.3
+info:
+  title: panorama-builder API
+  description: |
+    JSON API for compositing flat photos into a 360° panorama. Stores
+    locations (camera positions), photos (with embedded pose), map POIs
+    (free-floating landmarks), and image POIs (reticle anchors on photos
+    that may link to a map POI).
+
+    All resources use server-assigned 13-character base32 IDs.
+    Authentication is out of scope — anyone with the URL has read+write
+    access. Field-level validation lives in handler code; this spec
+    documents shapes only.
+  version: 1.0.0
+
+servers:
+  - url: /api
+
+tags:
+  - name: meta
+  - name: locations
+  - name: photos
+  - name: map-pois
+  - name: image-pois
+
+paths:
+  /healthz:
+    get:
+      tags: [meta]
+      summary: DB-backed liveness check
+      operationId: getHealthz
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '503':
+          description: DB unreachable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /locations:
+    post:
+      tags: [locations]
+      summary: Create a project location
+      operationId: createLocation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateLocationRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Location' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+    get:
+      tags: [locations]
+      summary: List locations, optionally filtered by bbox
+      operationId: listLocations
+      parameters:
+        - name: bbox
+          in: query
+          description: |
+            Bounding box as `minLng,minLat,maxLng,maxLat` (four
+            comma-separated floats). When omitted, returns up to 1000
+            locations ordered by created_at DESC.
+          required: false
+          schema:
+            type: string
+            pattern: '^-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?$'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Location' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /locations/{id}:
+    parameters:
+      - $ref: '#/components/parameters/LocationId'
+    get:
+      tags: [locations]
+      summary: Get a location with its photos, map POIs, and image POIs
+      operationId: getLocation
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HydratedLocation' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [locations]
+      summary: Update a location's lat/lng/name
+      operationId: updateLocation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateLocationRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Location' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [locations]
+      summary: Delete a location and cascade
+      description: |
+        Cascades to photos and image POIs in the database, and removes
+        photo blob files from disk.
+      operationId: deleteLocation
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /locations/{id}/photos:
+    parameters:
+      - $ref: '#/components/parameters/LocationId'
+    post:
+      tags: [photos]
+      summary: Create a photo on a location (metadata only)
+      description: |
+        Creates a photo row with an empty blob slot. Upload the image bytes
+        via `PUT /photos/{id}/blob` afterwards.
+      operationId: createPhoto
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PhotoPosePatch' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Photo' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /photos/{id}:
+    parameters:
+      - $ref: '#/components/parameters/PhotoId'
+    get:
+      tags: [photos]
+      summary: Get photo metadata
+      operationId: getPhoto
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Photo' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [photos]
+      summary: Update photo pose / opacity / aspect
+      operationId: updatePhoto
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PhotoPosePatch' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Photo' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [photos]
+      summary: Delete a photo (and its blob)
+      operationId: deletePhoto
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /photos/{id}/blob:
+    parameters:
+      - $ref: '#/components/parameters/PhotoId'
+    put:
+      tags: [photos]
+      summary: Upload the photo's image blob
+      operationId: uploadPhotoBlob
+      requestBody:
+        required: true
+        content:
+          'image/*':
+            schema:
+              type: string
+              format: binary
+      responses:
+        '204': { description: Stored }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413':
+          description: Payload too large (above MAX_BLOB_BYTES)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    get:
+      tags: [photos]
+      summary: Download the photo's image blob
+      operationId: getPhotoBlob
+      responses:
+        '200':
+          description: OK
+          content:
+            'image/*':
+              schema:
+                type: string
+                format: binary
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /locations/{id}/map-pois:
+    parameters:
+      - $ref: '#/components/parameters/LocationId'
+    post:
+      tags: [map-pois]
+      summary: Create a map POI on a location
+      operationId: createMapPOI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MapPOIRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MapPOI' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /map-pois/{id}:
+    parameters:
+      - $ref: '#/components/parameters/MapPOIId'
+    put:
+      tags: [map-pois]
+      summary: Move a map POI
+      operationId: updateMapPOI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MapPOIRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MapPOI' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [map-pois]
+      summary: Delete a map POI
+      description: |
+        Cascades `ON DELETE SET NULL` on `image_pois.map_poi_id` —
+        anchored image POIs survive but lose their link.
+      operationId: deleteMapPOI
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /photos/{id}/image-pois:
+    parameters:
+      - $ref: '#/components/parameters/PhotoId'
+    post:
+      tags: [image-pois]
+      summary: Create an image POI on a photo
+      operationId: createImagePOI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImagePOIPatch' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImagePOI' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /image-pois/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ImagePOIId'
+    put:
+      tags: [image-pois]
+      summary: Update an image POI's u/v or anchor
+      operationId: updateImagePOI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImagePOIPatch' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImagePOI' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [image-pois]
+      summary: Delete an image POI
+      operationId: deleteImagePOI
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  parameters:
+    LocationId:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    PhotoId:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    MapPOIId:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    ImagePOIId:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+
+  responses:
+    BadRequest:
+      description: Validation error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource does not exist
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Id:
+      type: string
+      description: 13-character base32 server-assigned id
+      pattern: '^[A-Z2-7]{13}$'
+
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, example: ok }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+
+    Location:
+      type: object
+      required: [id, lat, lng, name, created_at, updated_at]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        lat: { type: number, format: double, minimum: -90, maximum: 90 }
+        lng: { type: number, format: double, minimum: -180, maximum: 180 }
+        name: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    Photo:
+      type: object
+      required:
+        - id
+        - location_id
+        - blob_path
+        - mime_type
+        - size_bytes
+        - aspect
+        - photo_az
+        - photo_tilt
+        - photo_roll
+        - size_rad
+        - opacity
+        - created_at
+        - updated_at
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        location_id: { $ref: '#/components/schemas/Id' }
+        blob_path: { type: string, nullable: true }
+        mime_type: { type: string, nullable: true }
+        size_bytes: { type: integer, format: int64, nullable: true }
+        aspect: { type: number, format: double, description: width / height of the photo in pixels }
+        photo_az: { type: number, format: double, description: viewer-azimuth radians (CCW from -Z) }
+        photo_tilt: { type: number, format: double, description: viewer-altitude radians (above horizon) }
+        photo_roll: { type: number, format: double, description: in-plane roll radians }
+        size_rad: { type: number, format: double, description: horizontal angular subtense radians }
+        opacity: { type: number, format: double, minimum: 0, maximum: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    MapPOI:
+      type: object
+      required: [id, location_id, lat, lng, created_at, updated_at]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        location_id: { $ref: '#/components/schemas/Id' }
+        lat: { type: number, format: double, minimum: -90, maximum: 90 }
+        lng: { type: number, format: double, minimum: -180, maximum: 180 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ImagePOI:
+      type: object
+      required: [id, photo_id, u, v, map_poi_id, created_at, updated_at]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        photo_id: { $ref: '#/components/schemas/Id' }
+        u: { type: number, format: double, minimum: 0, maximum: 1 }
+        v: { type: number, format: double, minimum: 0, maximum: 1 }
+        map_poi_id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          nullable: true
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    HydratedLocation:
+      type: object
+      required: [location, photos, map_pois, image_pois]
+      properties:
+        location: { $ref: '#/components/schemas/Location' }
+        photos:
+          type: array
+          items: { $ref: '#/components/schemas/Photo' }
+        map_pois:
+          type: array
+          items: { $ref: '#/components/schemas/MapPOI' }
+        image_pois:
+          type: array
+          items: { $ref: '#/components/schemas/ImagePOI' }
+
+    CreateLocationRequest:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat: { type: number, format: double, minimum: -90, maximum: 90 }
+        lng: { type: number, format: double, minimum: -180, maximum: 180 }
+        name: { type: string, nullable: true }
+
+    PhotoPosePatch:
+      type: object
+      required: [aspect, photo_az, photo_tilt, photo_roll, size_rad]
+      properties:
+        aspect: { type: number, format: double }
+        photo_az: { type: number, format: double }
+        photo_tilt: { type: number, format: double }
+        photo_roll: { type: number, format: double }
+        size_rad: { type: number, format: double }
+        opacity: { type: number, format: double, minimum: 0, maximum: 1 }
+
+    MapPOIRequest:
+      type: object
+      required: [lat, lng]
+      properties:
+        lat: { type: number, format: double, minimum: -90, maximum: 90 }
+        lng: { type: number, format: double, minimum: -180, maximum: 180 }
+
+    ImagePOIPatch:
+      type: object
+      required: [u, v]
+      properties:
+        u: { type: number, format: double, minimum: 0, maximum: 1 }
+        v: { type: number, format: double, minimum: 0, maximum: 1 }
+        map_poi_id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          nullable: true

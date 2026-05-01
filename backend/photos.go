@@ -23,38 +23,16 @@ func scanPhoto(row pgx.Row) (Photo, error) {
 	return p, err
 }
 
-type createPhotoReq struct {
-	Aspect    float64  `json:"aspect"`
-	PhotoAz   float64  `json:"photo_az"`
-	PhotoTilt float64  `json:"photo_tilt"`
-	PhotoRoll float64  `json:"photo_roll"`
-	SizeRad   float64  `json:"size_rad"`
-	Opacity   *float64 `json:"opacity"` // optional, defaults to 1
-}
-
-func (req createPhotoReq) validate() string {
-	if req.Aspect <= 0 || req.Aspect > 100 {
-		return "aspect must be in (0, 100]"
-	}
-	if req.SizeRad < 0 {
-		return "size_rad must be non-negative"
-	}
-	if req.Opacity != nil && !inRange(*req.Opacity, 0, 1) {
-		return "opacity must be in [0, 1]"
-	}
-	return ""
-}
-
 func (s *Server) postPhoto(w http.ResponseWriter, r *http.Request) {
 	locID := requireID(w, r, "id")
 	if locID == "" {
 		return
 	}
-	var req createPhotoReq
+	var req PhotoPosePatch
 	if !parseJSON(w, r, &req) {
 		return
 	}
-	if msg := req.validate(); msg != "" {
+	if msg := validatePhotoPosePatch(req); msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -98,11 +76,11 @@ func (s *Server) putPhoto(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		return
 	}
-	var req createPhotoReq
+	var req PhotoPosePatch
 	if !parseJSON(w, r, &req) {
 		return
 	}
-	if msg := req.validate(); msg != "" {
+	if msg := validatePhotoPosePatch(req); msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}

@@ -5,65 +5,14 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 )
 
-// --- Domain shapes (also used by other handlers; kept here for the root) ---
-
-type Location struct {
-	ID        string    `json:"id"`
-	Lat       float64   `json:"lat"`
-	Lng       float64   `json:"lng"`
-	Name      *string   `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-type Photo struct {
-	ID         string    `json:"id"`
-	LocationID string    `json:"location_id"`
-	BlobPath   *string   `json:"blob_path,omitempty"`
-	MimeType   *string   `json:"mime_type,omitempty"`
-	SizeBytes  *int64    `json:"size_bytes,omitempty"`
-	Aspect     float64   `json:"aspect"`
-	PhotoAz    float64   `json:"photo_az"`
-	PhotoTilt  float64   `json:"photo_tilt"`
-	PhotoRoll  float64   `json:"photo_roll"`
-	SizeRad    float64   `json:"size_rad"`
-	Opacity    float64   `json:"opacity"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-}
-
-type MapPOI struct {
-	ID         string    `json:"id"`
-	LocationID string    `json:"location_id"`
-	Lat        float64   `json:"lat"`
-	Lng        float64   `json:"lng"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-}
-
-type ImagePOI struct {
-	ID        string    `json:"id"`
-	PhotoID   string    `json:"photo_id"`
-	U         float64   `json:"u"`
-	V         float64   `json:"v"`
-	MapPOIID  *string   `json:"map_poi_id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// --- Handlers ---
-
-type createLocationReq struct {
-	Lat  float64 `json:"lat"`
-	Lng  float64 `json:"lng"`
-	Name *string `json:"name"`
-}
+// Domain shapes (Location, Photo, MapPOI, ImagePOI, HydratedLocation,
+// CreateLocationRequest, MapPOIRequest, PhotoPosePatch, ImagePOIPatch)
+// are generated from ../openapi.yaml into types.gen.go.
 
 func (s *Server) postLocation(w http.ResponseWriter, r *http.Request) {
-	var req createLocationReq
+	var req CreateLocationRequest
 	if !parseJSON(w, r, &req) {
 		return
 	}
@@ -134,13 +83,6 @@ func (s *Server) listLocations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-type hydratedLocation struct {
-	Location  Location   `json:"location"`
-	Photos    []Photo    `json:"photos"`
-	MapPOIs   []MapPOI   `json:"map_pois"`
-	ImagePOIs []ImagePOI `json:"image_pois"`
-}
-
 func (s *Server) getLocation(w http.ResponseWriter, r *http.Request) {
 	id := requireID(w, r, "id")
 	if id == "" {
@@ -170,7 +112,12 @@ func (s *Server) getLocation(w http.ResponseWriter, r *http.Request) {
 		writeErrorFromDB(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, hydratedLocation{loc, photos, mapPOIs, imagePOIs})
+	writeJSON(w, http.StatusOK, HydratedLocation{
+		Location:  loc,
+		Photos:    photos,
+		MapPois:   mapPOIs,
+		ImagePois: imagePOIs,
+	})
 }
 
 func (s *Server) putLocation(w http.ResponseWriter, r *http.Request) {
@@ -178,7 +125,7 @@ func (s *Server) putLocation(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		return
 	}
-	var req createLocationReq
+	var req CreateLocationRequest
 	if !parseJSON(w, r, &req) {
 		return
 	}
@@ -299,7 +246,7 @@ func (s *Server) imagePOIsByLocation(ctx context.Context, locID string) ([]Image
 	defer rows.Close()
 	for rows.Next() {
 		var ip ImagePOI
-		if err := rows.Scan(&ip.ID, &ip.PhotoID, &ip.U, &ip.V, &ip.MapPOIID, &ip.CreatedAt, &ip.UpdatedAt); err != nil {
+		if err := rows.Scan(&ip.ID, &ip.PhotoID, &ip.U, &ip.V, &ip.MapPoiID, &ip.CreatedAt, &ip.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, ip)

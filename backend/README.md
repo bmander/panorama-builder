@@ -20,6 +20,11 @@ Migrations under `migrations/NNNN_description.sql` run automatically at
 startup, tracked in a `schema_migrations` table. To add one, drop a new
 file in that directory with the next version prefix.
 
+The API contract lives at `../openapi.yaml`. Edit the spec, then run
+`make generate` to regenerate `types.gen.go` (Go) and the matching
+`../frontend/src/api-types.gen.ts` (TS). Both generated files are
+committed.
+
 Make sure the frontend has been built once: `cd ../frontend && npm install && npm run build`.
 
 Open <http://localhost:8080>. Setting a location pushes the URL to `/<id>`.

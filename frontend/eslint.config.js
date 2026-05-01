@@ -4,7 +4,7 @@ import globals from 'globals';
 
 export default tseslint.config(
   {
-    ignores: ['build/**', 'node_modules/**', 'eslint.config.js'],
+    ignores: ['build/**', 'node_modules/**', 'eslint.config.js', 'src/*.gen.ts'],
   },
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,

@@ -2,32 +2,16 @@ package main
 
 import "net/http"
 
-type imagePOIReq struct {
-	U        float64 `json:"u"`
-	V        float64 `json:"v"`
-	MapPOIID *string `json:"map_poi_id"`
-}
-
-func (req imagePOIReq) validate() string {
-	if !validUV(req.U) || !validUV(req.V) {
-		return "u/v must be in [0, 1]"
-	}
-	if req.MapPOIID != nil && !validID(*req.MapPOIID) {
-		return "invalid map_poi_id"
-	}
-	return ""
-}
-
 func (s *Server) postImagePOI(w http.ResponseWriter, r *http.Request) {
 	photoID := requireID(w, r, "id")
 	if photoID == "" {
 		return
 	}
-	var req imagePOIReq
+	var req ImagePOIPatch
 	if !parseJSON(w, r, &req) {
 		return
 	}
-	if msg := req.validate(); msg != "" {
+	if msg := validateImagePOIPatch(req); msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -36,8 +20,8 @@ func (s *Server) postImagePOI(w http.ResponseWriter, r *http.Request) {
 	           VALUES ($1, $2, $3, $4, $5)
 	           RETURNING id, photo_id, u, v, map_poi_id, created_at, updated_at`
 	var ip ImagePOI
-	err := s.db.QueryRow(r.Context(), q, id, photoID, req.U, req.V, req.MapPOIID).Scan(
-		&ip.ID, &ip.PhotoID, &ip.U, &ip.V, &ip.MapPOIID, &ip.CreatedAt, &ip.UpdatedAt)
+	err := s.db.QueryRow(r.Context(), q, id, photoID, req.U, req.V, req.MapPoiID).Scan(
+		&ip.ID, &ip.PhotoID, &ip.U, &ip.V, &ip.MapPoiID, &ip.CreatedAt, &ip.UpdatedAt)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -50,11 +34,11 @@ func (s *Server) putImagePOI(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		return
 	}
-	var req imagePOIReq
+	var req ImagePOIPatch
 	if !parseJSON(w, r, &req) {
 		return
 	}
-	if msg := req.validate(); msg != "" {
+	if msg := validateImagePOIPatch(req); msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -62,8 +46,8 @@ func (s *Server) putImagePOI(w http.ResponseWriter, r *http.Request) {
 	           WHERE id=$1
 	           RETURNING id, photo_id, u, v, map_poi_id, created_at, updated_at`
 	var ip ImagePOI
-	err := s.db.QueryRow(r.Context(), q, id, req.U, req.V, req.MapPOIID).Scan(
-		&ip.ID, &ip.PhotoID, &ip.U, &ip.V, &ip.MapPOIID, &ip.CreatedAt, &ip.UpdatedAt)
+	err := s.db.QueryRow(r.Context(), q, id, req.U, req.V, req.MapPoiID).Scan(
+		&ip.ID, &ip.PhotoID, &ip.U, &ip.V, &ip.MapPoiID, &ip.CreatedAt, &ip.UpdatedAt)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return

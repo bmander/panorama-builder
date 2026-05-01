@@ -47,6 +47,7 @@ Single Go package under `backend/`:
 - `photos.go` — metadata + pose CRUD plus `PUT/GET /photos/{id}/blob`
 - `map_pois.go`, `image_pois.go` — straightforward CRUD; `image_pois.map_poi_id` is the FK that encodes a "match"
 - `migrations.go` + `migrations/NNNN_*.sql` — embedded migrations applied at startup; tracked in `schema_migrations`
+- `types.gen.go` — generated from `../openapi.yaml` (the API contract); regenerate via `make generate`. Mirror file on the frontend is `frontend/src/api-types.gen.ts`
 
 Sole external dep: `github.com/jackc/pgx/v5`. Targets Go 1.22+ for stdlib method-routing.
 
@@ -81,6 +82,7 @@ Sole external dep: `github.com/jackc/pgx/v5`. Targets Go 1.22+ for stdlib method
 - `make run` — `go run .` (defaults to `localhost:5432` panorama/panorama)
 - `make build` — `go build -o bin/panorama-api .`
 - `make fmt` / `make vet` / `make tidy`
+- `make generate` — regenerate `types.gen.go` and `frontend/src/api-types.gen.ts` from `openapi.yaml`
 - `docker compose up -d` / `docker compose down` — Postgres + PostGIS lifecycle
 
 ## Don't

@@ -62,3 +62,41 @@ func inRange(v, lo, hi float64) bool { return v >= lo && v <= hi }
 func validLat(v float64) bool { return inRange(v, -90, 90) }
 func validLng(v float64) bool { return inRange(v, -180, 180) }
 func validUV(v float64) bool  { return inRange(v, 0, 1) }
+
+// Body validators for the generated request types from types.gen.go. The
+// spec at ../openapi.yaml documents the same constraints declaratively, but
+// the generated types-only mode doesn't ship runtime validation; we keep
+// these as the runtime gate.
+
+func validateMapPOIRequest(req MapPOIRequest) string {
+	if !validLat(req.Lat) {
+		return "lat out of range"
+	}
+	if !validLng(req.Lng) {
+		return "lng out of range"
+	}
+	return ""
+}
+
+func validateImagePOIPatch(req ImagePOIPatch) string {
+	if !validUV(req.U) || !validUV(req.V) {
+		return "u/v must be in [0, 1]"
+	}
+	if req.MapPoiID != nil && !validID(*req.MapPoiID) {
+		return "invalid map_poi_id"
+	}
+	return ""
+}
+
+func validatePhotoPosePatch(req PhotoPosePatch) string {
+	if req.Aspect <= 0 || req.Aspect > 100 {
+		return "aspect must be in (0, 100]"
+	}
+	if req.SizeRad < 0 {
+		return "size_rad must be non-negative"
+	}
+	if req.Opacity != nil && !inRange(*req.Opacity, 0, 1) {
+		return "opacity must be in [0, 1]"
+	}
+	return ""
+}
