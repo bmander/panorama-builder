@@ -110,9 +110,15 @@ function refreshMapAnnotations(): void {
 function refreshControlPointColumns(): void {
   if (viewTabs.getMode() !== '360') return;
   const camLoc = mapView.getLocation();
+  // Only show columns for CPs the user is actually observing in this project.
+  const observed = new Set<string>();
+  for (const im of overlays.getImageMeasurements()) {
+    if (im.controlPointId) observed.add(im.controlPointId);
+  }
   const columns: ControlPointColumn[] = [];
   for (const cp of overlays.getControlPoints()) {
     if (cp.estLat === null || cp.estLng === null) continue;
+    if (!observed.has(cp.id)) continue;
     columns.push({ id: cp.id, anchor: { lat: cp.estLat, lng: cp.estLng }, selected: cp.selected });
   }
   cpColumns.update(camLoc, columns);
