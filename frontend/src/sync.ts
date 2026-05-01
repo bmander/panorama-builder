@@ -6,7 +6,7 @@
 
 import * as THREE from 'three';
 import * as api from './api.js';
-import { getElement, meshMat, overlayData } from './types.js';
+import { getElement, overlayData } from './types.js';
 import type { LatLng } from './types.js';
 import type { OverlayManager } from './overlay.js';
 
@@ -70,7 +70,6 @@ export function createSyncManager({
   });
 
   function buildCurrentPhoto(o: THREE.Group): SyncedPhoto {
-    const data = overlayData(o);
     // camLoc isn't part of the per-photo sync payload — pass null to skip lookup.
     const pose = overlays.extractPose(o, null);
     return {
@@ -79,7 +78,7 @@ export function createSyncManager({
       photo_tilt: pose.photoTilt,
       photo_roll: pose.photoRoll,
       size_rad: pose.sizeRad,
-      opacity: meshMat(data.body).opacity,
+      opacity: overlays.getOpacity(o),
     };
   }
 

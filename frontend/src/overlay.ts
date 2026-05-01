@@ -126,9 +126,11 @@ export interface OverlayManager {
   // accumulate against whatever the previous quaternion happened to be).
   setSelectedRoll(roll: number): void;
   deleteSelected(): void;
-  // Per-photo body opacity in [0, 1]. Touches only the material — caller is
-  // responsible for the cheap render/save sequence (no full onMutate, since
-  // opacity doesn't affect the solver, map cones, or POIs).
+  // Per-photo body opacity in [0, 1]. Fires onLightMutate (not onMutate)
+  // since opacity doesn't affect the solver, map cones, or POIs — only the
+  // render and the persisted snapshot need to update.
+  setOpacity(o: THREE.Group, opacity: number): void;
+  getOpacity(o: THREE.Group): number;
   setSelectedOpacity(opacity: number): void;
   getSelectedOpacity(): number | null;
   addPOI(o: THREE.Group, u: number, v: number, opts: AddPOIOptions): THREE.Mesh;
@@ -175,10 +177,13 @@ export interface CreateOverlayManagerOptions {
   // Separate from onMutate so consumers refresh selection-dependent visuals
   // without paying the solver/save cascade.
   onSelectionChange?: () => void;
+  // Save-only mutation channel (e.g., opacity). Skips the solver, map
+  // annotations, settings persist — but still wants render + sync flush.
+  onLightMutate?: () => void;
 }
 
 export function createOverlayManager(
-  { overlaysGroup, getAnisotropy, onMutate, onSelectionChange }: CreateOverlayManagerOptions,
+  { overlaysGroup, getAnisotropy, onMutate, onSelectionChange, onLightMutate }: CreateOverlayManagerOptions,
 ): OverlayManager {
   const overlaySphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), OVERLAY_R);
   let batching = 0;
@@ -309,6 +314,24 @@ export function createOverlayManager(
     applyOverlayDecoration(o);
   }
 
+  // An image POI is "selected" for visual purposes if it's directly selected
+  // OR if its anchored map POI is selected. This makes a click on either side
+  // of an FK match light up the whole pair (ray, column, reticle).
+  function isPOISelected(poi: THREE.Mesh, mapPOIId: string | null): boolean {
+    if (poi === selectedPOI) return true;
+    return mapPOIId !== null && mapPOIId === selectedMapPOIId;
+  }
+  function applyPOIColors(): void {
+    for (const child of overlaysGroup.children) {
+      const data = overlayData(child as THREE.Group);
+      if (!data.pois) continue;
+      for (const poi of data.pois) {
+        const pData = poiData(poi);
+        setPoiColor(poi, isPOISelected(poi, pData.mapPOIId) ? POI_COLOR_SELECTED : POI_COLOR);
+      }
+    }
+  }
+
   const manager: OverlayManager = {
     overlaySphere,
     addOverlay(tex, aspect, dir, opts) {
@@ -387,11 +410,16 @@ export function createOverlayManager(
       }
       notify();
     },
+    setOpacity(o, opacity) {
+      meshMat(overlayData(o).body).opacity = THREE.MathUtils.clamp(opacity, 0, 1);
+      onLightMutate?.();
+    },
+    getOpacity: (o) => meshMat(overlayData(o).body).opacity,
     setSelectedOpacity(opacity) {
       if (!selected) return;
-      meshMat(overlayData(selected).body).opacity = THREE.MathUtils.clamp(opacity, 0, 1);
+      manager.setOpacity(selected, opacity);
     },
-    getSelectedOpacity: () => selected ? meshMat(overlayData(selected).body).opacity : null,
+    getSelectedOpacity: () => selected ? manager.getOpacity(selected) : null,
     addPOI(o, u, v, opts) {
       // Unit-radius reticle plane; applySize() scales it per overlay width.
       const poi = new THREE.Mesh(POI_GEOM, makePoiMaterial());
@@ -515,21 +543,17 @@ export function createOverlayManager(
     getSelectedPOI: () => selectedPOI,
     setSelectedPOI(poi) {
       if (selectedPOI === poi) return;
-      if (selectedPOI) setPoiColor(selectedPOI, POI_COLOR);
       selectedPOI = poi;
-      if (selectedPOI) setPoiColor(selectedPOI, POI_COLOR_SELECTED);
+      applyPOIColors();
       onSelectionChange?.();
     },
     setSelectedPair(poi, mapPOIId) {
       const photoChanged = selectedPOI !== poi;
       const mapChanged = selectedMapPOIId !== mapPOIId;
       if (!photoChanged && !mapChanged) return;
-      if (photoChanged) {
-        if (selectedPOI) setPoiColor(selectedPOI, POI_COLOR);
-        selectedPOI = poi;
-        if (selectedPOI) setPoiColor(selectedPOI, POI_COLOR_SELECTED);
-      }
+      if (photoChanged) selectedPOI = poi;
       if (mapChanged) selectedMapPOIId = mapPOIId;
+      applyPOIColors();
       onSelectionChange?.();
     },
     getPOIs() {
@@ -547,7 +571,7 @@ export function createOverlayManager(
             uv: { ...pData.uv },
             mapAnchor: pData.mapAnchor,
             mapPOIId: pData.mapPOIId,
-            selected: poi === selectedPOI,
+            selected: isPOISelected(poi, pData.mapPOIId),
           });
         }
       }
@@ -567,16 +591,18 @@ export function createOverlayManager(
       notify();
     },
     getMapPOIs() {
+      const linkedFromSelectedPOI = selectedPOI ? poiData(selectedPOI).mapPOIId : null;
       return mapPois.map(m => ({
         id: m.id,
         latlng: m.latlng,
-        selected: m.id === selectedMapPOIId,
+        selected: m.id === selectedMapPOIId || m.id === linkedFromSelectedPOI,
       }));
     },
     getSelectedMapPOI: () => selectedMapPOIId,
     setSelectedMapPOI(id) {
       if (selectedMapPOIId === id) return;
       selectedMapPOIId = id;
+      applyPOIColors();
       onSelectionChange?.();
     },
     getCones() {

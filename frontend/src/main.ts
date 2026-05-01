@@ -9,7 +9,7 @@ import { createTerrainView } from './terrain.js';
 import { createSunMarker } from './sun-marker.js';
 import { createMapPoiColumns, findHitColumn } from './map-poi-columns.js';
 import type { MapPoiColumn } from './map-poi-columns.js';
-import { getElement, meshMat, overlayData } from './types.js';
+import { getElement, overlayData } from './types.js';
 import type { LatLng } from './types.js';
 import * as api from './api.js';
 import type { ApiHydratedLocation, ApiLocation } from './api.js';
@@ -53,6 +53,11 @@ const overlays = createOverlayManager({
     viewer.requestRender();
     if (mapView.isVisible()) refreshMapAnnotations();
     refreshMapPoiColumns();
+  },
+  onLightMutate: () => {
+    viewer.requestRender();
+    baker.markDirty();
+    sync.flush();
   },
 });
 
@@ -206,9 +211,6 @@ function refreshSelectionUI(): void {
 
 opacitySliderEl.addEventListener('input', () => {
   overlays.setSelectedOpacity(parseFloat(opacitySliderEl.value) / 100);
-  viewer.requestRender();
-  baker.markDirty();
-  sync.flush();
 });
 
 const input = attachInput({
@@ -275,15 +277,14 @@ async function hydrateFromAPI(id: string): Promise<void> {
     loader.load(api.photoBlobUrl(p.id), tex => {
       const dir = dirFromAzAlt(p.photo_az, p.photo_tilt);
       const o = overlays.addOverlay(tex, p.aspect, dir, { id: p.id });
-      const odata = overlayData(o);
-      odata.sizeRad = p.size_rad;
-      odata.photoRoll = p.photo_roll;
-      meshMat(odata.body).opacity = p.opacity;
-      // applyPose gives a clean re-place that respects roll and re-applies size.
+      // applyPose handles photoAz/photoTilt/photoRoll/sizeRad; setOpacity
+      // handles the body material. Together they restore everything that
+      // userData carries, without the caller poking userData directly.
       overlays.applyPose(o, {
         photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
         sizeRad: p.size_rad, aspect: p.aspect, camLat: loc.lat, camLng: loc.lng,
       });
+      overlays.setOpacity(o, p.opacity);
       sync.registerPhoto(p.id, {
         aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,
         photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
