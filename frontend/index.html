@@ -56,6 +56,24 @@
       </div>
     </div>
   </div>
+  <div id="observe-modal" class="modal" hidden>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <span>Add observation</span>
+        <button type="button" id="observe-close" class="btn">✕</button>
+      </div>
+      <div id="observe-cp-list" class="cp-list"></div>
+      <div class="modal-field">
+        <span>Or create a new control point</span>
+        <input type="text" id="observe-new-desc" placeholder="description (optional)" maxlength="200">
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="observe-cancel" class="btn">Cancel</button>
+        <button type="button" id="observe-create" class="btn">Create &amp; observe</button>
+      </div>
+    </div>
+  </div>
+  <div id="context-menu" hidden></div>
   <div id="settings-panel" hidden>
     <label class="settings-check"><input type="checkbox" id="lock-camera"> Lock camera position</label>
     <label class="settings-check"><input type="checkbox" id="solve-roll-toggle"> Auto-solve photo rotation</label>

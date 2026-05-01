@@ -20,6 +20,8 @@ import { createSettingsPanel } from './settings.js';
 import { createOrchestration } from './handlers.js';
 import { createAdminModal } from './admin-modal.js';
 import { createStartProjectModal } from './start-project-modal.js';
+import { createContextMenu } from './context-menu.js';
+import { createObservationModal } from './observation-modal.js';
 
 // --- URL ↔ project id ---------------------------------------------------
 
@@ -218,6 +220,16 @@ opacitySliderEl.addEventListener('input', () => {
   overlays.setSelectedOpacity(parseFloat(opacitySliderEl.value) / 100);
 });
 
+const contextMenu = createContextMenu();
+const observationModal = createObservationModal({
+  getControlPoints: () => overlays.getControlPoints(),
+  onPickExisting: (overlay, u, v, controlPointId) => {
+    void handlers.onMatchImageMeasurement(overlay, u, v, controlPointId);
+  },
+  onCreateAndObserve: (overlay, u, v, description) =>
+    handlers.onCreateCPAndObserve(overlay, u, v, description),
+});
+
 const input = attachInput({
   viewer,
   overlays,
@@ -244,6 +256,11 @@ const input = attachInput({
     return findHitColumn(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, camLoc, overlays.getControlPoints());
   },
   onHoveredColumnChange: id => { cpColumns.setHoveredColumn(id); },
+  onPhotoBodyContextMenu: (overlay, u, v, sx, sy) => {
+    contextMenu.open(sx, sy, [
+      { label: 'Add observation here', onClick: () => { observationModal.open(overlay, u, v); } },
+    ]);
+  },
 });
 
 addPoiBtnEl.addEventListener('click', () => {

@@ -32,6 +32,11 @@ export interface OrchestrationHandlers {
   onMatchImageMeasurement(
     overlay: THREE.Group, u: number, v: number, controlPointId: string,
   ): Promise<void>;
+  // Right-click → context menu → modal "Create & observe": a CP with no
+  // location estimate yet, plus an image measurement linked to it.
+  onCreateCPAndObserve(
+    overlay: THREE.Group, u: number, v: number, description: string,
+  ): Promise<void>;
   // Map "+ POI" armed click. v1 creates a CP and a map measurement linked to
   // it; the CP carries the est_lat/est_lng (mirroring the measurement).
   onAddMapMeasurement(latlng: LatLng): Promise<void>;
@@ -183,18 +188,34 @@ export function createOrchestration({
     });
   }
 
-  // POST a fresh CP at latlng, register it. Returns null on API failure (the
-  // banner has already been surfaced via reportError).
-  async function createControlPointAt(latlng: LatLng): Promise<api.ApiControlPoint | null> {
+  // POST a CP with the given payload, register it. Returns null on API
+  // failure (the banner has already been surfaced via reportError).
+  async function createControlPoint(
+    payload: { description: string; est_lat: number | null; est_lng: number | null },
+  ): Promise<api.ApiControlPoint | null> {
     try {
-      const cp = await api.createControlPoint({
-        description: '', est_lat: latlng.lat, est_lng: latlng.lng,
-      });
+      const cp = await api.createControlPoint(payload);
       pushControlPoint(cp);
       return cp;
     } catch (err) {
       sync.reportError('add control point', err);
       return null;
+    }
+  }
+
+  const createControlPointAt = (latlng: LatLng): Promise<api.ApiControlPoint | null> =>
+    createControlPoint({ description: '', est_lat: latlng.lat, est_lng: latlng.lng });
+
+  async function onCreateCPAndObserve(
+    overlay: THREE.Group, u: number, v: number, description: string,
+  ): Promise<void> {
+    const cp = await createControlPoint({ description, est_lat: null, est_lng: null });
+    if (!cp) return;
+    const measurement = await createImageMeasurement(overlay, u, v, cp.id);
+    if (!measurement) {
+      // Roll back the CP — would otherwise be an orphan with no observations.
+      await api.deleteControlPoint(cp.id).catch((e: unknown) => { console.error('orphan CP cleanup failed:', e); });
+      overlays.removeControlPoint(cp.id);
     }
   }
 
@@ -296,6 +317,7 @@ export function createOrchestration({
     onPhotoDropped,
     onAddImageMeasurement,
     onMatchImageMeasurement,
+    onCreateCPAndObserve,
     onAddMapMeasurement,
     onAnchorImageMeasurementByMapClick,
   };

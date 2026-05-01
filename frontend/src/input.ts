@@ -65,9 +65,15 @@ export interface AttachInputOptions {
   // forwards the id to the columns module so the column re-renders with the
   // hover (yellow) treatment, signalling "click here to match."
   onHoveredColumnChange?: (id: string | null) => void;
+  // Right-click on a photo body. Host opens a context menu at (screenX,
+  // screenY) and routes its actions back through the orchestration handlers
+  // (e.g. "Add observation here" → observation modal at the given uv).
+  onPhotoBodyContextMenu?: (
+    overlay: THREE.Group, u: number, v: number, screenX: number, screenY: number,
+  ) => void;
 }
 
-export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddImagePOI, onMatchImagePOI, onShiftWheel, onPoiArmChange, findColumnAtNDC, onHoveredColumnChange }: AttachInputOptions): InputController {
+export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddImagePOI, onMatchImagePOI, onShiftWheel, onPoiArmChange, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu }: AttachInputOptions): InputController {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -131,6 +137,8 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
   function closeBatch(): void { if (batchOpen) { batchOpen = false; overlays.endBatch(); } }
 
   canvas.addEventListener('pointerdown', (e: PointerEvent) => {
+    // Left-click only — right-click goes to the contextmenu listener.
+    if (e.button !== 0) return;
     ndcFromEvent(e);
     raycaster.setFromCamera(ndc, camera);
     const hits = raycastOverlays();
@@ -213,6 +221,17 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
     }
     lastX = e.clientX; lastY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
+  });
+
+  canvas.addEventListener('contextmenu', (e: MouseEvent) => {
+    if (!onPhotoBodyContextMenu || mode) return;
+    ndcFromEvent(e);
+    raycaster.setFromCamera(ndc, camera);
+    const bodyHit = raycastOverlays().find(h => getRole(h.object) === ROLE_BODY);
+    if (!bodyHit?.uv) return;
+    e.preventDefault();
+    const o = bodyHit.object.parent as THREE.Group;
+    onPhotoBodyContextMenu(o, bodyHit.uv.x, bodyHit.uv.y, e.clientX, e.clientY);
   });
 
   const endDrag = (): void => {
