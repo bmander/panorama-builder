@@ -22,15 +22,22 @@ import { createAdminModal } from './admin-modal.js';
 import { createStartProjectModal } from './start-project-modal.js';
 import { createContextMenu } from './context-menu.js';
 import { createObservationModal } from './observation-modal.js';
+import { showControlPointDetail } from './cp-detail.js';
 
-// --- URL ↔ project id ---------------------------------------------------
+// --- URL ↔ project / CP id ---------------------------------------------
 
-const ID_RE = /^\/([A-Z2-7]{13})$/;
+const LOCATION_ID_RE = /^\/([A-Z2-7]{13})$/;
+const CP_ID_RE = /^\/cp\/([A-Z2-7]{13})$/;
 function parseLocationIdFromURL(): string | null {
-  const m = ID_RE.exec(location.pathname);
+  const m = LOCATION_ID_RE.exec(location.pathname);
+  return m ? m[1]! : null;
+}
+function parseCpIdFromURL(): string | null {
+  const m = CP_ID_RE.exec(location.pathname);
   return m ? m[1]! : null;
 }
 const currentLocationId: string | null = parseLocationIdFromURL();
+const currentCpId: string | null = parseCpIdFromURL();
 const getCurrentLocationId = (): string | null => currentLocationId;
 
 // Index mode (no project in URL) hides the project-scoped chrome — the
@@ -365,11 +372,13 @@ async function showProjectMarkers(): Promise<void> {
 async function showIndexControlPoints(): Promise<void> {
   try {
     const cps = await api.listControlPoints();
-    const dots: LatLng[] = [];
-    for (const cp of cps) {
-      if (cp.est_lat !== null && cp.est_lng !== null) dots.push({ lat: cp.est_lat, lng: cp.est_lng });
-    }
-    mapView.setIndexControlPoints(dots);
+    mapView.setIndexControlPoints(cps
+      .filter(cp => cp.est_lat !== null && cp.est_lng !== null)
+      .map(cp => ({
+        id: cp.id,
+        latlng: { lat: cp.est_lat!, lng: cp.est_lng! },
+        description: cp.description,
+      })));
   } catch (err) {
     console.error('list control points failed:', err);
   }
@@ -407,6 +416,10 @@ async function showProjectPreview(id: string): Promise<void> {
 }
 
 async function bootstrap(): Promise<void> {
+  if (currentCpId) {
+    await showControlPointDetail(currentCpId);
+    return;
+  }
   if (currentLocationId) {
     await hydrateFromAPI(currentLocationId);
     const prefs = loadPrefs(currentLocationId);

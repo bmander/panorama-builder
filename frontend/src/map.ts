@@ -18,6 +18,12 @@ export interface ProjectPreview {
   linkedMapPOIs: readonly LatLng[];
 }
 
+export interface IndexControlPoint {
+  id: string;
+  latlng: LatLng;
+  description: string;
+}
+
 export interface MapView {
   getLocation(): LatLng | null;
   setLocation(latlng: LatLng | null): void;
@@ -28,8 +34,9 @@ export interface MapView {
   setProjectMarkers(projects: readonly ProjectMarker[]): void;
   setProjectPreview(preview: ProjectPreview | null): void;
   // Index-view dots: every control point with a location estimate, drawn as
-  // small red markers regardless of which project owns them.
-  setIndexControlPoints(latlngs: readonly LatLng[]): void;
+  // small red markers regardless of which project owns them. Click → popup
+  // with a link to the CP's detail page.
+  setIndexControlPoints(cps: readonly IndexControlPoint[]): void;
   isVisible(): boolean;
   onShow(): void;
   onHide(): void;
@@ -252,12 +259,13 @@ export function createMapView({
     radius: 4, color: '#ff5050', weight: 1, fillColor: '#ff5050',
     fillOpacity: 0.85, interactive: false,
   } as L.CircleMarkerOptions;
-  let indexControlPoints: readonly LatLng[] = [];
+  let indexControlPoints: readonly IndexControlPoint[] = [];
   const indexCpDotLayers: L.CircleMarker[] = [];
   const INDEX_CP_DOT_STYLE: L.PathOptions = {
     radius: 3, color: '#ff5050', weight: 1, fillColor: '#ff5050',
-    fillOpacity: 0.9, interactive: false,
+    fillOpacity: 0.9,
   } as L.CircleMarkerOptions;
+  const INDEX_CP_POPUP_OPTS: L.PopupOptions = { className: 'index-cp-popup', closeButton: true };
   const GO_POPUP_OPTS: L.PopupOptions = { className: 'project-popup', closeButton: true };
   const goButtonHtml = (label: string): string => `<button type="button" class="go">${label}</button>`;
   function wireGoButton(popup: L.Popup, onClick: () => void): void {
@@ -397,7 +405,19 @@ export function createMapView({
     if (!visible) return;
     while (indexCpDotLayers.length) map.removeLayer(indexCpDotLayers.pop()!);
     for (const cp of indexControlPoints) {
-      indexCpDotLayers.push(L.circleMarker([cp.lat, cp.lng], INDEX_CP_DOT_STYLE).addTo(map));
+      const dot = L.circleMarker([cp.latlng.lat, cp.latlng.lng], INDEX_CP_DOT_STYLE);
+      dot.on('click', (e: L.LeafletMouseEvent) => {
+        L.DomEvent.stopPropagation(e);
+        const label = cp.description || `cp ${cp.id.slice(0, 6)}`;
+        const popupHtml = `<span class="name">${escapeHtml(label)}</span>`
+          + `<a class="go" href="/cp/${cp.id}">View details →</a>`;
+        L.popup(INDEX_CP_POPUP_OPTS)
+          .setLatLng([cp.latlng.lat, cp.latlng.lng])
+          .setContent(popupHtml)
+          .openOn(map);
+      });
+      dot.addTo(map);
+      indexCpDotLayers.push(dot);
     }
   }
 
@@ -460,8 +480,8 @@ export function createMapView({
       projectPreview = preview;
       redrawProjectPreview();
     },
-    setIndexControlPoints(latlngs: readonly LatLng[]): void {
-      indexControlPoints = latlngs;
+    setIndexControlPoints(cps: readonly IndexControlPoint[]): void {
+      indexControlPoints = cps;
       redrawIndexControlPoints();
     },
     setProjectMarkers(projects: readonly ProjectMarker[]): void {

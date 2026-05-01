@@ -69,6 +69,24 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .btn.danger { color: #ff8080; border-color: #ff8080; }
 .btn.danger:hover { background: rgba(255,80,80,0.2); }
+#cp-detail-view { position: fixed; inset: 0; background: #111; color: #fff;
+                  font: 14px monospace; z-index: 3000; overflow-y: auto; padding: 32px; }
+#cp-detail-view[hidden] { display: none; }
+.cp-detail-panel { max-width: 640px; margin: 0 auto; }
+.cp-detail-back { color: #5080ff; text-decoration: none; font-size: 12px; }
+.cp-detail-back:hover { text-decoration: underline; }
+.cp-detail-panel h1 { font-size: 22px; margin: 16px 0 24px; word-break: break-word; }
+.cp-detail-meta { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px;
+                  font-size: 12px; }
+.cp-detail-meta dt { color: #aaa; margin: 0; }
+.cp-detail-meta dd { margin: 0; }
+.cp-detail-meta .empty { color: #888; font-style: italic; }
+.index-cp-popup .leaflet-popup-content { margin: 8px 10px; font: 12px monospace; }
+.index-cp-popup .name { display: block; font-weight: bold; margin-bottom: 6px; color: #000; }
+.index-cp-popup .go { display: inline-block; padding: 4px 8px; background: #1a73e8;
+                     color: #fff; text-decoration: none; cursor: pointer;
+                     border: none; font: 12px monospace; }
+.index-cp-popup .go:hover { background: #155bbd; }
 #context-menu { position: fixed; background: rgba(0,0,0,0.9); color: #fff;
                 border: 1px solid #fff; font: 12px monospace; z-index: 2500;
                 min-width: 160px; display: flex; flex-direction: column; }
