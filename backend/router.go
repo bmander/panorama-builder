@@ -82,6 +82,12 @@ func (s *Server) spaFallback(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, full)
 		return
 	}
+	// Control-point detail pages live at /cp/<id>; the page reads the id
+	// from location.pathname at startup.
+	if strings.HasPrefix(clean, "/cp/") {
+		http.ServeFile(w, r, filepath.Join(s.staticDir, "cp.html"))
+		return
+	}
 	// Fallback: SPA's index.
 	http.ServeFile(w, r, filepath.Join(s.staticDir, "index.html"))
 }
