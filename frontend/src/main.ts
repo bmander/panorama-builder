@@ -220,9 +220,9 @@ const input = attachInput({
   onPhotoDropped: (tex, blob, aspect, dir, revokeUrl) => {
     void handlers.onPhotoDropped(tex, blob, aspect, dir, revokeUrl);
   },
-  onAddImagePOI: (overlay, u, v) => { void handlers.onAddImagePOI(overlay, u, v, null, null); },
+  onAddImagePOI: (overlay, u, v) => { void handlers.onAddImagePOI(overlay, u, v); },
   onMatchImagePOI: (overlay, u, v, mapPOIId, latlng) => {
-    void handlers.onAddImagePOI(overlay, u, v, mapPOIId, latlng);
+    void handlers.onMatchImagePOI(overlay, u, v, mapPOIId, latlng);
   },
   onShiftWheel: deltaPx => {
     const h = terrain.getCameraHeight();

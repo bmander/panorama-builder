@@ -145,6 +145,10 @@ export interface OverlayManager {
   // backend id rather than scene-graph object identity.
   getOverlayById(id: string): THREE.Group | null;
   getPOIById(id: string): THREE.Mesh | null;
+  // Find the image POI on a given overlay that's anchored to a specific
+  // map POI, or null. Used by the matcher to dedupe re-clicks (one image
+  // POI per (photo, map POI) pair).
+  getPOIOnOverlayByMapPOIId(overlay: THREE.Group, mapPOIId: string): THREE.Mesh | null;
   extractPose(o: THREE.Group, camLoc: LatLng | null): Pose;
   applyPose(o: THREE.Group, pose: Pose): void;
   beginBatch(): void;
@@ -197,8 +201,9 @@ export function createOverlayManager(
   let hoveredOverlay: THREE.Group | null = null;
 
   // Standalone map-POIs (free-floating landmarks). Mutable {id, latlng} pairs.
-  // Selection is mutually exclusive with `selectedPOI` — at most one of the
-  // two is non-null at a time.
+  // selectedMapPOIId is mutually exclusive with selectedPOI — setSelectedPOI
+  // and setSelectedMapPOI clear the other slot. setSelectedPair is the one
+  // exception: the matcher path locks both to the same logical pair.
   const mapPois: { id: string; latlng: LatLng }[] = [];
   let selectedMapPOIId: string | null = null;
 
@@ -478,6 +483,14 @@ export function createOverlayManager(
       }
       return null;
     },
+    getPOIOnOverlayByMapPOIId(overlay, mapPOIId) {
+      const data = overlayData(overlay);
+      if (!data.pois) return null;
+      for (const p of data.pois) {
+        if (poiData(p).mapPOIId === mapPOIId) return p;
+      }
+      return null;
+    },
     extractPose(o, camLoc) {
       const { az, alt } = posToAzAlt(o);
       const data = overlayData(o);
@@ -542,8 +555,13 @@ export function createOverlayManager(
     },
     getSelectedPOI: () => selectedPOI,
     setSelectedPOI(poi) {
-      if (selectedPOI === poi) return;
+      // Mutually exclusive with selectedMapPOIId: clicking an image POI
+      // claims the "primary" selection slot, so any standalone map-POI
+      // selection clears. Linked highlighting still happens via
+      // poiData(poi).mapPOIId in getMapPOIs / applyPOIColors.
+      if (selectedPOI === poi && (poi === null || selectedMapPOIId === null)) return;
       selectedPOI = poi;
+      if (poi !== null) selectedMapPOIId = null;
       applyPOIColors();
       onSelectionChange?.();
     },
@@ -600,8 +618,10 @@ export function createOverlayManager(
     },
     getSelectedMapPOI: () => selectedMapPOIId,
     setSelectedMapPOI(id) {
-      if (selectedMapPOIId === id) return;
+      // Mutually exclusive with selectedPOI — see setSelectedPOI for rationale.
+      if (selectedMapPOIId === id && (id === null || selectedPOI === null)) return;
       selectedMapPOIId = id;
+      if (id !== null) selectedPOI = null;
       applyPOIColors();
       onSelectionChange?.();
     },

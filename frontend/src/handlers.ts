@@ -16,7 +16,11 @@ export interface OrchestrationHandlers {
   onSetLocation(loc: LatLng): void;
   onStartProjectHere(loc: LatLng): Promise<void>;
   onPhotoDropped(tex: THREE.Texture, blob: Blob, aspect: number, dir: THREE.Vector3, revokeUrl: () => void): Promise<void>;
-  onAddImagePOI(overlay: THREE.Group, u: number, v: number, mapPOIId: string | null, latlng: LatLng | null): Promise<void>;
+  // Unmatched + POI armed click — always creates a new image POI.
+  onAddImagePOI(overlay: THREE.Group, u: number, v: number): Promise<void>;
+  // Matched click (column hover → photo click). Moves the existing pin if
+  // this overlay already has one anchored to mapPOIId; otherwise creates.
+  onMatchImagePOI(overlay: THREE.Group, u: number, v: number, mapPOIId: string, latlng: LatLng): Promise<void>;
   onAddMapPOI(latlng: LatLng): Promise<void>;
   onAnchorImagePOIByMapClick(handle: THREE.Mesh, latlng: LatLng): Promise<void>;
 }
@@ -89,22 +93,39 @@ export function createOrchestration({
     revokeUrl();
   }
 
-  async function onAddImagePOI(
+  async function createImagePOI(
     overlay: THREE.Group, u: number, v: number, mapPOIId: string | null, latlng: LatLng | null,
-  ): Promise<void> {
+  ): Promise<THREE.Mesh | null> {
     const photoId = overlayData(overlay).id;
     let created;
     try {
       created = await api.createImagePOI(photoId, { u, v, map_poi_id: mapPOIId });
     } catch (err) {
       sync.reportError('add POI', err);
-      return;
+      return null;
     }
     sync.registerImagePOI(created.id, { u, v, map_poi_id: mapPOIId });
     overlays.addPOI(overlay, u, v, { id: created.id, mapPOIId, mapAnchor: latlng });
-    if (mapPOIId !== null) {
-      overlays.setSelectedPair(overlays.getPOIById(created.id), mapPOIId);
+    return overlays.getPOIById(created.id);
+  }
+
+  async function onAddImagePOI(overlay: THREE.Group, u: number, v: number): Promise<void> {
+    await createImagePOI(overlay, u, v, null, null);
+  }
+
+  async function onMatchImagePOI(
+    overlay: THREE.Group, u: number, v: number, mapPOIId: string, latlng: LatLng,
+  ): Promise<void> {
+    // Re-match: move the existing pin instead of stacking a duplicate.
+    // movePOI fires notify(), so the diff path PUTs the new u/v on next flush.
+    const existing = overlays.getPOIOnOverlayByMapPOIId(overlay, mapPOIId);
+    if (existing) {
+      overlays.movePOI(existing, u, v);
+      overlays.setSelectedPair(existing, mapPOIId);
+      return;
     }
+    const created = await createImagePOI(overlay, u, v, mapPOIId, latlng);
+    if (created) overlays.setSelectedPair(created, mapPOIId);
   }
 
   async function onAddMapPOI(latlng: LatLng): Promise<void> {
@@ -152,6 +173,7 @@ export function createOrchestration({
     onStartProjectHere,
     onPhotoDropped,
     onAddImagePOI,
+    onMatchImagePOI,
     onAddMapPOI,
     onAnchorImagePOIByMapClick,
   };
