@@ -139,6 +139,10 @@ export interface OverlayManager {
   // map POI. Called from the orchestration layer after a map POI moves.
   refreshAnchorsForMapPOI(mapPOIId: string, latlng: LatLng | null): void;
   listOverlays(): THREE.Object3D[];
+  // Server-id lookup. The diff path and orchestration handlers both index by
+  // backend id rather than scene-graph object identity.
+  getOverlayById(id: string): THREE.Group | null;
+  getPOIById(id: string): THREE.Mesh | null;
   extractPose(o: THREE.Group, camLoc: LatLng | null): Pose;
   applyPose(o: THREE.Group, pose: Pose): void;
   beginBatch(): void;
@@ -429,6 +433,23 @@ export function createOverlayManager(
       }
     },
     listOverlays: () => overlaysGroup.children,
+    getOverlayById(id) {
+      for (const child of overlaysGroup.children) {
+        const g = child as THREE.Group;
+        if (overlayData(g).id === id) return g;
+      }
+      return null;
+    },
+    getPOIById(id) {
+      for (const child of overlaysGroup.children) {
+        const data = overlayData(child as THREE.Group);
+        if (!data.pois) continue;
+        for (const p of data.pois) {
+          if (poiData(p).id === id) return p;
+        }
+      }
+      return null;
+    },
     extractPose(o, camLoc) {
       const { az, alt } = posToAzAlt(o);
       const data = overlayData(o);

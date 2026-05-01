@@ -13,12 +13,12 @@
 // (single-instance for the page lifetime).
 
 import * as THREE from 'three';
-import type { LatLng } from './types.js';
+import type { LatLng, MapPOIView } from './types.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
 
 // Vertical extent relative to the camera origin: well below ground and well
-// above any plausible landmark. Exported so the matcher's hit-test (in
-// main.ts) can project the same endpoints when computing screen distance.
+// above any plausible landmark. The matcher's hit-test (findHitColumn below)
+// projects the same endpoints when computing screen distance.
 export const COLUMN_Y_MIN_M = -1000;
 export const COLUMN_Y_MAX_M = 5000;
 // Blue is the visual vocabulary for map-POIs; yellow when selected (matches
@@ -109,4 +109,38 @@ export function createMapPoiColumns({ scene, requestRender }: CreateMapPoiColumn
       requestRender();
     },
   };
+}
+
+const _baseProjected = new THREE.Vector3();
+const _topProjected = new THREE.Vector3();
+function ndcSegmentDistance(p: { x: number; y: number }, a: THREE.Vector3, b: THREE.Vector3): number {
+  const abx = b.x - a.x, aby = b.y - a.y;
+  const apx = p.x - a.x, apy = p.y - a.y;
+  const lenSq = abx * abx + aby * aby;
+  const t = lenSq > 0 ? Math.max(0, Math.min(1, (apx * abx + apy * aby) / lenSq)) : 0;
+  return Math.hypot(apx - t * abx, apy - t * aby);
+}
+
+// Pick the closest map-POI column to an NDC point within `hitRadius`. Uses the
+// same Y bounds the columns are rendered at, so visual position matches hit
+// position. Returns null when nothing's in range or when both endpoints are
+// behind the camera (segment is offscreen).
+export function findHitColumn(
+  ndc: { x: number; y: number },
+  hitRadius: number,
+  camera: THREE.Camera,
+  cameraLocation: LatLng,
+  mapPois: readonly MapPOIView[],
+): { id: string; latlng: LatLng } | null {
+  let best: { id: string; latlng: LatLng } | null = null;
+  let bestDist = hitRadius;
+  for (const m of mapPois) {
+    const { x, z } = latLngToCameraRelativeMeters(m.latlng, cameraLocation);
+    _baseProjected.set(x, COLUMN_Y_MIN_M, z).project(camera);
+    _topProjected.set(x, COLUMN_Y_MAX_M, z).project(camera);
+    if (_baseProjected.z > 1 && _topProjected.z > 1) continue;
+    const d = ndcSegmentDistance(ndc, _baseProjected, _topProjected);
+    if (d < bestDist) { bestDist = d; best = { id: m.id, latlng: m.latlng }; }
+  }
+  return best;
 }
