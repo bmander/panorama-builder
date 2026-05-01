@@ -1,7 +1,3 @@
--- One-shot schema for the panorama-builder API. Apply with:
---   psql "$DATABASE_URL" -f schema.sql
--- For the MVP we don't ship migration tooling — re-running this is destructive.
-
 CREATE EXTENSION IF NOT EXISTS postgis;
 
 CREATE TABLE IF NOT EXISTS locations (

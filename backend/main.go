@@ -39,6 +39,10 @@ func main() {
 	}
 	defer pool.Close()
 
+	if err := runMigrations(ctx, pool); err != nil {
+		log.Fatalf("migrations: %v", err)
+	}
+
 	blobs, err := newBlobStore(storageDir)
 	if err != nil {
 		log.Fatalf("storage: %v", err)

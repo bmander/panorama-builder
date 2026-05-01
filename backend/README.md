@@ -13,9 +13,12 @@ Requires Go 1.22+ for the stdlib method-routing mux. First run:
 ```sh
 go mod tidy                                    # fetch pgx/v5 + go.sum
 docker compose up -d                           # postgres + postgis on :5432
-make schema                                    # one-time table creation
 make run                                       # API + SPA on :8080
 ```
+
+Migrations under `migrations/NNNN_description.sql` run automatically at
+startup, tracked in a `schema_migrations` table. To add one, drop a new
+file in that directory with the next version prefix.
 
 Make sure the frontend has been built once: `cd ../frontend && npm install && npm run build`.
 

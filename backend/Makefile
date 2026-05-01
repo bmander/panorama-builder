@@ -1,4 +1,4 @@
-.PHONY: run build fmt vet tidy schema
+.PHONY: run build fmt vet tidy
 
 DATABASE_URL ?= postgres://panorama:panorama@localhost:5432/panorama?sslmode=disable
 
@@ -16,6 +16,3 @@ vet:
 
 tidy:
 	go mod tidy
-
-schema:
-	psql '$(DATABASE_URL)' -f schema.sql

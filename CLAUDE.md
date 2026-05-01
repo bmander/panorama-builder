@@ -46,7 +46,7 @@ Single Go package under `backend/`:
 - `locations.go` — handlers + the cascade-fetch helpers used by the hydrated `GET /locations/{id}`
 - `photos.go` — metadata + pose CRUD plus `PUT/GET /photos/{id}/blob`
 - `map_pois.go`, `image_pois.go` — straightforward CRUD; `image_pois.map_poi_id` is the FK that encodes a "match"
-- `schema.sql` — single-shot table creation (4 tables)
+- `migrations.go` + `migrations/NNNN_*.sql` — embedded migrations applied at startup; tracked in `schema_migrations`
 
 Sole external dep: `github.com/jackc/pgx/v5`. Targets Go 1.22+ for stdlib method-routing.
 
@@ -81,7 +81,6 @@ Sole external dep: `github.com/jackc/pgx/v5`. Targets Go 1.22+ for stdlib method
 - `make run` — `go run .` (defaults to `localhost:5432` panorama/panorama)
 - `make build` — `go build -o bin/panorama-api .`
 - `make fmt` / `make vet` / `make tidy`
-- `make schema` — apply `schema.sql`
 - `docker compose up -d` / `docker compose down` — Postgres + PostGIS lifecycle
 
 ## Don't
@@ -104,8 +103,7 @@ The Go backend serves the frontend on `:8080`, so smoke tests are: bring up the 
 ```sh
 cd backend
 docker compose up -d
-make schema
-make run                                     # API on :8080
+make run                                     # API on :8080 (auto-migrates)
 ```
 
 Smoke-test via `curl` per `backend/README.md`. Tear down with `^C` and `docker compose down`.
