@@ -27,6 +27,9 @@ export interface MapView {
   setMapMeasurements(mapPois: readonly MapMeasurementView[]): void;
   setProjectMarkers(projects: readonly ProjectMarker[]): void;
   setProjectPreview(preview: ProjectPreview | null): void;
+  // Index-view dots: every control point with a location estimate, drawn as
+  // small red markers regardless of which project owns them.
+  setIndexControlPoints(latlngs: readonly LatLng[]): void;
   isVisible(): boolean;
   onShow(): void;
   onHide(): void;
@@ -249,6 +252,12 @@ export function createMapView({
     radius: 4, color: '#ff5050', weight: 1, fillColor: '#ff5050',
     fillOpacity: 0.85, interactive: false,
   } as L.CircleMarkerOptions;
+  let indexControlPoints: readonly LatLng[] = [];
+  const indexCpDotLayers: L.CircleMarker[] = [];
+  const INDEX_CP_DOT_STYLE: L.PathOptions = {
+    radius: 3, color: '#ff5050', weight: 1, fillColor: '#ff5050',
+    fillOpacity: 0.9, interactive: false,
+  } as L.CircleMarkerOptions;
   const GO_POPUP_OPTS: L.PopupOptions = { className: 'project-popup', closeButton: true };
   const goButtonHtml = (label: string): string => `<button type="button" class="go">${label}</button>`;
   function wireGoButton(popup: L.Popup, onClick: () => void): void {
@@ -384,7 +393,15 @@ export function createMapView({
     }
   }
 
-  function redrawAll(): void { redrawCones(); redrawPOIs(); redrawMapPoiAnchors(); redrawProjectPreview(); }
+  function redrawIndexControlPoints(): void {
+    if (!visible) return;
+    while (indexCpDotLayers.length) map.removeLayer(indexCpDotLayers.pop()!);
+    for (const cp of indexControlPoints) {
+      indexCpDotLayers.push(L.circleMarker([cp.lat, cp.lng], INDEX_CP_DOT_STYLE).addTo(map));
+    }
+  }
+
+  function redrawAll(): void { redrawCones(); redrawPOIs(); redrawMapPoiAnchors(); redrawProjectPreview(); redrawIndexControlPoints(); }
 
   function ensureMarker(latlng: L.LatLngExpression): void {
     if (marker) { marker.setLatLng(latlng); return; }
@@ -442,6 +459,10 @@ export function createMapView({
     setProjectPreview(preview: ProjectPreview | null): void {
       projectPreview = preview;
       redrawProjectPreview();
+    },
+    setIndexControlPoints(latlngs: readonly LatLng[]): void {
+      indexControlPoints = latlngs;
+      redrawIndexControlPoints();
     },
     setProjectMarkers(projects: readonly ProjectMarker[]): void {
       const wantedIds = new Set(projects.map(p => p.id));

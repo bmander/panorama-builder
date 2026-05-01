@@ -362,6 +362,19 @@ async function showProjectMarkers(): Promise<void> {
   })));
 }
 
+async function showIndexControlPoints(): Promise<void> {
+  try {
+    const cps = await api.listControlPoints();
+    const dots: LatLng[] = [];
+    for (const cp of cps) {
+      if (cp.est_lat !== null && cp.est_lng !== null) dots.push({ lat: cp.est_lat, lng: cp.est_lng });
+    }
+    mapView.setIndexControlPoints(dots);
+  } catch (err) {
+    console.error('list control points failed:', err);
+  }
+}
+
 async function showProjectPreview(id: string): Promise<void> {
   let data: ApiHydratedLocation;
   try {
@@ -405,6 +418,7 @@ async function bootstrap(): Promise<void> {
     admin.setVisible(true);
   } else {
     void showProjectMarkers();
+    void showIndexControlPoints();
   }
   sync.markLoaded();
   applyLocationGate();
