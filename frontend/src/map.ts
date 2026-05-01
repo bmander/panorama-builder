@@ -31,8 +31,6 @@ export interface CreateMapViewOptions {
   container: HTMLElement;
   onLocationChange?: (loc: LatLng) => void;
   onPOIAnchorClick?: (handle: THREE.Mesh, latlng: LatLng) => void;
-  onPOIAnchorDragged?: (handle: THREE.Mesh, latlng: LatLng, viewerAz: number) => void;
-  onPOIAnchorMarkerClick?: (handle: THREE.Mesh) => void;
   onMapPoiArmedAddClick?: (latlng: LatLng) => void;
   onMapPoiClick?: (id: string) => void;
   onMapPoiDragged?: (id: string, latlng: LatLng) => void;
@@ -153,8 +151,6 @@ export function createMapView({
   container,
   onLocationChange,
   onPOIAnchorClick,
-  onPOIAnchorDragged,
-  onPOIAnchorMarkerClick,
   onMapPoiArmedAddClick,
   onMapPoiClick,
   onMapPoiDragged,
@@ -189,12 +185,10 @@ export function createMapView({
   // setStyle (an SVG attribute write that can trigger layout) when the
   // color actually needs to change.
   const poiSelectedState: boolean[] = [];
+  let mapPoiData: readonly MapPOIView[] = [];
   // Track the last-applied selected state alongside the marker. Calling
   // setIcon() rebuilds the marker's DOM element, which kills any drag in
   // progress, so we only swap when selection actually changes.
-  const anchorMarkers = new Map<THREE.Mesh, { marker: L.Marker; selected: boolean }>();
-  let mapPoiData: readonly MapPOIView[] = [];
-  // Standalone-map-POI markers, keyed by id. Parallel structure to anchorMarkers.
   const mapPoiMarkers = new Map<string, { marker: L.Marker; selected: boolean }>();
   let visible = false;
   let mapPoiArmed = false;
@@ -315,41 +309,6 @@ export function createMapView({
     }
   }
 
-  function redrawAnchors(): void {
-    if (!visible) return;
-    const wanted = new Map<THREE.Mesh, { anchor: LatLng; selected: boolean }>();
-    for (const p of pois) {
-      if (p.mapAnchor) wanted.set(p.handle, { anchor: p.mapAnchor, selected: p.selected });
-    }
-    for (const [handle, entry] of anchorMarkers) {
-      if (!wanted.has(handle)) { map.removeLayer(entry.marker); anchorMarkers.delete(handle); }
-    }
-    for (const [handle, { anchor, selected }] of wanted) {
-      const icon = selected ? ANCHOR_ICON_SELECTED : ANCHOR_ICON;
-      const existing = anchorMarkers.get(handle);
-      if (!existing) {
-        const m = L.marker([anchor.lat, anchor.lng], { draggable: true, icon }).addTo(map);
-        m.on('drag', (e: L.LeafletEvent) => {
-          if (!location) return;
-          const ll = (e.target as L.Marker).getLatLng();
-          const bearing = bearingFromLocation(location, ll);
-          onPOIAnchorDragged?.(handle, ll, bearingToViewerAz(bearing));
-        });
-        m.on('click', (e: L.LeafletMouseEvent) => {
-          onPOIAnchorMarkerClick?.(handle);
-          L.DomEvent.stopPropagation(e);
-        });
-        anchorMarkers.set(handle, { marker: m, selected });
-      } else {
-        existing.marker.setLatLng([anchor.lat, anchor.lng]);
-        if (existing.selected !== selected) {
-          existing.marker.setIcon(icon);
-          existing.selected = selected;
-        }
-      }
-    }
-  }
-
   function redrawMapPoiAnchors(): void {
     if (!visible) return;
     const wanted = new Map<string, MapPOIView>();
@@ -381,7 +340,7 @@ export function createMapView({
     }
   }
 
-  function redrawAll(): void { redrawCones(); redrawPOIs(); redrawAnchors(); redrawMapPoiAnchors(); }
+  function redrawAll(): void { redrawCones(); redrawPOIs(); redrawMapPoiAnchors(); }
 
   function ensureMarker(latlng: L.LatLngExpression): void {
     if (marker) { marker.setLatLng(latlng); return; }
@@ -431,7 +390,7 @@ export function createMapView({
       return bearingToViewerAz(bearingFromLocation(location, latlng));
     },
     setOverlayCones(newCones: Cone[]): void { cones = newCones; redrawCones(); },
-    setPOIBearings(newPOIs: POIBearing[]): void { pois = newPOIs; redrawPOIs(); redrawAnchors(); },
+    setPOIBearings(newPOIs: POIBearing[]): void { pois = newPOIs; redrawPOIs(); },
     setMapPOIs(newMapPOIs: readonly MapPOIView[]): void {
       mapPoiData = newMapPOIs;
       redrawMapPoiAnchors();

@@ -532,8 +532,23 @@ export function createOverlayManager(
     },
     deleteSelectedPOI() {
       if (selectedMapPOIId) {
-        const i = mapPois.findIndex(m => m.id === selectedMapPOIId);
+        const deletedId = selectedMapPOIId;
+        const i = mapPois.findIndex(m => m.id === deletedId);
         if (i >= 0) mapPois.splice(i, 1);
+        // Break the FK on every image POI that referenced this map POI.
+        // Backend cascades ON DELETE SET NULL on its side; the frontend has
+        // to mirror that, otherwise the next sync diff sees stale mapPOIId
+        // and tries to PUT an FK that no longer exists.
+        for (const child of overlaysGroup.children) {
+          const data = overlayData(child as THREE.Group);
+          if (!data.pois) continue;
+          for (const poi of data.pois) {
+            const pd = poiData(poi);
+            if (pd.mapPOIId !== deletedId) continue;
+            pd.mapPOIId = null;
+            pd.mapAnchor = null;
+          }
+        }
         selectedMapPOIId = null;
         onSelectionChange?.();
         notify();
