@@ -63,7 +63,7 @@ export function createSettingsPanel({
 
   sunDateTimeEl.value = formatLocalDateTime(new Date());
 
-  function persist(): void {
+  function persistNow(): void {
     const id = getCurrentLocationId();
     if (!id) return;
     const { azimuth, altitude } = viewer.getAzAlt();
@@ -82,6 +82,20 @@ export function createSettingsPanel({
     };
     savePrefs(id, prefs);
   }
+  // input.ts calls persist() on every pointermove during a pan; debounce
+  // so localStorage isn't hammered at 60 Hz.
+  let persistTimer: number | null = null;
+  function persist(): void {
+    if (persistTimer !== null) return;
+    persistTimer = window.setTimeout(() => {
+      persistTimer = null;
+      persistNow();
+    }, 250);
+  }
+  addEventListener('beforeunload', () => {
+    if (persistTimer !== null) { clearTimeout(persistTimer); persistTimer = null; }
+    persistNow();
+  });
 
   function apply(p: Partial<Prefs>): void {
     if (p.azimuth !== undefined && p.altitude !== undefined) viewer.setAzAlt(p.azimuth, p.altitude);

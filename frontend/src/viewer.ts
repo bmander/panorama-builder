@@ -92,11 +92,11 @@ function makeGridTexture(): HTMLCanvasElement {
 }
 
 export function createViewer({ container }: { container: HTMLElement }): Viewer {
-  // preserveDrawingBuffer prevents the WebGL spec's implicit clear after each
-  // composite — required so dirty-driven rendering doesn't flash an empty canvas
-  // on frames where renderer.render() is skipped.
-  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  // Touch-class GPUs choke on MSAA at retina pixel ratios; downgrade both.
+  const isCoarse = matchMedia('(pointer: coarse)').matches;
+  const dprCap = isCoarse ? 1.5 : 2;
+  const renderer = new THREE.WebGLRenderer({ antialias: !isCoarse });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, dprCap));
   renderer.setSize(innerWidth, innerHeight);
   renderer.domElement.id = 'view';
   container.appendChild(renderer.domElement);
@@ -127,7 +127,7 @@ export function createViewer({ container }: { container: HTMLElement }): Viewer 
   addEventListener('resize', () => {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(devicePixelRatio, dprCap));
     renderer.setSize(innerWidth, innerHeight);
     dirty = true;
   });
@@ -159,7 +159,9 @@ export function createViewer({ container }: { container: HTMLElement }): Viewer 
       dirty = true;
     },
     setFov(fov: number) {
-      camera.fov = THREE.MathUtils.clamp(fov, FOV_MIN, FOV_MAX);
+      const clamped = THREE.MathUtils.clamp(fov, FOV_MIN, FOV_MAX);
+      if (camera.fov === clamped) return;
+      camera.fov = clamped;
       camera.updateProjectionMatrix();
       dirty = true;
     },

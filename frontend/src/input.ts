@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { FOV_MIN, FOV_MAX } from './viewer.js';
 import type { Viewer } from './viewer.js';
 import { ROLE_BODY, ROLE_HANDLE, ROLE_POI, dirFromAzAlt } from './overlay.js';
 import type { OverlayManager } from './overlay.js';
@@ -18,13 +17,21 @@ function isOnEdge(uv: THREE.Vector2): boolean {
 // Discriminated state machine for the active pointer drag. `null` = no drag in
 // progress. Each variant carries exactly the state its handler needs, so
 // pointermove can dispatch on `mode.type` and TS narrows the rest.
+interface PointerPos { x: number; y: number; }
+
 type ModeState =
   | { type: 'pan' }
   | { type: 'move' }
   | { type: 'resize'; dist: number; sizeRad: number }
   | { type: 'rotate'; cx: number; cy: number; startAngle: number; startRoll: number }
   | { type: 'poi-drag'; poi: THREE.Mesh }
+  | { type: 'pinch'; startDist: number; startFov: number; p0: PointerPos; p1: PointerPos }
   | null;
+
+const PINCH_MIN_DIST = 20;
+function pinchDist(a: PointerPos, b: PointerPos): number {
+  return Math.max(Math.hypot(b.x - a.x, b.y - a.y), PINCH_MIN_DIST);
+}
 
 export interface InputController {
   // Toggles the "next click adds a POI" armed state. Click → arm; click again
@@ -97,6 +104,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
 
   let mode: ModeState = null;
   let lastX = 0, lastY = 0;
+  const pointers = new Map<number, PointerPos>();
   let poiArmed = false;
   // The map-POI column under the cursor (if any). Set by pointermove via the
   // host's findColumnAtNDC. While non-null the next click will create a paired
@@ -139,6 +147,14 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
   canvas.addEventListener('pointerdown', (e: PointerEvent) => {
     // Left-click only — right-click goes to the contextmenu listener.
     if (e.button !== 0) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      // Open drag batch (if any) stays open until all fingers lift.
+      const [p0, p1] = [...pointers.values()] as [PointerPos, PointerPos];
+      mode = { type: 'pinch', startDist: pinchDist(p0, p1), startFov: camera.fov, p0, p1 };
+      return;
+    }
+    if (pointers.size > 2) return;
     ndcFromEvent(e);
     raycaster.setFromCamera(ndc, camera);
     const hits = raycastOverlays();
@@ -234,13 +250,25 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
     onPhotoBodyContextMenu(o, bodyHit.uv.x, bodyHit.uv.y, e.clientX, e.clientY);
   });
 
-  const endDrag = (): void => {
+  function endDrag(): void {
     mode = null;
     closeBatch();
-  };
-  canvas.addEventListener('pointerup', endDrag);
-  canvas.addEventListener('pointercancel', endDrag);
-  canvas.addEventListener('lostpointercapture', endDrag);
+  }
+  function onPointerEnd(e: PointerEvent): void {
+    pointers.delete(e.pointerId);
+    // Smooth handoff: when a pinch ends with one finger still down, slide
+    // into pan so the user can continue dragging without re-tapping.
+    if (mode?.type === 'pinch' && pointers.size === 1) {
+      const [remaining] = [...pointers.values()] as [PointerPos];
+      mode = { type: 'pan' };
+      lastX = remaining.x; lastY = remaining.y;
+      return;
+    }
+    if (pointers.size === 0) endDrag();
+  }
+  canvas.addEventListener('pointerup', onPointerEnd);
+  canvas.addEventListener('pointercancel', onPointerEnd);
+  canvas.addEventListener('lostpointercapture', onPointerEnd);
   canvas.addEventListener('pointerleave', () => {
     if (mode) return;
     if (overlays.setHovered(null)) viewer.requestRender();
@@ -248,6 +276,14 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
   });
 
   canvas.addEventListener('pointermove', (e: PointerEvent) => {
+    const tracked = pointers.get(e.pointerId);
+    if (tracked) { tracked.x = e.clientX; tracked.y = e.clientY; }
+    if (mode?.type === 'pinch') {
+      const before = camera.fov;
+      viewer.setFov(mode.startFov * mode.startDist / pinchDist(mode.p0, mode.p1));
+      if (camera.fov !== before) onChange();
+      return;
+    }
     if (!mode) {
       // No drag in progress — update both hover affordances:
       // 1. Map-POI column under cursor → highlights "click here to match."
@@ -339,9 +375,9 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
       onShiftWheel(pxDelta);
       return;
     }
-    camera.fov = THREE.MathUtils.clamp(camera.fov * Math.exp(pxDelta * 0.001), FOV_MIN, FOV_MAX);
-    camera.updateProjectionMatrix();
-    onChange();
+    const before = camera.fov;
+    viewer.setFov(camera.fov * Math.exp(pxDelta * 0.001));
+    if (camera.fov !== before) onChange();
   }, { passive: false });
 
   addEventListener('keydown', (e: KeyboardEvent) => {

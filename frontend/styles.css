@@ -1,5 +1,7 @@
 html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-#view { display: block; cursor: grab; }
+#view { display: block; cursor: grab;
+        touch-action: none; user-select: none; -webkit-user-select: none;
+        overscroll-behavior: none; }
 #view:active { cursor: grabbing; }
 #hud { position: fixed; top: 8px; left: 10px; color: #fff;
        font: 12px monospace; text-shadow: 0 0 3px #000; pointer-events: none; }
