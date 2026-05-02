@@ -532,15 +532,9 @@ export function createMapView({
           continue;
         }
         const m = L.marker([p.latlng.lat, p.latlng.lng]);
-        // Left-click previews the project (cones + linked landmarks). Navigation
-        // moved to right-click to keep the preview a single, non-confirmatory
-        // action — accidentally clicking a marker shouldn't navigate away.
         m.on('click', (e: L.LeafletMouseEvent) => {
           L.DomEvent.stopPropagation(e);
           onProjectMarkerPreview?.(p.id);
-        });
-        m.on('contextmenu', (e: L.LeafletMouseEvent) => {
-          L.DomEvent.preventDefault(e.originalEvent);
           const popupHtml = `<span class="name">${escapeHtml(p.label)}</span>`
             + goButtonHtml('Go to project →');
           const popup = L.popup(GO_POPUP_OPTS)
@@ -548,6 +542,10 @@ export function createMapView({
             .setContent(popupHtml)
             .openOn(map);
           wireGoButton(popup, () => onProjectMarkerOpen?.(p.id));
+        });
+        m.on('contextmenu', (e: L.LeafletMouseEvent) => {
+          L.DomEvent.preventDefault(e.originalEvent);
+          L.DomEvent.stopPropagation(e);
         });
         m.addTo(map);
         projectMarkers.set(p.id, m);
