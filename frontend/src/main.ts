@@ -9,7 +9,8 @@ import { createTerrainView } from './terrain.js';
 import { createSunMarker } from './sun-marker.js';
 import { createControlPointColumns, findHitColumn } from './map-poi-columns.js';
 import type { ControlPointColumn } from './map-poi-columns.js';
-import { cpHref, getElement, overlayData, poiData } from './types.js';
+import { cpHref, FOCUS_QUERY_PARAM, getElement, overlayData, poiData, stationHref } from './types.js';
+import { vecToAzAlt } from './geo.js';
 import type { LatLng } from './types.js';
 import * as api from './api.js';
 import type { ApiControlPoint, ApiHydratedStation, ApiStation } from './api.js';
@@ -33,6 +34,12 @@ function parseStationIdFromURL(): string | null {
 }
 const currentStationId: string | null = parseStationIdFromURL();
 const getCurrentStationId = (): string | null => currentStationId;
+
+const FOCUS_RE = /^[A-Z2-7]{13}$/;
+const focusImageMeasurementId: string | null = (() => {
+  const id = new URLSearchParams(location.search).get(FOCUS_QUERY_PARAM);
+  return id && FOCUS_RE.test(id) ? id : null;
+})();
 
 // Index mode (no station in URL) hides the station-scoped chrome — the
 // upper-right buttons + tabs only make sense once a station is loaded.
@@ -233,7 +240,7 @@ const mapView = createMapView({
     overlays.withBatch(() => { overlays.setMapMeasurementLatLng(id, latlng); });
   },
   onMapPoiArmedChange: armed => { addPoiBtnEl.classList.toggle('armed', armed); },
-  onStationMarkerOpen: id => { location.assign('/' + id); },
+  onStationMarkerOpen: id => { location.assign(stationHref(id)); },
   onStationMarkerPreview: id => { void showStationPreview(id); },
   onStartStationHere: loc => { startStationModal.open(loc); },
   onControlPointSolveLocation: id => { void solveAndPersistControlPointLocation(id); },
@@ -488,6 +495,19 @@ async function showStationPreview(id: string): Promise<void> {
   });
 }
 
+const FOCUS_FOV_DEG = 25;
+const focusScratch = new THREE.Vector3();
+function focusCameraOnImageMeasurement(id: string): boolean {
+  const handle = overlays.getImageMeasurementById(id);
+  if (!handle) return false;
+  handle.getWorldPosition(focusScratch);
+  const { az, alt } = vecToAzAlt(focusScratch.x, focusScratch.y, focusScratch.z);
+  viewer.setAzAlt(az, alt);
+  viewer.setFov(FOCUS_FOV_DEG);
+  overlays.setSelectedImageMeasurement(handle);
+  return true;
+}
+
 async function bootstrap(): Promise<void> {
   if (currentStationId) {
     await hydrateFromAPI(currentStationId);
@@ -498,6 +518,15 @@ async function bootstrap(): Promise<void> {
     overlays.setSelectedImageMeasurement(null);
     overlays.setSelectedMapMeasurement(null);
     admin.setVisible(true);
+    if (focusImageMeasurementId) {
+      // Run after prefs.apply so the focus override wins, and force the 360°
+      // tab since the focus is a viewer-space bearing.
+      if (focusCameraOnImageMeasurement(focusImageMeasurementId)) {
+        viewTabs.setMode('360');
+      } else {
+        console.warn('focus image measurement not found:', focusImageMeasurementId);
+      }
+    }
   } else {
     void showStationMarkers();
     void showIndexControlPoints();

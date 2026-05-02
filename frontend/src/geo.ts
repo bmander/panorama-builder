@@ -41,3 +41,14 @@ export function groundDistance(a: LatLng, b: LatLng): number {
 // Viewer-azimuth (CCW from −Z) ↔ compass bearing (CW from N) conversions.
 export const viewerAzToBearing: (az: number) => number = az => -az * 180 / Math.PI;
 export const bearingToViewerAz: (bDeg: number) => number = bDeg => -bDeg * Math.PI / 180;
+
+// Direction from origin to (x, y, z) in viewer frame (CCW from −Z, +Y up)
+// → { az, alt }. Zero-length input returns {0, 0}; the y/len ratio is clamped
+// so float drift doesn't NaN through asin.
+export function vecToAzAlt(x: number, y: number, z: number): { az: number; alt: number } {
+  const len = Math.hypot(x, y, z);
+  return {
+    az: Math.atan2(-x, -z),
+    alt: len === 0 ? 0 : Math.asin(Math.max(-1, Math.min(1, y / len))),
+  };
+}

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { vecToAzAlt } from './geo.js';
 import {
   lineMat,
   meshMat,
@@ -84,10 +85,7 @@ export function dirFromAzAlt(az: number, alt: number): THREE.Vector3 {
 }
 
 function posToAzAlt(o: THREE.Object3D): { az: number; alt: number } {
-  return {
-    az: Math.atan2(-o.position.x, -o.position.z),
-    alt: Math.asin(o.position.y / OVERLAY_R),
-  };
+  return vecToAzAlt(o.position.x, o.position.y, o.position.z);
 }
 
 export interface AddPhotoOptions {

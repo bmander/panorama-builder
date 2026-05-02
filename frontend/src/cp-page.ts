@@ -1,5 +1,5 @@
 import * as api from './api.js';
-import { formatLocalDateTime, getElement } from './types.js';
+import { formatLocalDateTime, getElement, stationHref } from './types.js';
 
 const CP_ID_RE = /^\/cp\/([A-Z2-7]{13})$/;
 
@@ -189,9 +189,9 @@ function attachDeleteButton(cp: api.ApiControlPoint, obsCount: number): void {
   });
 }
 
-function stationLink(stationId: string, stationName: string | null): HTMLAnchorElement {
+function stationLink(stationId: string, stationName: string | null, focusImageId?: string): HTMLAnchorElement {
   const a = document.createElement('a');
-  a.href = `/${stationId}`;
+  a.href = stationHref(stationId, focusImageId);
   a.textContent = stationName ?? `(untitled ${stationId.slice(0, 6)})`;
   return a;
 }
@@ -200,7 +200,7 @@ type ObservationKind = 'map' | 'image';
 
 function appendObservation(
   list: HTMLElement, kind: ObservationKind, metaText: string,
-  locationId: string, locationName: string | null,
+  stationId: string, stationName: string | null, focusImageId?: string,
 ): void {
   const li = document.createElement('li');
   const kindEl = document.createElement('span');
@@ -209,7 +209,7 @@ function appendObservation(
   const meta = document.createElement('span');
   meta.className = 'meta';
   meta.textContent = `${metaText} in `;
-  li.append(kindEl, meta, stationLink(locationId, locationName));
+  li.append(kindEl, meta, stationLink(stationId, stationName, focusImageId));
   list.appendChild(li);
 }
 
@@ -229,7 +229,7 @@ function renderObservations(obs: api.ApiControlPointObservations): void {
   }
   for (const m of obs.image_measurements) {
     appendObservation(list, 'image', `(u=${m.u.toFixed(2)}, v=${m.v.toFixed(2)})`,
-      m.station_id, m.station_name);
+      m.station_id, m.station_name, m.id);
   }
 }
 
