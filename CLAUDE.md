@@ -7,7 +7,7 @@ Notes for future sessions in this repo.
 Monorepo with two top-level dirs:
 
 - **`frontend/`** — TypeScript frontend. Source under `frontend/src/`; `tsc` output lands in `frontend/build/` (gitignored); `frontend/index.html` loads `build/main.js`. Loads Three.js + Leaflet via importmap from unpkg — **no bundler, no dev server, no test suite, by design**.
-- **`backend/`** — Go HTTP API backed by Postgres + PostGIS. Also serves the frontend static files (`STATIC_DIR=../frontend` by default; SPA fallback for `/<location-id>` routes). Stores locations, photos with embedded pose, map POIs, image POIs (which optionally reference a map POI to encode a "match"). Single binary, no framework. Runs locally via `docker compose` for the DB.
+- **`backend/`** — Go HTTP API backed by Postgres + PostGIS. Also serves the frontend static files (`STATIC_DIR=../frontend` by default; SPA fallback for `/<station-id>` routes). Stores stations (camera setup points), photos with embedded pose, map measurements, image measurements (which optionally reference a control point to encode a "match"). Single binary, no framework. Runs locally via `docker compose` for the DB.
 
 ## Frontend architecture
 
@@ -25,30 +25,30 @@ Factory functions, not classes. Each module exports a `createX({...}): X` factor
 - `solver.ts` — Gauss-Newton pose solver (no DOM, no Three)
 - `geo.ts` — bearing / distance / `latLngToCameraRelativeMeters` / `M_PER_DEG_LAT`
 - `api.ts` — typed `fetch` wrappers around the backend (`/api/*`); plus `photoBlobUrl(id)` for `TextureLoader.load`
-- `prefs.ts` — localStorage-backed per-location view state (azimuth, fov, terrain mode, etc.)
+- `prefs.ts` — localStorage-backed per-station view state (azimuth, fov, terrain mode, etc.)
 - `ui.ts` — tabs, HUD, `triggerDownload`
 - `main.ts` — wires everything; URL parsing, hydrate from API, diff-based sync via `flushSync`, async create handlers
 - `types.ts` — cross-cutting types **and** small shared helpers (`overlayData`, `poiData`, `meshMat`, `lineMat`, `getRole`, `getElement`, `Mutable<T>`)
 
-`main.ts` owns the solve loop. `runSolve()` is the single re-entrancy guard around `solveAllPhotos()`. The 360° tab is gated on `mapView.getLocation() !== null` via `applyLocationGate()`. The active project is identified by URL path `/<13-char-id>`; visiting `/` is the empty state.
+`main.ts` owns the solve loop. `runSolve()` is the single re-entrancy guard around `solveAllPhotos()`. The 360° tab is gated on `mapView.getLocation() !== null` via `applyLocationGate()`. The active station is identified by URL path `/<13-char-id>`; visiting `/` is the empty state.
 
 ## Backend architecture
 
 Single Go package under `backend/`:
 
 - `main.go` — `Server` struct, env parsing, signal-aware shutdown
-- `router.go` — stdlib mux (`mux.HandleFunc("POST /locations/{id}/photos", ...)`) + `/healthz`
+- `router.go` — stdlib mux (`mux.HandleFunc("POST /stations/{id}/photos", ...)`) + `/healthz`
 - `db.go` — pgxpool init + ping
 - `storage.go` — disk blob helpers (`STORAGE_DIR/photos/<id>`, with `errPayloadTooLarge` short-circuit)
 - `ids.go` — 13-char base32 IDs from `crypto/rand`; `validID` regex
 - `cors.go` — tiny CORS middleware
 - `http.go` — `writeJSON` / `writeError` / `parseJSON` / `requireID` + range checks (`validLat`, `validLng`, `validUV`)
-- `locations.go` — handlers + the cascade-fetch helpers used by the hydrated `GET /locations/{id}`
+- `stations.go` — handlers + the cascade-fetch helpers used by the hydrated `GET /stations/{id}`
 - `photos.go` — metadata + pose CRUD plus `PUT/GET /photos/{id}/blob`
-- `map_pois.go`, `image_pois.go` — straightforward CRUD; `image_pois.map_poi_id` is the FK that encodes a "match"
+- `map_measurements.go`, `image_measurements.go` — straightforward CRUD; `image_measurements.control_point_id` is the FK that encodes a "match"
 - `migrations.go` + `migrations/NNNN_*.sql` — embedded migrations applied at startup; tracked in `schema_migrations`
 - `types.gen.go` — generated from `../openapi.yaml` (the API contract); regenerate via `make generate`. Mirror file on the frontend is `frontend/src/api-types.gen.ts`
-- Domain vocabulary: **control points** (cross-project landmarks with latent estimated locations), **map measurements** (per-project ground-truth observations on the map; formerly "map POI"), **image measurements** (reticle anchors on photos; formerly "image POI"). Both measurement types FK to a control point
+- Domain vocabulary: **stations** (camera setup points; formerly "locations"/"projects"), **control points** (cross-station landmarks with latent estimated locations), **map measurements** (per-station ground-truth observations on the map; formerly "map POI"), **image measurements** (reticle anchors on photos; formerly "image POI"). Both measurement types FK to a control point
 
 Sole external dep: `github.com/jackc/pgx/v5`. Targets Go 1.22+ for stdlib method-routing.
 

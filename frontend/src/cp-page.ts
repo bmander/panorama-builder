@@ -189,10 +189,10 @@ function attachDeleteButton(cp: api.ApiControlPoint, obsCount: number): void {
   });
 }
 
-function projectLink(locationId: string, locationName: string | null): HTMLAnchorElement {
+function stationLink(stationId: string, stationName: string | null): HTMLAnchorElement {
   const a = document.createElement('a');
-  a.href = `/${locationId}`;
-  a.textContent = locationName ?? `(untitled ${locationId.slice(0, 6)})`;
+  a.href = `/${stationId}`;
+  a.textContent = stationName ?? `(untitled ${stationId.slice(0, 6)})`;
   return a;
 }
 
@@ -209,7 +209,7 @@ function appendObservation(
   const meta = document.createElement('span');
   meta.className = 'meta';
   meta.textContent = `${metaText} in `;
-  li.append(kindEl, meta, projectLink(locationId, locationName));
+  li.append(kindEl, meta, stationLink(locationId, locationName));
   list.appendChild(li);
 }
 
@@ -225,11 +225,11 @@ function renderObservations(obs: api.ApiControlPointObservations): void {
   }
   for (const m of obs.map_measurements) {
     appendObservation(list, 'map', `${m.lat.toFixed(5)}, ${m.lng.toFixed(5)}`,
-      m.location_id, m.location_name);
+      m.station_id, m.station_name);
   }
   for (const m of obs.image_measurements) {
     appendObservation(list, 'image', `(u=${m.u.toFixed(2)}, v=${m.v.toFixed(2)})`,
-      m.location_id, m.location_name);
+      m.station_id, m.station_name);
   }
 }
 

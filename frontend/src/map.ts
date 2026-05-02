@@ -5,15 +5,15 @@ import { cpHref } from './types.js';
 import type { Cone, LatLng, MapMeasurementView, ImageMeasurementBearing } from './types.js';
 import { TILE_PX, fetchTileElevations, tileYToLat } from './dem.js';
 
-export interface ProjectMarker {
+export interface StationMarker {
   id: string;
   latlng: LatLng;
   label: string;
 }
 
-// Fetched-on-click summary of a project, used at the index view to preview
+// Fetched-on-click summary of a station, used at the index view to preview
 // what's inside without navigating into it.
-export interface ProjectPreview {
+export interface StationPreview {
   origin: LatLng;
   cones: Cone[];
   linkedMapPOIs: readonly LatLng[];
@@ -32,10 +32,10 @@ export interface MapView {
   setOverlayCones(newCones: Cone[]): void;
   setImageMeasurementBearings(newPOIs: ImageMeasurementBearing[]): void;
   setMapMeasurements(mapPois: readonly MapMeasurementView[]): void;
-  setProjectMarkers(projects: readonly ProjectMarker[]): void;
-  setProjectPreview(preview: ProjectPreview | null): void;
+  setStationMarkers(stations: readonly StationMarker[]): void;
+  setStationPreview(preview: StationPreview | null): void;
   // Index-view dots: every control point with a location estimate, drawn as
-  // small red markers regardless of which project owns them. Click → popup
+  // small red markers regardless of which station owns them. Click → popup
   // with a link to the CP's detail page.
   setIndexControlPoints(cps: readonly IndexControlPoint[]): void;
   isVisible(): boolean;
@@ -54,9 +54,9 @@ export interface CreateMapViewOptions {
   onMapPoiArmedAddClick?: (latlng: LatLng) => void;
   onMapPoiClick?: (id: string) => void;
   onMapPoiDragged?: (id: string, latlng: LatLng) => void;
-  onProjectMarkerOpen?: (id: string) => void;
-  onProjectMarkerPreview?: (id: string) => void;
-  onStartProjectHere?: (latlng: LatLng) => void;
+  onStationMarkerOpen?: (id: string) => void;
+  onStationMarkerPreview?: (id: string) => void;
+  onStartStationHere?: (latlng: LatLng) => void;
   onControlPointSolveLocation?: (id: string) => void;
   onShowRefresh?: () => void;
   onMapPoiArmedChange?: (armed: boolean) => void;
@@ -176,9 +176,9 @@ export function createMapView({
   onMapPoiArmedAddClick,
   onMapPoiClick,
   onMapPoiDragged,
-  onProjectMarkerOpen,
-  onProjectMarkerPreview,
-  onStartProjectHere,
+  onStationMarkerOpen,
+  onStationMarkerPreview,
+  onStartStationHere,
   onControlPointSolveLocation,
   onShowRefresh,
   onMapPoiArmedChange,
@@ -250,12 +250,12 @@ export function createMapView({
     iconSize: [36, 36],
     iconAnchor: [18, 18],
   });
-  const projectMarkers = new Map<string, L.Marker>();
-  // Preview overlay drawn at the index view when a project marker is clicked.
+  const stationMarkers = new Map<string, L.Marker>();
+  // Preview overlay drawn at the index view when a station marker is clicked.
   // Distinct from the live cone/POI layers (which are driven by the loaded
-  // project's overlay manager) since previews are fed from a separate API
-  // fetch and rendered relative to the project marker's own location.
-  let projectPreview: ProjectPreview | null = null;
+  // station's overlay manager) since previews are fed from a separate API
+  // fetch and rendered relative to the station marker's own location.
+  let stationPreview: StationPreview | null = null;
   const previewConeLayers: L.Polygon[] = [];
   const previewDotLayers: L.CircleMarker[] = [];
   const PREVIEW_DOT_STYLE: L.PathOptions = {
@@ -269,7 +269,7 @@ export function createMapView({
     fillOpacity: 0.9,
   } as L.CircleMarkerOptions;
   const INDEX_CP_POPUP_OPTS: L.PopupOptions = { className: 'index-cp-popup', closeButton: true };
-  const GO_POPUP_OPTS: L.PopupOptions = { className: 'project-popup', closeButton: true };
+  const GO_POPUP_OPTS: L.PopupOptions = { className: 'station-popup', closeButton: true };
   const goButtonHtml = (label: string): string => `<button type="button" class="go">${label}</button>`;
   const solveButtonHtml = (): string => '<button type="button" class="go solve-location">Solve location</button>';
   function wireGoButton(popup: L.Popup, onClick: () => void): void {
@@ -403,14 +403,14 @@ export function createMapView({
     }
   }
 
-  function redrawProjectPreview(): void {
+  function redrawStationPreview(): void {
     if (!visible) return;
     while (previewConeLayers.length) map.removeLayer(previewConeLayers.pop()!);
     while (previewDotLayers.length) map.removeLayer(previewDotLayers.pop()!);
-    if (!projectPreview) return;
+    if (!stationPreview) return;
     const distM = screenDiagonalMeters();
-    const origin = projectPreview.origin;
-    for (const c of projectPreview.cones) {
+    const origin = stationPreview.origin;
+    for (const c of stationPreview.cones) {
       const ptL = destination(origin, viewerAzToBearing(c.azL), distM);
       const ptR = destination(origin, viewerAzToBearing(c.azR), distM);
       const poly = L.polygon([
@@ -420,7 +420,7 @@ export function createMapView({
       ], CONE_STYLE).addTo(map);
       previewConeLayers.push(poly);
     }
-    for (const dot of projectPreview.linkedMapPOIs) {
+    for (const dot of stationPreview.linkedMapPOIs) {
       previewDotLayers.push(L.circleMarker([dot.lat, dot.lng], PREVIEW_DOT_STYLE).addTo(map));
     }
   }
@@ -458,7 +458,7 @@ export function createMapView({
     }
   }
 
-  function redrawAll(): void { redrawCones(); redrawPOIs(); redrawMapPoiAnchors(); redrawProjectPreview(); redrawIndexControlPoints(); }
+  function redrawAll(): void { redrawCones(); redrawPOIs(); redrawMapPoiAnchors(); redrawStationPreview(); redrawIndexControlPoints(); }
 
   function ensureMarker(latlng: L.LatLngExpression): void {
     if (marker) { marker.setLatLng(latlng); return; }
@@ -486,9 +486,9 @@ export function createMapView({
     const latlng: LatLng = { lat: e.latlng.lat, lng: e.latlng.lng };
     const popup = L.popup(GO_POPUP_OPTS)
       .setLatLng(e.latlng)
-      .setContent(goButtonHtml('Start project here'))
+      .setContent(goButtonHtml('Start station here'))
       .openOn(map);
-    wireGoButton(popup, () => onStartProjectHere?.(latlng));
+    wireGoButton(popup, () => onStartStationHere?.(latlng));
   });
   map.on('zoomend', redrawAll);
   map.on('resize', redrawAll);
@@ -513,21 +513,21 @@ export function createMapView({
       mapPoiData = newMapPOIs;
       redrawMapPoiAnchors();
     },
-    setProjectPreview(preview: ProjectPreview | null): void {
-      projectPreview = preview;
-      redrawProjectPreview();
+    setStationPreview(preview: StationPreview | null): void {
+      stationPreview = preview;
+      redrawStationPreview();
     },
     setIndexControlPoints(cps: readonly IndexControlPoint[]): void {
       indexControlPoints = cps;
       redrawIndexControlPoints();
     },
-    setProjectMarkers(projects: readonly ProjectMarker[]): void {
-      const wantedIds = new Set(projects.map(p => p.id));
-      for (const [id, m] of projectMarkers) {
-        if (!wantedIds.has(id)) { map.removeLayer(m); projectMarkers.delete(id); }
+    setStationMarkers(stations: readonly StationMarker[]): void {
+      const wantedIds = new Set(stations.map(p => p.id));
+      for (const [id, m] of stationMarkers) {
+        if (!wantedIds.has(id)) { map.removeLayer(m); stationMarkers.delete(id); }
       }
-      for (const p of projects) {
-        const existing = projectMarkers.get(p.id);
+      for (const p of stations) {
+        const existing = stationMarkers.get(p.id);
         if (existing) {
           existing.setLatLng([p.latlng.lat, p.latlng.lng]);
           continue;
@@ -535,21 +535,21 @@ export function createMapView({
         const m = L.marker([p.latlng.lat, p.latlng.lng]);
         m.on('click', (e: L.LeafletMouseEvent) => {
           L.DomEvent.stopPropagation(e);
-          onProjectMarkerPreview?.(p.id);
+          onStationMarkerPreview?.(p.id);
           const popupHtml = `<span class="name">${escapeHtml(p.label)}</span>`
-            + goButtonHtml('Go to project →');
+            + goButtonHtml('Go to station →');
           const popup = L.popup(GO_POPUP_OPTS)
             .setLatLng([p.latlng.lat, p.latlng.lng])
             .setContent(popupHtml)
             .openOn(map);
-          wireGoButton(popup, () => onProjectMarkerOpen?.(p.id));
+          wireGoButton(popup, () => onStationMarkerOpen?.(p.id));
         });
         m.on('contextmenu', (e: L.LeafletMouseEvent) => {
           L.DomEvent.preventDefault(e.originalEvent);
           L.DomEvent.stopPropagation(e);
         });
         m.addTo(map);
-        projectMarkers.set(p.id, m);
+        stationMarkers.set(p.id, m);
       }
     },
     isVisible: () => visible,

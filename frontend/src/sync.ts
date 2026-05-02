@@ -42,12 +42,12 @@ export interface SyncManager {
 
 export interface CreateSyncManagerOptions {
   overlays: OverlayManager;
-  getCurrentLocationId: () => string | null;
+  getCurrentStationId: () => string | null;
   getCameraLocation: () => LatLng | null;
 }
 
 export function createSyncManager({
-  overlays, getCurrentLocationId, getCameraLocation,
+  overlays, getCurrentStationId, getCameraLocation,
 }: CreateSyncManagerOptions): SyncManager {
   interface SyncedLocation { lat: number; lng: number; }
   const synced = {
@@ -128,14 +128,14 @@ export function createSyncManager({
   }
 
   async function flushOnce(): Promise<void> {
-    const locId = getCurrentLocationId();
+    const locId = getCurrentStationId();
     if (!locId) return;
     const tasks: Promise<unknown>[] = [];
 
     const camLoc = getCameraLocation();
     if (camLoc && (synced.location?.lat !== camLoc.lat || synced.location.lng !== camLoc.lng)) {
       const nextLoc = { lat: camLoc.lat, lng: camLoc.lng };
-      tasks.push(api.updateLocation(locId, camLoc).then(() => { synced.location = nextLoc; }));
+      tasks.push(api.updateStation(locId, camLoc).then(() => { synced.location = nextLoc; }));
     }
 
     const currentPhotos = new Map<string, SyncedPhoto>();

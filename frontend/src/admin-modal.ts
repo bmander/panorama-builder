@@ -1,4 +1,4 @@
-// Admin modal: a dialog with a single "Delete project" affordance, gated by
+// Admin modal: a dialog with a single "Delete station" affordance, gated by
 // confirm() and a button-disabled latch to prevent double-submit.
 
 import * as api from './api.js';
@@ -9,10 +9,10 @@ export interface AdminModal {
 }
 
 export interface CreateAdminModalOptions {
-  getCurrentLocationId: () => string | null;
+  getCurrentStationId: () => string | null;
 }
 
-export function createAdminModal({ getCurrentLocationId }: CreateAdminModalOptions): AdminModal {
+export function createAdminModal({ getCurrentStationId }: CreateAdminModalOptions): AdminModal {
   const adminBtn = getElement<HTMLButtonElement>('admin-btn');
   const adminModalEl = getElement('admin-modal');
   const adminCloseBtn = getElement<HTMLButtonElement>('admin-close');
@@ -27,16 +27,16 @@ export function createAdminModal({ getCurrentLocationId }: CreateAdminModalOptio
     if (e.target === adminModalEl) close();
   });
   adminDeleteBtn.addEventListener('click', () => {
-    const id = getCurrentLocationId();
+    const id = getCurrentStationId();
     if (!id) return;
-    if (!confirm('Delete this project? Photos, POIs, and matches will be removed permanently.')) return;
+    if (!confirm('Delete this station? Photos, POIs, and matches will be removed permanently.')) return;
     adminDeleteBtn.disabled = true;
-    void api.deleteLocation(id)
+    void api.deleteStation(id)
       .then(() => { location.assign('/'); })
       .catch((err: unknown) => {
         adminDeleteBtn.disabled = false;
-        console.error('delete project failed:', err);
-        alert('Could not delete the project.');
+        console.error('delete station failed:', err);
+        alert('Could not delete the station.');
       });
   });
 

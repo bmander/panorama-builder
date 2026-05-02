@@ -1,4 +1,4 @@
-// Wraps the pure pose solver in the project-specific re-entrancy guard,
+// Wraps the pure pose solver in the station-specific re-entrancy guard,
 // scene-graph extraction, and camera-lock state. Callers invoke runSolve()
 // after any mutation that could change anchored-POI residuals.
 

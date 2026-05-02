@@ -1,4 +1,4 @@
-// Settings panel UI controls + per-project view preferences. Owns the DOM
+// Settings panel UI controls + per-station view preferences. Owns the DOM
 // elements under #settings-panel, the settings-btn toggle, the haze-slider's
 // nonlinear mapping, and the persist/apply round-trip with localStorage.
 
@@ -25,7 +25,7 @@ export interface CreateSettingsPanelOptions {
   sunMarker: SunMarker;
   hud: Hud;
   getCameraLocation: () => LatLng | null;
-  getCurrentLocationId: () => string | null;
+  getCurrentStationId: () => string | null;
   getViewTab: () => '360' | 'map';
   refreshMapAnnotationsIfVisible: () => void;
   runSolve: () => void;
@@ -43,7 +43,7 @@ function hazeDensityToSlider(d: number): number {
 
 export function createSettingsPanel({
   viewer, terrain, sunMarker, hud,
-  getCameraLocation, getCurrentLocationId, getViewTab,
+  getCameraLocation, getCurrentStationId, getViewTab,
   refreshMapAnnotationsIfVisible, runSolve, setCameraLocked,
 }: CreateSettingsPanelOptions): SettingsPanel {
   const lockCameraEl = getElement<HTMLInputElement>('lock-camera');
@@ -59,7 +59,7 @@ export function createSettingsPanel({
   sunDateTimeEl.value = formatLocalDateTime(new Date());
 
   function persistNow(): void {
-    const id = getCurrentLocationId();
+    const id = getCurrentStationId();
     if (!id) return;
     const { azimuth, altitude } = viewer.getAzAlt();
     const prefs: Prefs = {

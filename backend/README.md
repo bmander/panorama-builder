@@ -1,10 +1,10 @@
 # panorama-builder API
 
-Minimal Go HTTP service exposing the panorama domain objects (locations,
-photos with embedded pose, map POIs, image POIs) over a JSON API. Backed by
-Postgres + PostGIS for metadata and local disk for photo blobs. Also serves
-the frontend static files (`STATIC_DIR=../frontend` by default) so a single
-`make run` brings up both API and SPA on `:8080`.
+Minimal Go HTTP service exposing the panorama domain objects (stations,
+photos with embedded pose, map measurements, image measurements) over a JSON
+API. Backed by Postgres + PostGIS for metadata and local disk for photo blobs.
+Also serves the frontend static files (`STATIC_DIR=../frontend` by default)
+so a single `make run` brings up both API and SPA on `:8080`.
 
 ## Quick start
 
@@ -27,7 +27,7 @@ committed.
 
 Make sure the frontend has been built once: `cd ../frontend && npm install && npm run build`.
 
-Open <http://localhost:8080>. Setting a location pushes the URL to `/<id>`.
+Open <http://localhost:8080>. Setting a station pushes the URL to `/<id>`.
 
 ## Env vars
 
@@ -48,18 +48,18 @@ falling back to `index.html` (SPA `/<id>` deep-links).
 | Method | Path                                |
 |--------|-------------------------------------|
 | GET    | `/api/healthz`                      |
-| POST   | `/api/locations`                    |
-| GET    | `/api/locations` (`?bbox=minLng,minLat,maxLng,maxLat`) |
-| GET    | `/api/locations/{id}` (hydrated)    |
-| PUT    | `/api/locations/{id}`               |
-| DELETE | `/api/locations/{id}`               |
-| POST   | `/api/locations/{id}/photos`        |
+| POST   | `/api/stations`                     |
+| GET    | `/api/stations` (`?bbox=minLng,minLat,maxLng,maxLat`) |
+| GET    | `/api/stations/{id}` (hydrated)     |
+| PUT    | `/api/stations/{id}`                |
+| DELETE | `/api/stations/{id}`                |
+| POST   | `/api/stations/{id}/photos`         |
 | GET    | `/api/photos/{id}`                  |
 | PUT    | `/api/photos/{id}`                  |
 | DELETE | `/api/photos/{id}`                  |
 | PUT    | `/api/photos/{id}/blob`             |
 | GET    | `/api/photos/{id}/blob`             |
-| POST   | `/api/locations/{id}/map-measurements`   |
+| POST   | `/api/stations/{id}/map-measurements`    |
 | PUT    | `/api/map-measurements/{id}`             |
 | DELETE | `/api/map-measurements/{id}`             |
 | POST   | `/api/photos/{id}/image-measurements`    |
@@ -74,15 +74,15 @@ falling back to `index.html` (SPA `/<id>` deep-links).
 ## Smoke test
 
 ```sh
-LOC=$(curl -sS -X POST http://localhost:8080/api/locations \
-       -H 'Content-Type: application/json' \
-       -d '{"lat":47.607,"lng":-122.335,"name":"Seattle"}' | jq -r .id)
+ST=$(curl -sS -X POST http://localhost:8080/api/stations \
+      -H 'Content-Type: application/json' \
+      -d '{"lat":47.607,"lng":-122.335,"name":"Seattle"}' | jq -r .id)
 
-PHOTO=$(curl -sS -X POST "http://localhost:8080/api/locations/$LOC/photos" \
+PHOTO=$(curl -sS -X POST "http://localhost:8080/api/stations/$ST/photos" \
          -H 'Content-Type: application/json' -d '{"aspect":1.5}' | jq -r .id)
 
 curl -sS -X PUT "http://localhost:8080/api/photos/$PHOTO/blob" \
      -H 'Content-Type: image/jpeg' --data-binary @sample.jpg
 
-curl -sS "http://localhost:8080/api/locations/$LOC" | jq .
+curl -sS "http://localhost:8080/api/stations/$ST" | jq .
 ```

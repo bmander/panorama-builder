@@ -8,7 +8,7 @@ import (
 )
 
 // ControlPoint A real-world landmark with a latent location. May be referenced
-// by image measurements (across photos / projects) and map
+// by image measurements (across photos / stations) and map
 // measurements. The estimated location (est_lat / est_lng /
 // est_alt) is updated by the solver as observations accumulate;
 // for v1 the estimate mirrors any linked map measurement.
@@ -40,22 +40,22 @@ type ControlPointImageObservation struct {
 	Aspect float64 `json:"aspect"`
 
 	// ID 13-character base32 server-assigned id
-	ID ID `json:"id"`
-
-	// LocationID 13-character base32 server-assigned id
-	LocationID   ID      `json:"location_id"`
-	LocationLat  float64 `json:"location_lat"`
-	LocationLng  float64 `json:"location_lng"`
-	LocationName *string `json:"location_name"`
-	PhotoAz      float64 `json:"photo_az"`
+	ID      ID      `json:"id"`
+	PhotoAz float64 `json:"photo_az"`
 
 	// PhotoID 13-character base32 server-assigned id
 	PhotoID   ID      `json:"photo_id"`
 	PhotoRoll float64 `json:"photo_roll"`
 	PhotoTilt float64 `json:"photo_tilt"`
 	SizeRad   float64 `json:"size_rad"`
-	U         float64 `json:"u"`
-	V         float64 `json:"v"`
+
+	// StationID 13-character base32 server-assigned id
+	StationID   ID      `json:"station_id"`
+	StationLat  float64 `json:"station_lat"`
+	StationLng  float64 `json:"station_lng"`
+	StationName *string `json:"station_name"`
+	U           float64 `json:"u"`
+	V           float64 `json:"v"`
 }
 
 // ControlPointMapObservation defines model for ControlPointMapObservation.
@@ -65,9 +65,9 @@ type ControlPointMapObservation struct {
 	Lat float64 `json:"lat"`
 	Lng float64 `json:"lng"`
 
-	// LocationID 13-character base32 server-assigned id
-	LocationID   ID      `json:"location_id"`
-	LocationName *string `json:"location_name"`
+	// StationID 13-character base32 server-assigned id
+	StationID   ID      `json:"station_id"`
+	StationName *string `json:"station_name"`
 }
 
 // ControlPointObservations defines model for ControlPointObservations.
@@ -87,8 +87,8 @@ type ControlPointPatch struct {
 	StartedAt   *time.Time `json:"started_at,omitempty"`
 }
 
-// CreateLocationRequest defines model for CreateLocationRequest.
-type CreateLocationRequest struct {
+// CreateStationRequest defines model for CreateStationRequest.
+type CreateStationRequest struct {
 	Lat  float64 `json:"lat"`
 	Lng  float64 `json:"lng"`
 	Name *string `json:"name,omitempty"`
@@ -104,16 +104,16 @@ type Health struct {
 	Status string `json:"status"`
 }
 
-// HydratedLocation defines model for HydratedLocation.
-type HydratedLocation struct {
-	// ControlPoints Control points reachable from this project — i.e., those
-	// referenced by at least one of this location's measurements.
-	// Other CPs (in other projects) are not included.
+// HydratedStation defines model for HydratedStation.
+type HydratedStation struct {
+	// ControlPoints Control points reachable from this station — i.e., those
+	// referenced by at least one of this station's measurements.
+	// Other CPs (in other stations) are not included.
 	ControlPoints     []ControlPoint     `json:"control_points"`
 	ImageMeasurements []ImageMeasurement `json:"image_measurements"`
-	Location          Location           `json:"location"`
 	MapMeasurements   []MapMeasurement   `json:"map_measurements"`
 	Photos            []Photo            `json:"photos"`
+	Station           Station            `json:"station"`
 }
 
 // ID 13-character base32 server-assigned id
@@ -142,18 +142,6 @@ type ImageMeasurementPatch struct {
 	V              float64 `json:"v"`
 }
 
-// Location defines model for Location.
-type Location struct {
-	CreatedAt time.Time `json:"created_at"`
-
-	// ID 13-character base32 server-assigned id
-	ID        ID        `json:"id"`
-	Lat       float64   `json:"lat"`
-	Lng       float64   `json:"lng"`
-	Name      *string   `json:"name"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
 // MapMeasurement User-asserted ground-truth observation: the user clicked on the
 // map and asserts that some control point is here.
 type MapMeasurement struct {
@@ -165,9 +153,9 @@ type MapMeasurement struct {
 	Lat float64 `json:"lat"`
 	Lng float64 `json:"lng"`
 
-	// LocationID 13-character base32 server-assigned id
-	LocationID ID        `json:"location_id"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	// StationID 13-character base32 server-assigned id
+	StationID ID        `json:"station_id"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // MapMeasurementRequest defines model for MapMeasurementRequest.
@@ -185,12 +173,9 @@ type Photo struct {
 	CreatedAt time.Time `json:"created_at"`
 
 	// ID 13-character base32 server-assigned id
-	ID ID `json:"id"`
-
-	// LocationID 13-character base32 server-assigned id
-	LocationID ID      `json:"location_id"`
-	MimeType   *string `json:"mime_type"`
-	Opacity    float64 `json:"opacity"`
+	ID       ID      `json:"id"`
+	MimeType *string `json:"mime_type"`
+	Opacity  float64 `json:"opacity"`
 
 	// PhotoAz viewer-azimuth radians (CCW from -Z)
 	PhotoAz float64 `json:"photo_az"`
@@ -203,7 +188,10 @@ type Photo struct {
 	SizeBytes *int64  `json:"size_bytes"`
 
 	// SizeRad horizontal angular subtense radians
-	SizeRad   float64   `json:"size_rad"`
+	SizeRad float64 `json:"size_rad"`
+
+	// StationID 13-character base32 server-assigned id
+	StationID ID        `json:"station_id"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -217,20 +205,32 @@ type PhotoPosePatch struct {
 	SizeRad   float64  `json:"size_rad"`
 }
 
+// Station defines model for Station.
+type Station struct {
+	CreatedAt time.Time `json:"created_at"`
+
+	// ID 13-character base32 server-assigned id
+	ID        ID        `json:"id"`
+	Lat       float64   `json:"lat"`
+	Lng       float64   `json:"lng"`
+	Name      *string   `json:"name"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // ControlPointID 13-character base32 server-assigned id
 type ControlPointID = ID
 
 // ImageMeasurementID 13-character base32 server-assigned id
 type ImageMeasurementID = ID
 
-// LocationID 13-character base32 server-assigned id
-type LocationID = ID
-
 // MapMeasurementID 13-character base32 server-assigned id
 type MapMeasurementID = ID
 
 // PhotoID 13-character base32 server-assigned id
 type PhotoID = ID
+
+// StationID 13-character base32 server-assigned id
+type StationID = ID
 
 // BadRequest defines model for BadRequest.
 type BadRequest = Error
@@ -246,11 +246,11 @@ type ListControlPointsParams struct {
 	Bbox *string `form:"bbox,omitempty" json:"bbox,omitempty"`
 }
 
-// ListLocationsParams defines parameters for ListLocations.
-type ListLocationsParams struct {
+// ListStationsParams defines parameters for ListStations.
+type ListStationsParams struct {
 	// Bbox Bounding box as `minLng,minLat,maxLng,maxLat` (four
 	// comma-separated floats). When omitted, returns up to 1000
-	// locations ordered by created_at DESC.
+	// stations ordered by created_at DESC.
 	Bbox *string `form:"bbox,omitempty" json:"bbox,omitempty"`
 }
 
@@ -263,18 +263,6 @@ type UpdateControlPointJSONRequestBody = ControlPointPatch
 // UpdateImageMeasurementJSONRequestBody defines body for UpdateImageMeasurement for application/json ContentType.
 type UpdateImageMeasurementJSONRequestBody = ImageMeasurementPatch
 
-// CreateLocationJSONRequestBody defines body for CreateLocation for application/json ContentType.
-type CreateLocationJSONRequestBody = CreateLocationRequest
-
-// UpdateLocationJSONRequestBody defines body for UpdateLocation for application/json ContentType.
-type UpdateLocationJSONRequestBody = CreateLocationRequest
-
-// CreateMapMeasurementJSONRequestBody defines body for CreateMapMeasurement for application/json ContentType.
-type CreateMapMeasurementJSONRequestBody = MapMeasurementRequest
-
-// CreatePhotoJSONRequestBody defines body for CreatePhoto for application/json ContentType.
-type CreatePhotoJSONRequestBody = PhotoPosePatch
-
 // UpdateMapMeasurementJSONRequestBody defines body for UpdateMapMeasurement for application/json ContentType.
 type UpdateMapMeasurementJSONRequestBody = MapMeasurementRequest
 
@@ -283,3 +271,15 @@ type UpdatePhotoJSONRequestBody = PhotoPosePatch
 
 // CreateImageMeasurementJSONRequestBody defines body for CreateImageMeasurement for application/json ContentType.
 type CreateImageMeasurementJSONRequestBody = ImageMeasurementPatch
+
+// CreateStationJSONRequestBody defines body for CreateStation for application/json ContentType.
+type CreateStationJSONRequestBody = CreateStationRequest
+
+// UpdateStationJSONRequestBody defines body for UpdateStation for application/json ContentType.
+type UpdateStationJSONRequestBody = CreateStationRequest
+
+// CreateMapMeasurementJSONRequestBody defines body for CreateMapMeasurement for application/json ContentType.
+type CreateMapMeasurementJSONRequestBody = MapMeasurementRequest
+
+// CreatePhotoJSONRequestBody defines body for CreatePhoto for application/json ContentType.
+type CreatePhotoJSONRequestBody = PhotoPosePatch

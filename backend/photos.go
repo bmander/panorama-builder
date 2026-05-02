@@ -12,20 +12,20 @@ import (
 
 // Column lists for the Photo row, kept in one place so the SELECT/RETURNING
 // clauses and the matching scanPhoto helper can't drift apart.
-const photoCols = `id, location_id, blob_path, mime_type, size_bytes, aspect,
+const photoCols = `id, station_id, blob_path, mime_type, size_bytes, aspect,
 		photo_az, photo_tilt, photo_roll, size_rad, opacity, created_at, updated_at`
 
 func scanPhoto(row pgx.Row) (Photo, error) {
 	var p Photo
-	err := row.Scan(&p.ID, &p.LocationID, &p.BlobPath, &p.MimeType, &p.SizeBytes,
+	err := row.Scan(&p.ID, &p.StationID, &p.BlobPath, &p.MimeType, &p.SizeBytes,
 		&p.Aspect, &p.PhotoAz, &p.PhotoTilt, &p.PhotoRoll, &p.SizeRad, &p.Opacity,
 		&p.CreatedAt, &p.UpdatedAt)
 	return p, err
 }
 
 func (s *Server) postPhoto(w http.ResponseWriter, r *http.Request) {
-	locID := requireID(w, r, "id")
-	if locID == "" {
+	stationID := requireID(w, r, "id")
+	if stationID == "" {
 		return
 	}
 	var req PhotoPosePatch
@@ -45,10 +45,10 @@ func (s *Server) postPhoto(w http.ResponseWriter, r *http.Request) {
 	if sizeRad == 0 {
 		sizeRad = 0.5236 // ~30 degrees
 	}
-	q := `INSERT INTO photos (id, location_id, aspect, photo_az, photo_tilt, photo_roll, size_rad, opacity)
+	q := `INSERT INTO photos (id, station_id, aspect, photo_az, photo_tilt, photo_roll, size_rad, opacity)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING ` + photoCols
-	p, err := scanPhoto(s.db.QueryRow(r.Context(), q, id, locID, req.Aspect,
+	p, err := scanPhoto(s.db.QueryRow(r.Context(), q, id, stationID, req.Aspect,
 		req.PhotoAz, req.PhotoTilt, req.PhotoRoll, sizeRad, opacity))
 	if err != nil {
 		writeErrorFromDB(w, err)

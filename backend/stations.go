@@ -7,12 +7,13 @@ import (
 	"strings"
 )
 
-// Domain shapes (Location, Photo, MapPOI, ImagePOI, HydratedLocation,
-// CreateLocationRequest, MapPOIRequest, PhotoPosePatch, ImagePOIPatch)
-// are generated from ../openapi.yaml into types.gen.go.
+// Domain shapes (Station, Photo, MapMeasurement, ImageMeasurement,
+// HydratedStation, CreateStationRequest, MapMeasurementRequest,
+// PhotoPosePatch, ImageMeasurementPatch) are generated from
+// ../openapi.yaml into types.gen.go.
 
-func (s *Server) postLocation(w http.ResponseWriter, r *http.Request) {
-	var req CreateLocationRequest
+func (s *Server) postStation(w http.ResponseWriter, r *http.Request) {
+	var req CreateStationRequest
 	if !parseJSON(w, r, &req) {
 		return
 	}
@@ -21,19 +22,19 @@ func (s *Server) postLocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := newID()
-	const q = `INSERT INTO locations (id, lat, lng, name) VALUES ($1, $2, $3, $4)
+	const q = `INSERT INTO stations (id, lat, lng, name) VALUES ($1, $2, $3, $4)
 	           RETURNING id, lat, lng, name, created_at, updated_at`
-	var loc Location
+	var st Station
 	err := s.db.QueryRow(r.Context(), q, id, req.Lat, req.Lng, req.Name).Scan(
-		&loc.ID, &loc.Lat, &loc.Lng, &loc.Name, &loc.CreatedAt, &loc.UpdatedAt)
+		&st.ID, &st.Lat, &st.Lng, &st.Name, &st.CreatedAt, &st.UpdatedAt)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, loc)
+	writeJSON(w, http.StatusCreated, st)
 }
 
-func (s *Server) listLocations(w http.ResponseWriter, r *http.Request) {
+func (s *Server) listStations(w http.ResponseWriter, r *http.Request) {
 	bbox := r.URL.Query().Get("bbox")
 	var sql string
 	var args []any
@@ -52,13 +53,13 @@ func (s *Server) listLocations(w http.ResponseWriter, r *http.Request) {
 			}
 			v[i] = f
 		}
-		sql = `SELECT id, lat, lng, name, created_at, updated_at FROM locations
+		sql = `SELECT id, lat, lng, name, created_at, updated_at FROM stations
 		       WHERE ST_MakeEnvelope($1, $2, $3, $4, 4326)
 		             && ST_SetSRID(ST_MakePoint(lng, lat), 4326)
 		       ORDER BY created_at DESC LIMIT 1000`
 		args = []any{v[0], v[1], v[2], v[3]}
 	} else {
-		sql = `SELECT id, lat, lng, name, created_at, updated_at FROM locations
+		sql = `SELECT id, lat, lng, name, created_at, updated_at FROM stations
 		       ORDER BY created_at DESC LIMIT 1000`
 	}
 	cur, err := s.db.Query(r.Context(), sql, args...)
@@ -67,14 +68,14 @@ func (s *Server) listLocations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cur.Close()
-	out := []Location{}
+	out := []Station{}
 	for cur.Next() {
-		var loc Location
-		if err := cur.Scan(&loc.ID, &loc.Lat, &loc.Lng, &loc.Name, &loc.CreatedAt, &loc.UpdatedAt); err != nil {
+		var st Station
+		if err := cur.Scan(&st.ID, &st.Lat, &st.Lng, &st.Name, &st.CreatedAt, &st.UpdatedAt); err != nil {
 			writeErrorFromDB(w, err)
 			return
 		}
-		out = append(out, loc)
+		out = append(out, st)
 	}
 	if err := cur.Err(); err != nil {
 		writeErrorFromDB(w, err)
@@ -83,42 +84,42 @@ func (s *Server) listLocations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *Server) getLocation(w http.ResponseWriter, r *http.Request) {
+func (s *Server) getStation(w http.ResponseWriter, r *http.Request) {
 	id := requireID(w, r, "id")
 	if id == "" {
 		return
 	}
 	ctx := r.Context()
-	var loc Location
+	var st Station
 	err := s.db.QueryRow(ctx,
-		`SELECT id, lat, lng, name, created_at, updated_at FROM locations WHERE id = $1`, id,
-	).Scan(&loc.ID, &loc.Lat, &loc.Lng, &loc.Name, &loc.CreatedAt, &loc.UpdatedAt)
+		`SELECT id, lat, lng, name, created_at, updated_at FROM stations WHERE id = $1`, id,
+	).Scan(&st.ID, &st.Lat, &st.Lng, &st.Name, &st.CreatedAt, &st.UpdatedAt)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
-	photos, err := s.photosByLocation(ctx, id)
+	photos, err := s.photosByStation(ctx, id)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
-	mapMeasurements, err := s.mapMeasurementsByLocation(ctx, id)
+	mapMeasurements, err := s.mapMeasurementsByStation(ctx, id)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
-	imageMeasurements, err := s.imageMeasurementsByLocation(ctx, id)
+	imageMeasurements, err := s.imageMeasurementsByStation(ctx, id)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
-	controlPoints, err := s.controlPointsByLocation(ctx, id)
+	controlPoints, err := s.controlPointsByStation(ctx, id)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, HydratedLocation{
-		Location:          loc,
+	writeJSON(w, http.StatusOK, HydratedStation{
+		Station:           st,
 		Photos:            photos,
 		MapMeasurements:   mapMeasurements,
 		ImageMeasurements: imageMeasurements,
@@ -126,12 +127,12 @@ func (s *Server) getLocation(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) putLocation(w http.ResponseWriter, r *http.Request) {
+func (s *Server) putStation(w http.ResponseWriter, r *http.Request) {
 	id := requireID(w, r, "id")
 	if id == "" {
 		return
 	}
-	var req CreateLocationRequest
+	var req CreateStationRequest
 	if !parseJSON(w, r, &req) {
 		return
 	}
@@ -139,29 +140,29 @@ func (s *Server) putLocation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "lat/lng out of range")
 		return
 	}
-	const q = `UPDATE locations SET lat=$2, lng=$3, name=$4, updated_at=NOW()
+	const q = `UPDATE stations SET lat=$2, lng=$3, name=$4, updated_at=NOW()
 	           WHERE id=$1
 	           RETURNING id, lat, lng, name, created_at, updated_at`
-	var loc Location
+	var st Station
 	err := s.db.QueryRow(r.Context(), q, id, req.Lat, req.Lng, req.Name).Scan(
-		&loc.ID, &loc.Lat, &loc.Lng, &loc.Name, &loc.CreatedAt, &loc.UpdatedAt)
+		&st.ID, &st.Lat, &st.Lng, &st.Name, &st.CreatedAt, &st.UpdatedAt)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, loc)
+	writeJSON(w, http.StatusOK, st)
 }
 
-func (s *Server) deleteLocation(w http.ResponseWriter, r *http.Request) {
+func (s *Server) deleteStation(w http.ResponseWriter, r *http.Request) {
 	id := requireID(w, r, "id")
 	if id == "" {
 		return
 	}
-	// Photos cascade to image POIs in the DB; we still need to remove blob
-	// files from disk. Pull the photo IDs first, delete the row (cascades),
-	// then unlink the files.
+	// Photos cascade to image measurements in the DB; we still need to remove
+	// blob files from disk. Pull the photo IDs first, delete the row
+	// (cascades), then unlink the files.
 	ctx := r.Context()
-	rows, err := s.db.Query(ctx, `SELECT id FROM photos WHERE location_id = $1`, id)
+	rows, err := s.db.Query(ctx, `SELECT id FROM photos WHERE station_id = $1`, id)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -177,7 +178,7 @@ func (s *Server) deleteLocation(w http.ResponseWriter, r *http.Request) {
 		photoIDs = append(photoIDs, pid)
 	}
 	rows.Close()
-	tag, err := s.db.Exec(ctx, `DELETE FROM locations WHERE id = $1`, id)
+	tag, err := s.db.Exec(ctx, `DELETE FROM stations WHERE id = $1`, id)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -192,24 +193,24 @@ func (s *Server) deleteLocation(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// --- Cascade-fetch helpers used by getLocation. Defined here because they
+// --- Cascade-fetch helpers used by getStation. Defined here because they
 // belong with the hydrated read; they're also the only readers of these
-// rows that filter by location_id. ---
+// rows that filter by station_id. ---
 
-func (s *Server) photosByLocation(ctx context.Context, locID string) ([]Photo, error) {
+func (s *Server) photosByStation(ctx context.Context, stationID string) ([]Photo, error) {
 	out := []Photo{}
 	rows, err := s.db.Query(ctx, `
-		SELECT id, location_id, blob_path, mime_type, size_bytes, aspect,
+		SELECT id, station_id, blob_path, mime_type, size_bytes, aspect,
 		       photo_az, photo_tilt, photo_roll, size_rad, opacity,
 		       created_at, updated_at
-		FROM photos WHERE location_id = $1 ORDER BY created_at`, locID)
+		FROM photos WHERE station_id = $1 ORDER BY created_at`, stationID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var p Photo
-		if err := rows.Scan(&p.ID, &p.LocationID, &p.BlobPath, &p.MimeType, &p.SizeBytes,
+		if err := rows.Scan(&p.ID, &p.StationID, &p.BlobPath, &p.MimeType, &p.SizeBytes,
 			&p.Aspect, &p.PhotoAz, &p.PhotoTilt, &p.PhotoRoll, &p.SizeRad, &p.Opacity,
 			&p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
@@ -219,18 +220,18 @@ func (s *Server) photosByLocation(ctx context.Context, locID string) ([]Photo, e
 	return out, rows.Err()
 }
 
-func (s *Server) mapMeasurementsByLocation(ctx context.Context, locID string) ([]MapMeasurement, error) {
+func (s *Server) mapMeasurementsByStation(ctx context.Context, stationID string) ([]MapMeasurement, error) {
 	out := []MapMeasurement{}
 	rows, err := s.db.Query(ctx, `
 		SELECT `+mapMeasurementCols+`
-		FROM map_measurements WHERE location_id = $1 ORDER BY created_at`, locID)
+		FROM map_measurements WHERE station_id = $1 ORDER BY created_at`, stationID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var m MapMeasurement
-		if err := rows.Scan(&m.ID, &m.LocationID, &m.Lat, &m.Lng, &m.ControlPointID, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.StationID, &m.Lat, &m.Lng, &m.ControlPointID, &m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -238,14 +239,14 @@ func (s *Server) mapMeasurementsByLocation(ctx context.Context, locID string) ([
 	return out, rows.Err()
 }
 
-func (s *Server) imageMeasurementsByLocation(ctx context.Context, locID string) ([]ImageMeasurement, error) {
+func (s *Server) imageMeasurementsByStation(ctx context.Context, stationID string) ([]ImageMeasurement, error) {
 	out := []ImageMeasurement{}
 	rows, err := s.db.Query(ctx, `
 		SELECT i.id, i.photo_id, i.u, i.v, i.control_point_id, i.created_at, i.updated_at
 		FROM image_measurements i
 		JOIN photos p ON p.id = i.photo_id
-		WHERE p.location_id = $1
-		ORDER BY i.created_at`, locID)
+		WHERE p.station_id = $1
+		ORDER BY i.created_at`, stationID)
 	if err != nil {
 		return nil, err
 	}

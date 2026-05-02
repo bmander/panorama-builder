@@ -136,7 +136,7 @@ export interface OverlayManager {
   setSelectedPair(measurement: THREE.Mesh | null, mapMeasurementId: string | null): void;
   getImageMeasurements(): ImageMeasurementBearing[];
 
-  // --- Map measurements (per-project ground-truth observations) ---
+  // --- Map measurements (per-station ground-truth observations) ---
   addMapMeasurement(id: string, latlng: LatLng, controlPointId: string | null): void;
   // Moves the measurement marker. If the measurement is linked to a CP, the
   // CP's est_lat/est_lng are mirrored to the new latlng (v1 behavior).
@@ -145,7 +145,7 @@ export interface OverlayManager {
   getSelectedMapMeasurement(): string | null;
   setSelectedMapMeasurement(id: string | null): void;
 
-  // --- Control points (cross-project landmarks) ---
+  // --- Control points (cross-station landmarks) ---
   addControlPoint(id: string, payload: AddControlPointPayload): void;
   getControlPoints(): ControlPointView[];
   getControlPointById(id: string): ControlPointView | null;
@@ -208,14 +208,14 @@ export function createOverlayManager(
   let selectedImageMeasurement: THREE.Mesh | null = null;
   let hoveredOverlay: THREE.Group | null = null;
 
-  // Per-project map measurements; v1 keeps these scoped under the loaded
-  // location. Columns in the 360° view are drawn from the linked CPs (one
+  // Per-station map measurements; v1 keeps these scoped under the loaded
+  // station. Columns in the 360° view are drawn from the linked CPs (one
   // column per CP), not from these directly.
   const mapMeasurements: MapMeasurementEntry[] = [];
   let selectedMapMeasurementId: string | null = null;
 
-  // Cross-project control points reachable from the loaded location. The
-  // hydrate path populates this on project load; new CPs created at runtime
+  // Cross-station control points reachable from the loaded station. The
+  // hydrate path populates this on station load; new CPs created at runtime
   // (via the matcher / +POI flows) get pushed here too.
   const controlPoints: ControlPointEntry[] = [];
 
@@ -470,7 +470,7 @@ export function createOverlayManager(
         const i = mapMeasurements.findIndex(m => m.id === deletedId);
         if (i >= 0) mapMeasurements.splice(i, 1);
         // The CP this map measurement linked to (if any) is unaffected — it
-        // lives cross-project. Image measurements that used that same CP
+        // lives cross-station. Image measurements that used that same CP
         // keep their FK; their column simply lacks a ground-truth observation
         // until another map measurement is added.
         selectedMapMeasurementId = null;

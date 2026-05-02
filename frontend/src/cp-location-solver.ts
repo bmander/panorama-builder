@@ -40,8 +40,8 @@ function initialGuess(
   if (mapAverage) return mapAverage;
   if (cp.est_lat !== null && cp.est_lng !== null) return { lat: cp.est_lat, lng: cp.est_lng };
   const locAverage = averageLatLng(obs.image_measurements.map(im => ({
-    lat: im.location_lat,
-    lng: im.location_lng,
+    lat: im.station_lat,
+    lng: im.station_lng,
   })));
   return locAverage;
 }
@@ -53,8 +53,8 @@ function poseFromObservation(im: ApiControlPointObservations['image_measurements
     photoRoll: im.photo_roll,
     sizeRad: im.size_rad,
     aspect: im.aspect,
-    camLat: im.location_lat,
-    camLng: im.location_lng,
+    camLat: im.station_lat,
+    camLng: im.station_lng,
   };
 }
 

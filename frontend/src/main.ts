@@ -12,31 +12,31 @@ import type { ControlPointColumn } from './map-poi-columns.js';
 import { cpHref, getElement, overlayData, poiData } from './types.js';
 import type { LatLng } from './types.js';
 import * as api from './api.js';
-import type { ApiControlPoint, ApiHydratedLocation, ApiLocation } from './api.js';
+import type { ApiControlPoint, ApiHydratedStation, ApiStation } from './api.js';
 import { loadPrefs } from './prefs.js';
 import { createSyncManager } from './sync.js';
 import { createSolverLoop } from './solver-loop.js';
 import { createSettingsPanel } from './settings.js';
 import { createOrchestration } from './handlers.js';
 import { createAdminModal } from './admin-modal.js';
-import { createStartProjectModal } from './start-project-modal.js';
+import { createStartStationModal } from './start-station-modal.js';
 import { createContextMenu } from './context-menu.js';
 import { createObservationModal } from './observation-modal.js';
 import { solveControlPointLocation } from './cp-location-solver.js';
 
-// --- URL ↔ project id ---------------------------------------------------
+// --- URL ↔ station id ---------------------------------------------------
 
 const ID_RE = /^\/([A-Z2-7]{13})$/;
-function parseLocationIdFromURL(): string | null {
+function parseStationIdFromURL(): string | null {
   const m = ID_RE.exec(location.pathname);
   return m ? m[1]! : null;
 }
-const currentLocationId: string | null = parseLocationIdFromURL();
-const getCurrentLocationId = (): string | null => currentLocationId;
+const currentStationId: string | null = parseStationIdFromURL();
+const getCurrentStationId = (): string | null => currentStationId;
 
-// Index mode (no project in URL) hides the project-scoped chrome — the
-// upper-right buttons + tabs only make sense once a project is loaded.
-if (currentLocationId === null) getElement('top-right').hidden = true;
+// Index mode (no station in URL) hides the station-scoped chrome — the
+// upper-right buttons + tabs only make sense once a station is loaded.
+if (currentStationId === null) getElement('top-right').hidden = true;
 
 // --- Viewer + scene singletons -----------------------------------------
 
@@ -111,7 +111,7 @@ function refreshMapAnnotations(): void {
 function refreshControlPointColumns(): void {
   if (viewTabs.getMode() !== '360') return;
   const camLoc = mapView.getLocation();
-  // Only show columns for CPs the user is actually observing in this project.
+  // Only show columns for CPs the user is actually observing in this station.
   const observed = new Set<string>();
   for (const im of overlays.getImageMeasurements()) {
     if (im.controlPointId) observed.add(im.controlPointId);
@@ -126,7 +126,7 @@ function refreshControlPointColumns(): void {
 }
 
 const coordsEl = getElement('map-coords');
-coordsEl.textContent = 'no location set — right-click the map to start a project';
+coordsEl.textContent = 'no location set — left-click a station marker, or click the map to start a new station';
 
 function applyCameraLocation(loc: LatLng): void {
   coordsEl.textContent = `lat ${loc.lat.toFixed(5)}  lng ${loc.lng.toFixed(5)}`;
@@ -181,7 +181,7 @@ function syncControlPoint(cp: ApiControlPoint): void {
 
 const sync = createSyncManager({
   overlays,
-  getCurrentLocationId,
+  getCurrentStationId,
   getCameraLocation: () => mapView.getLocation(),
 });
 
@@ -198,7 +198,7 @@ const solver = createSolverLoop({
 const settings = createSettingsPanel({
   viewer, terrain, sunMarker, hud,
   getCameraLocation: () => mapView.getLocation(),
-  getCurrentLocationId,
+  getCurrentStationId,
   getViewTab: () => viewTabs.getMode(),
   refreshMapAnnotationsIfVisible: () => { if (mapView.isVisible()) refreshMapAnnotations(); },
   runSolve: () => { solver.runSolve(); },
@@ -206,16 +206,16 @@ const settings = createSettingsPanel({
 });
 
 const handlers = createOrchestration({
-  getCurrentLocationId,
+  getCurrentStationId,
   overlays,
   sync,
   applyCameraLocation,
   runSolve: () => { solver.runSolve(); },
 });
 
-const admin = createAdminModal({ getCurrentLocationId });
-const startProjectModal = createStartProjectModal({
-  onSubmit: input => handlers.onStartProjectHere(input),
+const admin = createAdminModal({ getCurrentStationId });
+const startStationModal = createStartStationModal({
+  onSubmit: input => handlers.onStartStationHere(input),
 });
 
 // --- Map + input + tabs wiring -----------------------------------------
@@ -233,9 +233,9 @@ const mapView = createMapView({
     overlays.withBatch(() => { overlays.setMapMeasurementLatLng(id, latlng); });
   },
   onMapPoiArmedChange: armed => { addPoiBtnEl.classList.toggle('armed', armed); },
-  onProjectMarkerOpen: id => { location.assign('/' + id); },
-  onProjectMarkerPreview: id => { void showProjectPreview(id); },
-  onStartProjectHere: loc => { startProjectModal.open(loc); },
+  onStationMarkerOpen: id => { location.assign('/' + id); },
+  onStationMarkerPreview: id => { void showStationPreview(id); },
+  onStartStationHere: loc => { startStationModal.open(loc); },
   onControlPointSolveLocation: id => { void solveAndPersistControlPointLocation(id); },
 });
 
@@ -327,15 +327,15 @@ attachDownload({ baker });
 // --- Bootstrap ---------------------------------------------------------
 
 async function hydrateFromAPI(id: string): Promise<void> {
-  let data: ApiHydratedLocation;
+  let data: ApiHydratedStation;
   try {
-    data = await api.getLocation(id);
+    data = await api.getStation(id);
   } catch (err) {
     console.error('hydrate failed:', err);
-    alert('Could not load this project.');
+    alert('Could not load this station.');
     return;
   }
-  const loc: LatLng = { lat: data.location.lat, lng: data.location.lng };
+  const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
   sync.registerLocation(loc);
   mapView.setLocation(loc);
   applyCameraLocation(loc);
@@ -389,18 +389,18 @@ async function hydrateFromAPI(id: string): Promise<void> {
   }
 }
 
-async function showProjectMarkers(): Promise<void> {
-  let locations: ApiLocation[];
+async function showStationMarkers(): Promise<void> {
+  let stations: ApiStation[];
   try {
-    locations = await api.listLocations();
+    stations = await api.listStations();
   } catch (err) {
-    console.error('list locations failed:', err);
+    console.error('list stations failed:', err);
     return;
   }
-  mapView.setProjectMarkers(locations.map(loc => ({
-    id: loc.id,
-    latlng: { lat: loc.lat, lng: loc.lng },
-    label: loc.name ?? `Untitled ${loc.id.slice(0, 6)}`,
+  mapView.setStationMarkers(stations.map(st => ({
+    id: st.id,
+    latlng: { lat: st.lat, lng: st.lng },
+    label: st.name ?? `Untitled ${st.id.slice(0, 6)}`,
   })));
 }
 
@@ -454,13 +454,13 @@ async function solveAndPersistControlPointLocation(id: string): Promise<void> {
   }
 
   syncControlPoint(updated);
-  if (!currentLocationId) void showIndexControlPoints();
+  if (!currentStationId) void showIndexControlPoints();
 }
 
-async function showProjectPreview(id: string): Promise<void> {
-  let data: ApiHydratedLocation;
+async function showStationPreview(id: string): Promise<void> {
+  let data: ApiHydratedStation;
   try {
-    data = await api.getLocation(id);
+    data = await api.getStation(id);
   } catch (err) {
     console.error('preview failed:', err);
     return;
@@ -481,17 +481,17 @@ async function showProjectPreview(id: string): Promise<void> {
   const linkedMapPOIs = data.control_points
     .filter(cp => linkedCPIds.has(cp.id) && cp.est_lat !== null && cp.est_lng !== null)
     .map(cp => ({ lat: cp.est_lat!, lng: cp.est_lng! }));
-  mapView.setProjectPreview({
-    origin: { lat: data.location.lat, lng: data.location.lng },
+  mapView.setStationPreview({
+    origin: { lat: data.station.lat, lng: data.station.lng },
     cones,
     linkedMapPOIs,
   });
 }
 
 async function bootstrap(): Promise<void> {
-  if (currentLocationId) {
-    await hydrateFromAPI(currentLocationId);
-    const prefs = loadPrefs(currentLocationId);
+  if (currentStationId) {
+    await hydrateFromAPI(currentStationId);
+    const prefs = loadPrefs(currentStationId);
     settings.apply(prefs);
     if (prefs.tab !== undefined) viewTabs.setMode(prefs.tab);
     overlays.setSelected(null);
@@ -499,7 +499,7 @@ async function bootstrap(): Promise<void> {
     overlays.setSelectedMapMeasurement(null);
     admin.setVisible(true);
   } else {
-    void showProjectMarkers();
+    void showStationMarkers();
     void showIndexControlPoints();
   }
   sync.markLoaded();

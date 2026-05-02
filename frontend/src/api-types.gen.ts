@@ -21,65 +21,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/locations": {
+    "/stations": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List locations, optionally filtered by bbox */
-        get: operations["listLocations"];
+        /** List stations, optionally filtered by bbox */
+        get: operations["listStations"];
         put?: never;
-        /** Create a project location */
-        post: operations["createLocation"];
+        /** Create a station */
+        post: operations["createStation"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/locations/{id}": {
+    "/stations/{id}": {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: components["parameters"]["LocationId"];
+                id: components["parameters"]["StationId"];
             };
             cookie?: never;
         };
-        /** Get a location with its photos, measurements, and referenced control points */
-        get: operations["getLocation"];
-        /** Update a location's lat/lng/name */
-        put: operations["updateLocation"];
+        /** Get a station with its photos, measurements, and referenced control points */
+        get: operations["getStation"];
+        /** Update a station's lat/lng/name */
+        put: operations["updateStation"];
         post?: never;
         /**
-         * Delete a location and cascade
+         * Delete a station and cascade
          * @description Cascades to photos and image measurements in the database, and
          *     removes photo blob files from disk. Control points referenced
-         *     only from the deleted project are NOT cascade-deleted (they
-         *     live cross-project) — they survive without measurements until
+         *     only from the deleted station are NOT cascade-deleted (they
+         *     live cross-station) — they survive without measurements until
          *     explicitly removed.
          */
-        delete: operations["deleteLocation"];
+        delete: operations["deleteStation"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/locations/{id}/photos": {
+    "/stations/{id}/photos": {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: components["parameters"]["LocationId"];
+                id: components["parameters"]["StationId"];
             };
             cookie?: never;
         };
         get?: never;
         put?: never;
         /**
-         * Create a photo on a location (metadata only)
+         * Create a photo on a station (metadata only)
          * @description Creates a photo row with an empty blob slot. Upload the image bytes
          *     via `PUT /photos/{id}/blob` afterwards.
          */
@@ -131,18 +131,18 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/locations/{id}/map-measurements": {
+    "/stations/{id}/map-measurements": {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: components["parameters"]["LocationId"];
+                id: components["parameters"]["StationId"];
             };
             cookie?: never;
         };
         get?: never;
         put?: never;
-        /** Create a map measurement on a location */
+        /** Create a map measurement on a station */
         post: operations["createMapMeasurement"];
         delete?: never;
         options?: never;
@@ -221,7 +221,7 @@ export interface paths {
         put?: never;
         /**
          * Create a control point
-         * @description Control points are global (cross-project). Initial est_lat /
+         * @description Control points are global (cross-station). Initial est_lat /
          *     est_lng / est_alt are optional; a CP without estimates is
          *     a "latent" landmark whose location is unknown until the solver
          *     triangulates from observations.
@@ -269,9 +269,9 @@ export interface paths {
         };
         /**
          * List every observation referencing this control point
-         * @description Returns image and map measurements across every project that
+         * @description Returns image and map measurements across every station that
          *     link back to the given control point. Each row carries enough
-         *     context (location id + name) for the caller to deep-link.
+         *     context (station id + name) for the caller to deep-link.
          */
         get: operations["listControlPointObservations"];
         put?: never;
@@ -295,7 +295,7 @@ export interface components {
         Error: {
             error: string;
         };
-        Location: {
+        Station: {
             id: components["schemas"]["Id"];
             /** Format: double */
             lat: number;
@@ -309,7 +309,7 @@ export interface components {
         };
         Photo: {
             id: components["schemas"]["Id"];
-            location_id: components["schemas"]["Id"];
+            station_id: components["schemas"]["Id"];
             blob_path: string | null;
             mime_type: string | null;
             /** Format: int64 */
@@ -352,7 +352,7 @@ export interface components {
          */
         MapMeasurement: {
             id: components["schemas"]["Id"];
-            location_id: components["schemas"]["Id"];
+            station_id: components["schemas"]["Id"];
             /** Format: double */
             lat: number;
             /** Format: double */
@@ -382,7 +382,7 @@ export interface components {
         };
         /**
          * @description A real-world landmark with a latent location. May be referenced
-         *     by image measurements (across photos / projects) and map
+         *     by image measurements (across photos / stations) and map
          *     measurements. The estimated location (est_lat / est_lng /
          *     est_alt) is updated by the solver as observations accumulate;
          *     for v1 the estimate mirrors any linked map measurement.
@@ -423,12 +423,12 @@ export interface components {
             u: number;
             /** Format: double */
             v: number;
-            location_id: components["schemas"]["Id"];
-            location_name: string | null;
+            station_id: components["schemas"]["Id"];
+            station_name: string | null;
             /** Format: double */
-            location_lat: number;
+            station_lat: number;
             /** Format: double */
-            location_lng: number;
+            station_lng: number;
             /** Format: double */
             photo_az: number;
             /** Format: double */
@@ -446,26 +446,26 @@ export interface components {
             lat: number;
             /** Format: double */
             lng: number;
-            location_id: components["schemas"]["Id"];
-            location_name: string | null;
+            station_id: components["schemas"]["Id"];
+            station_name: string | null;
         };
         ControlPointObservations: {
             image_measurements: components["schemas"]["ControlPointImageObservation"][];
             map_measurements: components["schemas"]["ControlPointMapObservation"][];
         };
-        HydratedLocation: {
-            location: components["schemas"]["Location"];
+        HydratedStation: {
+            station: components["schemas"]["Station"];
             photos: components["schemas"]["Photo"][];
             map_measurements: components["schemas"]["MapMeasurement"][];
             image_measurements: components["schemas"]["ImageMeasurement"][];
             /**
-             * @description Control points reachable from this project — i.e., those
-             *     referenced by at least one of this location's measurements.
-             *     Other CPs (in other projects) are not included.
+             * @description Control points reachable from this station — i.e., those
+             *     referenced by at least one of this station's measurements.
+             *     Other CPs (in other stations) are not included.
              */
             control_points: components["schemas"]["ControlPoint"][];
         };
-        CreateLocationRequest: {
+        CreateStationRequest: {
             /** Format: double */
             lat: number;
             /** Format: double */
@@ -536,7 +536,7 @@ export interface components {
         };
     };
     parameters: {
-        LocationId: components["schemas"]["Id"];
+        StationId: components["schemas"]["Id"];
         PhotoId: components["schemas"]["Id"];
         MapMeasurementId: components["schemas"]["Id"];
         ImageMeasurementId: components["schemas"]["Id"];
@@ -577,13 +577,13 @@ export interface operations {
             };
         };
     };
-    listLocations: {
+    listStations: {
         parameters: {
             query?: {
                 /**
                  * @description Bounding box as `minLng,minLat,maxLng,maxLat` (four
                  *     comma-separated floats). When omitted, returns up to 1000
-                 *     locations ordered by created_at DESC.
+                 *     stations ordered by created_at DESC.
                  */
                 bbox?: string;
             };
@@ -599,13 +599,13 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Location"][];
+                    "application/json": components["schemas"]["Station"][];
                 };
             };
             400: components["responses"]["BadRequest"];
         };
     };
-    createLocation: {
+    createStation: {
         parameters: {
             query?: never;
             header?: never;
@@ -614,7 +614,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateLocationRequest"];
+                "application/json": components["schemas"]["CreateStationRequest"];
             };
         };
         responses: {
@@ -624,18 +624,18 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Location"];
+                    "application/json": components["schemas"]["Station"];
                 };
             };
             400: components["responses"]["BadRequest"];
         };
     };
-    getLocation: {
+    getStation: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: components["parameters"]["LocationId"];
+                id: components["parameters"]["StationId"];
             };
             cookie?: never;
         };
@@ -647,24 +647,24 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HydratedLocation"];
+                    "application/json": components["schemas"]["HydratedStation"];
                 };
             };
             404: components["responses"]["NotFound"];
         };
     };
-    updateLocation: {
+    updateStation: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: components["parameters"]["LocationId"];
+                id: components["parameters"]["StationId"];
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateLocationRequest"];
+                "application/json": components["schemas"]["CreateStationRequest"];
             };
         };
         responses: {
@@ -674,19 +674,19 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Location"];
+                    "application/json": components["schemas"]["Station"];
                 };
             };
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
         };
     };
-    deleteLocation: {
+    deleteStation: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: components["parameters"]["LocationId"];
+                id: components["parameters"]["StationId"];
             };
             cookie?: never;
         };
@@ -707,7 +707,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                id: components["parameters"]["LocationId"];
+                id: components["parameters"]["StationId"];
             };
             cookie?: never;
         };
@@ -865,7 +865,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                id: components["parameters"]["LocationId"];
+                id: components["parameters"]["StationId"];
             };
             cookie?: never;
         };

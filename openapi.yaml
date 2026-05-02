@@ -3,10 +3,10 @@ info:
   title: panorama-builder API
   description: |
     JSON API for compositing flat photos into a 360° panorama. Stores
-    locations (camera setups, scoped per-project), photos (with embedded
-    pose), map measurements (user-asserted ground truth on the map),
-    image measurements (reticle anchors on photos), and control points
-    (cross-project landmarks with a latent estimated location).
+    stations (camera setups), photos (with embedded pose), map measurements
+    (user-asserted ground truth on the map), image measurements (reticle
+    anchors on photos), and control points (cross-station landmarks with
+    a latent estimated location).
 
     Image and map measurements both link directly to a control point;
     the control point is the latent real-world feature both observe.
@@ -22,7 +22,7 @@ servers:
 
 tags:
   - name: meta
-  - name: locations
+  - name: stations
   - name: photos
   - name: map-measurements
   - name: image-measurements
@@ -46,34 +46,34 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
-  /locations:
+  /stations:
     post:
-      tags: [locations]
-      summary: Create a project location
-      operationId: createLocation
+      tags: [stations]
+      summary: Create a station
+      operationId: createStation
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CreateLocationRequest' }
+            schema: { $ref: '#/components/schemas/CreateStationRequest' }
       responses:
         '201':
           description: Created
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Location' }
+              schema: { $ref: '#/components/schemas/Station' }
         '400': { $ref: '#/components/responses/BadRequest' }
     get:
-      tags: [locations]
-      summary: List locations, optionally filtered by bbox
-      operationId: listLocations
+      tags: [stations]
+      summary: List stations, optionally filtered by bbox
+      operationId: listStations
       parameters:
         - name: bbox
           in: query
           description: |
             Bounding box as `minLng,minLat,maxLng,maxLat` (four
             comma-separated floats). When omitted, returns up to 1000
-            locations ordered by created_at DESC.
+            stations ordered by created_at DESC.
           required: false
           schema:
             type: string
@@ -85,60 +85,60 @@ paths:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/Location' }
+                items: { $ref: '#/components/schemas/Station' }
         '400': { $ref: '#/components/responses/BadRequest' }
 
-  /locations/{id}:
+  /stations/{id}:
     parameters:
-      - $ref: '#/components/parameters/LocationId'
+      - $ref: '#/components/parameters/StationId'
     get:
-      tags: [locations]
-      summary: Get a location with its photos, measurements, and referenced control points
-      operationId: getLocation
+      tags: [stations]
+      summary: Get a station with its photos, measurements, and referenced control points
+      operationId: getStation
       responses:
         '200':
           description: OK
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/HydratedLocation' }
+              schema: { $ref: '#/components/schemas/HydratedStation' }
         '404': { $ref: '#/components/responses/NotFound' }
     put:
-      tags: [locations]
-      summary: Update a location's lat/lng/name
-      operationId: updateLocation
+      tags: [stations]
+      summary: Update a station's lat/lng/name
+      operationId: updateStation
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CreateLocationRequest' }
+            schema: { $ref: '#/components/schemas/CreateStationRequest' }
       responses:
         '200':
           description: OK
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Location' }
+              schema: { $ref: '#/components/schemas/Station' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
-      tags: [locations]
-      summary: Delete a location and cascade
+      tags: [stations]
+      summary: Delete a station and cascade
       description: |
         Cascades to photos and image measurements in the database, and
         removes photo blob files from disk. Control points referenced
-        only from the deleted project are NOT cascade-deleted (they
-        live cross-project) — they survive without measurements until
+        only from the deleted station are NOT cascade-deleted (they
+        live cross-station) — they survive without measurements until
         explicitly removed.
-      operationId: deleteLocation
+      operationId: deleteStation
       responses:
         '204': { description: Deleted }
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /locations/{id}/photos:
+  /stations/{id}/photos:
     parameters:
-      - $ref: '#/components/parameters/LocationId'
+      - $ref: '#/components/parameters/StationId'
     post:
       tags: [photos]
-      summary: Create a photo on a location (metadata only)
+      summary: Create a photo on a station (metadata only)
       description: |
         Creates a photo row with an empty blob slot. Upload the image bytes
         via `PUT /photos/{id}/blob` afterwards.
@@ -233,12 +233,12 @@ paths:
                 format: binary
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /locations/{id}/map-measurements:
+  /stations/{id}/map-measurements:
     parameters:
-      - $ref: '#/components/parameters/LocationId'
+      - $ref: '#/components/parameters/StationId'
     post:
       tags: [map-measurements]
-      summary: Create a map measurement on a location
+      summary: Create a map measurement on a station
       operationId: createMapMeasurement
       requestBody:
         required: true
@@ -336,7 +336,7 @@ paths:
       tags: [control-points]
       summary: Create a control point
       description: |
-        Control points are global (cross-project). Initial est_lat /
+        Control points are global (cross-station). Initial est_lat /
         est_lng / est_alt are optional; a CP without estimates is
         a "latent" landmark whose location is unknown until the solver
         triangulates from observations.
@@ -427,9 +427,9 @@ paths:
       tags: [control-points]
       summary: List every observation referencing this control point
       description: |
-        Returns image and map measurements across every project that
+        Returns image and map measurements across every station that
         link back to the given control point. Each row carries enough
-        context (location id + name) for the caller to deep-link.
+        context (station id + name) for the caller to deep-link.
       operationId: listControlPointObservations
       responses:
         '200':
@@ -441,7 +441,7 @@ paths:
 
 components:
   parameters:
-    LocationId:
+    StationId:
       name: id
       in: path
       required: true
@@ -497,7 +497,7 @@ components:
       properties:
         error: { type: string }
 
-    Location:
+    Station:
       type: object
       required: [id, lat, lng, name, created_at, updated_at]
       properties:
@@ -512,7 +512,7 @@ components:
       type: object
       required:
         - id
-        - location_id
+        - station_id
         - blob_path
         - mime_type
         - size_bytes
@@ -526,7 +526,7 @@ components:
         - updated_at
       properties:
         id: { $ref: '#/components/schemas/Id' }
-        location_id: { $ref: '#/components/schemas/Id' }
+        station_id: { $ref: '#/components/schemas/Id' }
         blob_path: { type: string, nullable: true }
         mime_type: { type: string, nullable: true }
         size_bytes: { type: integer, format: int64, nullable: true }
@@ -544,10 +544,10 @@ components:
       description: |
         User-asserted ground-truth observation: the user clicked on the
         map and asserts that some control point is here.
-      required: [id, location_id, lat, lng, control_point_id, created_at, updated_at]
+      required: [id, station_id, lat, lng, control_point_id, created_at, updated_at]
       properties:
         id: { $ref: '#/components/schemas/Id' }
-        location_id: { $ref: '#/components/schemas/Id' }
+        station_id: { $ref: '#/components/schemas/Id' }
         lat: { type: number, format: double, minimum: -90, maximum: 90 }
         lng: { type: number, format: double, minimum: -180, maximum: 180 }
         control_point_id:
@@ -577,7 +577,7 @@ components:
       type: object
       description: |
         A real-world landmark with a latent location. May be referenced
-        by image measurements (across photos / projects) and map
+        by image measurements (across photos / stations) and map
         measurements. The estimated location (est_lat / est_lng /
         est_alt) is updated by the solver as observations accumulate;
         for v1 the estimate mirrors any linked map measurement.
@@ -601,10 +601,10 @@ components:
         - photo_id
         - u
         - v
-        - location_id
-        - location_name
-        - location_lat
-        - location_lng
+        - station_id
+        - station_name
+        - station_lat
+        - station_lng
         - photo_az
         - photo_tilt
         - photo_roll
@@ -615,10 +615,10 @@ components:
         photo_id: { $ref: '#/components/schemas/Id' }
         u: { type: number, format: double, minimum: 0, maximum: 1 }
         v: { type: number, format: double, minimum: 0, maximum: 1 }
-        location_id: { $ref: '#/components/schemas/Id' }
-        location_name: { type: string, nullable: true }
-        location_lat: { type: number, format: double, minimum: -90, maximum: 90 }
-        location_lng: { type: number, format: double, minimum: -180, maximum: 180 }
+        station_id: { $ref: '#/components/schemas/Id' }
+        station_name: { type: string, nullable: true }
+        station_lat: { type: number, format: double, minimum: -90, maximum: 90 }
+        station_lng: { type: number, format: double, minimum: -180, maximum: 180 }
         photo_az: { type: number, format: double }
         photo_tilt: { type: number, format: double }
         photo_roll: { type: number, format: double }
@@ -627,13 +627,13 @@ components:
 
     ControlPointMapObservation:
       type: object
-      required: [id, lat, lng, location_id, location_name]
+      required: [id, lat, lng, station_id, station_name]
       properties:
         id: { $ref: '#/components/schemas/Id' }
         lat: { type: number, format: double, minimum: -90, maximum: 90 }
         lng: { type: number, format: double, minimum: -180, maximum: 180 }
-        location_id: { $ref: '#/components/schemas/Id' }
-        location_name: { type: string, nullable: true }
+        station_id: { $ref: '#/components/schemas/Id' }
+        station_name: { type: string, nullable: true }
 
     ControlPointObservations:
       type: object
@@ -646,11 +646,11 @@ components:
           type: array
           items: { $ref: '#/components/schemas/ControlPointMapObservation' }
 
-    HydratedLocation:
+    HydratedStation:
       type: object
-      required: [location, photos, map_measurements, image_measurements, control_points]
+      required: [station, photos, map_measurements, image_measurements, control_points]
       properties:
-        location: { $ref: '#/components/schemas/Location' }
+        station: { $ref: '#/components/schemas/Station' }
         photos:
           type: array
           items: { $ref: '#/components/schemas/Photo' }
@@ -663,12 +663,12 @@ components:
         control_points:
           type: array
           description: |
-            Control points reachable from this project — i.e., those
-            referenced by at least one of this location's measurements.
-            Other CPs (in other projects) are not included.
+            Control points reachable from this station — i.e., those
+            referenced by at least one of this station's measurements.
+            Other CPs (in other stations) are not included.
           items: { $ref: '#/components/schemas/ControlPoint' }
 
-    CreateLocationRequest:
+    CreateStationRequest:
       type: object
       required: [lat, lng]
       properties:

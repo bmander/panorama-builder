@@ -186,11 +186,11 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 	images := []ControlPointImageObservation{}
 	imRows, err := s.db.Query(r.Context(), `
 		SELECT im.id, im.photo_id, im.u, im.v,
-		       p.location_id, l.name, l.lat, l.lng,
+		       p.station_id, st.name, st.lat, st.lng,
 		       p.photo_az, p.photo_tilt, p.photo_roll, p.size_rad, p.aspect
 		FROM image_measurements im
 		JOIN photos p    ON p.id = im.photo_id
-		JOIN locations l ON l.id = p.location_id
+		JOIN stations st ON st.id = p.station_id
 		WHERE im.control_point_id = $1
 		ORDER BY im.created_at`, id)
 	if err != nil {
@@ -202,7 +202,7 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 		var o ControlPointImageObservation
 		if err := imRows.Scan(
 			&o.ID, &o.PhotoID, &o.U, &o.V,
-			&o.LocationID, &o.LocationName, &o.LocationLat, &o.LocationLng,
+			&o.StationID, &o.StationName, &o.StationLat, &o.StationLng,
 			&o.PhotoAz, &o.PhotoTilt, &o.PhotoRoll, &o.SizeRad, &o.Aspect,
 		); err != nil {
 			writeErrorFromDB(w, err)
@@ -217,9 +217,9 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 
 	maps := []ControlPointMapObservation{}
 	mRows, err := s.db.Query(r.Context(), `
-		SELECT m.id, m.lat, m.lng, m.location_id, l.name
+		SELECT m.id, m.lat, m.lng, m.station_id, st.name
 		FROM map_measurements m
-		JOIN locations l ON l.id = m.location_id
+		JOIN stations st ON st.id = m.station_id
 		WHERE m.control_point_id = $1
 		ORDER BY m.created_at`, id)
 	if err != nil {
@@ -229,7 +229,7 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 	defer mRows.Close()
 	for mRows.Next() {
 		var o ControlPointMapObservation
-		if err := mRows.Scan(&o.ID, &o.Lat, &o.Lng, &o.LocationID, &o.LocationName); err != nil {
+		if err := mRows.Scan(&o.ID, &o.Lat, &o.Lng, &o.StationID, &o.StationName); err != nil {
 			writeErrorFromDB(w, err)
 			return
 		}
@@ -246,23 +246,23 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// controlPointsByLocation returns CPs referenced by any image or map measurement
-// of this location. Cross-project CPs that aren't referenced from this project
+// controlPointsByStation returns CPs referenced by any image or map measurement
+// of this station. Cross-station CPs that aren't referenced from this station
 // are excluded.
-func (s *Server) controlPointsByLocation(ctx context.Context, locID string) ([]ControlPoint, error) {
+func (s *Server) controlPointsByStation(ctx context.Context, stationID string) ([]ControlPoint, error) {
 	out := []ControlPoint{}
 	rows, err := s.db.Query(ctx, `
 		SELECT `+controlPointCols+`
 		FROM control_points cp
 		WHERE cp.id IN (
 		  SELECT control_point_id FROM map_measurements
-		  WHERE location_id = $1 AND control_point_id IS NOT NULL
+		  WHERE station_id = $1 AND control_point_id IS NOT NULL
 		  UNION
 		  SELECT im.control_point_id FROM image_measurements im
 		  JOIN photos p ON p.id = im.photo_id
-		  WHERE p.location_id = $1 AND im.control_point_id IS NOT NULL
+		  WHERE p.station_id = $1 AND im.control_point_id IS NOT NULL
 		)
-		ORDER BY cp.created_at`, locID)
+		ORDER BY cp.created_at`, stationID)
 	if err != nil {
 		return nil, err
 	}

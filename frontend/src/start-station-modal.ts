@@ -1,17 +1,17 @@
-// Modal shown when the user picks "Start project here" from the map's
-// right-click popup. Collects a project title (required), a date estimate
+// Modal shown when the user picks "Start station here" from the map's
+// right-click popup. Collects a station title (required), a date estimate
 // (defaulted to now), and an optional set of photos to bulk-upload along
-// with the new project. The actual create + upload happens in the caller's
+// with the new station. The actual create + upload happens in the caller's
 // onSubmit; the modal owns form state and the disabled-while-pending latch.
 
 import { formatLocalDateTime, getElement } from './types.js';
 import type { LatLng } from './types.js';
 
-export interface StartProjectModal {
+export interface StartStationModal {
   open(loc: LatLng): void;
 }
 
-export interface CreateStartProjectModalOptions {
+export interface CreateStartStationModalOptions {
   onSubmit: (input: {
     loc: LatLng;
     name: string;
@@ -20,16 +20,16 @@ export interface CreateStartProjectModalOptions {
   }) => Promise<void>;
 }
 
-export function createStartProjectModal({ onSubmit }: CreateStartProjectModalOptions): StartProjectModal {
-  const modalEl = getElement('start-project-modal');
-  const closeBtn = getElement<HTMLButtonElement>('start-project-close');
-  const cancelBtn = getElement<HTMLButtonElement>('start-project-cancel');
-  const submitBtn = getElement<HTMLButtonElement>('start-project-submit');
-  const titleEl = getElement<HTMLInputElement>('start-project-title');
-  const dateEl = getElement<HTMLInputElement>('start-project-date');
-  const dropEl = getElement('start-project-drop');
-  const fileInputEl = getElement<HTMLInputElement>('start-project-files');
-  const previewEl = getElement('start-project-photos-preview');
+export function createStartStationModal({ onSubmit }: CreateStartStationModalOptions): StartStationModal {
+  const modalEl = getElement('start-station-modal');
+  const closeBtn = getElement<HTMLButtonElement>('start-station-close');
+  const cancelBtn = getElement<HTMLButtonElement>('start-station-cancel');
+  const submitBtn = getElement<HTMLButtonElement>('start-station-submit');
+  const titleEl = getElement<HTMLInputElement>('start-station-title');
+  const dateEl = getElement<HTMLInputElement>('start-station-date');
+  const dropEl = getElement('start-station-drop');
+  const fileInputEl = getElement<HTMLInputElement>('start-station-files');
+  const previewEl = getElement('start-station-photos-preview');
 
   let pendingLoc: LatLng | null = null;
   let photos: File[] = [];
@@ -89,7 +89,6 @@ export function createStartProjectModal({ onSubmit }: CreateStartProjectModalOpt
   closeBtn.addEventListener('click', close);
   cancelBtn.addEventListener('click', close);
 
-  // Drag-and-drop into the drop zone.
   dropEl.addEventListener('dragover', e => {
     e.preventDefault();
     dropEl.classList.add('over');
@@ -100,8 +99,6 @@ export function createStartProjectModal({ onSubmit }: CreateStartProjectModalOpt
     dropEl.classList.remove('over');
     addFiles(e.dataTransfer?.files ?? null);
   });
-  // Click the drop zone to open the native file picker (proxied through the
-  // hidden <input type="file">).
   dropEl.addEventListener('click', () => { fileInputEl.click(); });
   fileInputEl.addEventListener('change', () => {
     addFiles(fileInputEl.files);
@@ -120,7 +117,7 @@ export function createStartProjectModal({ onSubmit }: CreateStartProjectModalOpt
     const dateEstimate = dateEl.value;
     const submittedPhotos = photos.slice();
     onSubmit({ loc, name, dateEstimate, photos: submittedPhotos })
-      .catch((err: unknown) => { console.error('start project failed:', err); })
+      .catch((err: unknown) => { console.error('start station failed:', err); })
       .finally(() => { submitBtn.disabled = false; });
   });
 

@@ -1,5 +1,5 @@
-// Per-project view preferences stored in localStorage. The backend owns the
-// authoritative project state (locations, photos, POIs); these are the
+// Per-station view preferences stored in localStorage. The backend owns the
+// authoritative station state (stations, photos, POIs); these are the
 // per-user UI knobs we don't want to share across collaborators.
 
 import type { TerrainMode } from './terrain.js';
@@ -21,9 +21,9 @@ export interface Prefs {
 
 const KEY_PREFIX = 'panorama-prefs:';
 
-export function loadPrefs(locationId: string): Partial<Prefs> {
+export function loadPrefs(stationId: string): Partial<Prefs> {
   try {
-    const raw = localStorage.getItem(KEY_PREFIX + locationId);
+    const raw = localStorage.getItem(KEY_PREFIX + stationId);
     if (raw === null) return {};
     const parsed: unknown = JSON.parse(raw);
     if (parsed && typeof parsed === 'object') return parsed;
@@ -33,21 +33,21 @@ export function loadPrefs(locationId: string): Partial<Prefs> {
   }
 }
 
-export function savePrefs(locationId: string, prefs: Prefs): void {
+export function savePrefs(stationId: string, prefs: Prefs): void {
   try {
-    localStorage.setItem(KEY_PREFIX + locationId, JSON.stringify(prefs));
+    localStorage.setItem(KEY_PREFIX + stationId, JSON.stringify(prefs));
   } catch {
     // localStorage full / disabled / private mode — non-fatal.
   }
 }
 
 // Merge a partial prefs object onto whatever's already on disk. Used by the
-// project-create flow to seed just sunDateTime without fabricating defaults
+// station-create flow to seed just sunDateTime without fabricating defaults
 // for every other field.
-export function mergePrefs(locationId: string, partial: Partial<Prefs>): void {
-  const current = loadPrefs(locationId);
+export function mergePrefs(stationId: string, partial: Partial<Prefs>): void {
+  const current = loadPrefs(stationId);
   try {
-    localStorage.setItem(KEY_PREFIX + locationId, JSON.stringify({ ...current, ...partial }));
+    localStorage.setItem(KEY_PREFIX + stationId, JSON.stringify({ ...current, ...partial }));
   } catch {
     // localStorage full / disabled / private mode — non-fatal.
   }

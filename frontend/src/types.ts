@@ -89,7 +89,7 @@ export interface MapMeasurementView {
 }
 
 // Control point: a real-world landmark with a latent location. May be
-// referenced by image and map measurements across photos / projects.
+// referenced by image and map measurements across photos / stations.
 export interface ControlPointView {
   readonly id: string;
   readonly description: string;

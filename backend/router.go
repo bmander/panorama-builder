@@ -14,20 +14,20 @@ func (s *Server) routes() http.Handler {
 
 	mux.HandleFunc("GET /api/healthz", s.healthz)
 
-	mux.HandleFunc("POST /api/locations", s.postLocation)
-	mux.HandleFunc("GET /api/locations", s.listLocations)
-	mux.HandleFunc("GET /api/locations/{id}", s.getLocation)
-	mux.HandleFunc("PUT /api/locations/{id}", s.putLocation)
-	mux.HandleFunc("DELETE /api/locations/{id}", s.deleteLocation)
+	mux.HandleFunc("POST /api/stations", s.postStation)
+	mux.HandleFunc("GET /api/stations", s.listStations)
+	mux.HandleFunc("GET /api/stations/{id}", s.getStation)
+	mux.HandleFunc("PUT /api/stations/{id}", s.putStation)
+	mux.HandleFunc("DELETE /api/stations/{id}", s.deleteStation)
 
-	mux.HandleFunc("POST /api/locations/{id}/photos", s.postPhoto)
+	mux.HandleFunc("POST /api/stations/{id}/photos", s.postPhoto)
 	mux.HandleFunc("GET /api/photos/{id}", s.getPhoto)
 	mux.HandleFunc("PUT /api/photos/{id}", s.putPhoto)
 	mux.HandleFunc("DELETE /api/photos/{id}", s.deletePhoto)
 	mux.HandleFunc("PUT /api/photos/{id}/blob", s.putPhotoBlob)
 	mux.HandleFunc("GET /api/photos/{id}/blob", s.getPhotoBlob)
 
-	mux.HandleFunc("POST /api/locations/{id}/map-measurements", s.postMapMeasurement)
+	mux.HandleFunc("POST /api/stations/{id}/map-measurements", s.postMapMeasurement)
 	mux.HandleFunc("PUT /api/map-measurements/{id}", s.putMapMeasurement)
 	mux.HandleFunc("DELETE /api/map-measurements/{id}", s.deleteMapMeasurement)
 
@@ -59,7 +59,7 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 // spaFallback serves a static file if it exists under STATIC_DIR; otherwise
-// serves index.html. This makes path-based routes like /<location-id> work
+// serves index.html. This makes path-based routes like /<station-id> work
 // on hard refresh — the SPA reads location.pathname at startup.
 //
 // Only GET (and HEAD) requests are served; everything else falls through

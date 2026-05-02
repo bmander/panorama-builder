@@ -36,12 +36,12 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 }
 .settings-inline input[type="range"] { flex: 1; accent-color: #fff; }
 #view.tool-poi { cursor: crosshair; }
-.project-popup .leaflet-popup-content { margin: 8px 10px; font: 12px monospace; }
-.project-popup .name { display: block; font-weight: bold; margin-bottom: 6px; color: #000; }
-.project-popup .go { display: inline-block; padding: 4px 8px; background: #1a73e8;
+.station-popup .leaflet-popup-content { margin: 8px 10px; font: 12px monospace; }
+.station-popup .name { display: block; font-weight: bold; margin-bottom: 6px; color: #000; }
+.station-popup .go { display: inline-block; padding: 4px 8px; background: #1a73e8;
                      color: #fff; text-decoration: none; cursor: pointer;
                      border: none; font: 12px monospace; }
-.project-popup .go:hover { background: #155bbd; }
+.station-popup .go:hover { background: #155bbd; }
 .poi-anchor-marker { color: #5080ff; filter: drop-shadow(0 0 2px rgba(0,0,0,0.85)); }
 .poi-anchor-marker.selected { color: #ffff66; }
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.6);
@@ -62,7 +62,7 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .drop-zone { border: 1px dashed #888; padding: 16px; text-align: center;
              cursor: pointer; min-height: 60px; color: #aaa; }
 .drop-zone.over { border-color: #fff; background: rgba(255,255,255,0.08); color: #fff; }
-#start-project-photos-preview { display: flex; flex-direction: column; gap: 4px;
+#start-station-photos-preview { display: flex; flex-direction: column; gap: 4px;
                                  max-height: 160px; overflow-y: auto; }
 .photo-thumb { display: flex; justify-content: space-between; align-items: center; gap: 8px;
                padding: 2px 4px; background: rgba(255,255,255,0.06); }
@@ -131,9 +131,9 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   .cp-list { max-height: 60vh; padding: 8px; gap: 4px; }
   .cp-row { padding: 8px 12px; gap: 12px; }
   .cp-row .meta { font-size: 16px; }
-  .project-popup .leaflet-popup-content,
+  .station-popup .leaflet-popup-content,
   .index-cp-popup .leaflet-popup-content { font-size: 18px; margin: 12px 14px; }
-  .project-popup .go,
+  .station-popup .go,
   .index-cp-popup .go { font-size: 18px; padding: 8px 14px; }
   #save-error { font-size: 18px; padding: 14px 20px; }
 }

@@ -2,11 +2,11 @@ package main
 
 import "net/http"
 
-const mapMeasurementCols = `id, location_id, lat, lng, control_point_id, created_at, updated_at`
+const mapMeasurementCols = `id, station_id, lat, lng, control_point_id, created_at, updated_at`
 
 func (s *Server) postMapMeasurement(w http.ResponseWriter, r *http.Request) {
-	locID := requireID(w, r, "id")
-	if locID == "" {
+	stationID := requireID(w, r, "id")
+	if stationID == "" {
 		return
 	}
 	var req MapMeasurementRequest
@@ -18,12 +18,12 @@ func (s *Server) postMapMeasurement(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := newID()
-	q := `INSERT INTO map_measurements (id, location_id, lat, lng, control_point_id)
+	q := `INSERT INTO map_measurements (id, station_id, lat, lng, control_point_id)
 	      VALUES ($1, $2, $3, $4, $5)
 	      RETURNING ` + mapMeasurementCols
 	var m MapMeasurement
-	err := s.db.QueryRow(r.Context(), q, id, locID, req.Lat, req.Lng, req.ControlPointID).Scan(
-		&m.ID, &m.LocationID, &m.Lat, &m.Lng, &m.ControlPointID, &m.CreatedAt, &m.UpdatedAt)
+	err := s.db.QueryRow(r.Context(), q, id, stationID, req.Lat, req.Lng, req.ControlPointID).Scan(
+		&m.ID, &m.StationID, &m.Lat, &m.Lng, &m.ControlPointID, &m.CreatedAt, &m.UpdatedAt)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -49,7 +49,7 @@ func (s *Server) putMapMeasurement(w http.ResponseWriter, r *http.Request) {
 	      RETURNING ` + mapMeasurementCols
 	var m MapMeasurement
 	err := s.db.QueryRow(r.Context(), q, id, req.Lat, req.Lng, req.ControlPointID).Scan(
-		&m.ID, &m.LocationID, &m.Lat, &m.Lng, &m.ControlPointID, &m.CreatedAt, &m.UpdatedAt)
+		&m.ID, &m.StationID, &m.Lat, &m.Lng, &m.ControlPointID, &m.CreatedAt, &m.UpdatedAt)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return

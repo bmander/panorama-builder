@@ -14,12 +14,12 @@ const API = '/api';
 
 type Schemas = components['schemas'];
 
-export type ApiLocation = Schemas['Location'];
+export type ApiStation = Schemas['Station'];
 export type ApiPhoto = Schemas['Photo'];
 export type ApiMapMeasurement = Schemas['MapMeasurement'];
 export type ApiImageMeasurement = Schemas['ImageMeasurement'];
 export type ApiControlPoint = Schemas['ControlPoint'];
-export type ApiHydratedLocation = Schemas['HydratedLocation'];
+export type ApiHydratedStation = Schemas['HydratedStation'];
 export type PhotoPosePatch = Schemas['PhotoPosePatch'];
 export type MapMeasurementRequest = Schemas['MapMeasurementRequest'];
 export type ImageMeasurementPatch = Schemas['ImageMeasurementPatch'];
@@ -51,34 +51,34 @@ async function requestVoid(method: string, path: string): Promise<void> {
   }
 }
 
-// --- Locations ---
+// --- Stations ---
 
-export function createLocation(latlng: LatLng, name?: string): Promise<ApiLocation> {
-  return request<ApiLocation>('POST', '/locations', { lat: latlng.lat, lng: latlng.lng, name: name ?? null });
+export function createStation(latlng: LatLng, name?: string): Promise<ApiStation> {
+  return request<ApiStation>('POST', '/stations', { lat: latlng.lat, lng: latlng.lng, name: name ?? null });
 }
 
-export function listLocations(): Promise<ApiLocation[]> {
-  return request<ApiLocation[]>('GET', '/locations');
+export function listStations(): Promise<ApiStation[]> {
+  return request<ApiStation[]>('GET', '/stations');
 }
 
-export function getLocation(id: string): Promise<ApiHydratedLocation> {
-  return request<ApiHydratedLocation>('GET', `/locations/${encodeURIComponent(id)}`);
+export function getStation(id: string): Promise<ApiHydratedStation> {
+  return request<ApiHydratedStation>('GET', `/stations/${encodeURIComponent(id)}`);
 }
 
-export function updateLocation(id: string, latlng: LatLng, name?: string | null): Promise<ApiLocation> {
-  return request<ApiLocation>('PUT', `/locations/${encodeURIComponent(id)}`, {
+export function updateStation(id: string, latlng: LatLng, name?: string | null): Promise<ApiStation> {
+  return request<ApiStation>('PUT', `/stations/${encodeURIComponent(id)}`, {
     lat: latlng.lat, lng: latlng.lng, name: name ?? null,
   });
 }
 
-export function deleteLocation(id: string): Promise<void> {
-  return requestVoid('DELETE', `/locations/${encodeURIComponent(id)}`);
+export function deleteStation(id: string): Promise<void> {
+  return requestVoid('DELETE', `/stations/${encodeURIComponent(id)}`);
 }
 
 // --- Photos ---
 
-export function createPhoto(locationId: string, init: PhotoPosePatch): Promise<ApiPhoto> {
-  return request<ApiPhoto>('POST', `/locations/${encodeURIComponent(locationId)}/photos`, init);
+export function createPhoto(stationId: string, init: PhotoPosePatch): Promise<ApiPhoto> {
+  return request<ApiPhoto>('POST', `/stations/${encodeURIComponent(stationId)}/photos`, init);
 }
 
 export function updatePhoto(id: string, pose: PhotoPosePatch): Promise<ApiPhoto> {
@@ -109,9 +109,9 @@ export function photoBlobUrl(id: string): string {
 // --- Map measurements ---
 
 export function createMapMeasurement(
-  locationId: string, body: MapMeasurementRequest,
+  stationId: string, body: MapMeasurementRequest,
 ): Promise<ApiMapMeasurement> {
-  return request<ApiMapMeasurement>('POST', `/locations/${encodeURIComponent(locationId)}/map-measurements`, body);
+  return request<ApiMapMeasurement>('POST', `/stations/${encodeURIComponent(stationId)}/map-measurements`, body);
 }
 
 export function updateMapMeasurement(

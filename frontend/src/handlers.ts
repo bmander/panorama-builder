@@ -13,7 +13,7 @@ import type { OverlayManager } from './overlay.js';
 import type { SyncManager } from './sync.js';
 import { mergePrefs } from './prefs.js';
 
-export interface StartProjectInput {
+export interface StartStationInput {
   readonly loc: LatLng;
   readonly name: string;
   readonly dateEstimate: string;
@@ -22,7 +22,7 @@ export interface StartProjectInput {
 
 export interface OrchestrationHandlers {
   onSetLocation(loc: LatLng): void;
-  onStartProjectHere(input: StartProjectInput): Promise<void>;
+  onStartStationHere(input: StartStationInput): Promise<void>;
   onPhotoDropped(tex: THREE.Texture, blob: Blob, aspect: number, dir: THREE.Vector3, revokeUrl: () => void): Promise<void>;
   // Unmatched + POI armed click — always creates a new image measurement
   // (no control-point link).
@@ -48,7 +48,7 @@ export interface OrchestrationHandlers {
 }
 
 export interface CreateOrchestrationOptions {
-  getCurrentLocationId: () => string | null;
+  getCurrentStationId: () => string | null;
   overlays: OverlayManager;
   sync: SyncManager;
   applyCameraLocation: (loc: LatLng) => void;
@@ -56,21 +56,21 @@ export interface CreateOrchestrationOptions {
 }
 
 export function createOrchestration({
-  getCurrentLocationId, overlays, sync, applyCameraLocation, runSolve,
+  getCurrentStationId, overlays, sync, applyCameraLocation, runSolve,
 }: CreateOrchestrationOptions): OrchestrationHandlers {
   function onSetLocation(loc: LatLng): void {
-    if (!getCurrentLocationId()) return;
+    if (!getCurrentStationId()) return;
     applyCameraLocation(loc);
     runSolve();
   }
 
-  async function onStartProjectHere(input: StartProjectInput): Promise<void> {
+  async function onStartStationHere(input: StartStationInput): Promise<void> {
     const { loc, name, dateEstimate, photos } = input;
     let created;
     try {
-      created = await api.createLocation(loc, name || undefined);
+      created = await api.createStation(loc, name || undefined);
     } catch (err) {
-      sync.reportError('start project', err);
+      sync.reportError('start station', err);
       return;
     }
     if (dateEstimate) mergePrefs(created.id, { sunDateTime: dateEstimate });
@@ -102,7 +102,7 @@ export function createOrchestration({
       }
     }
     if (failed.length > 0) {
-      alert(`Some photos couldn't be uploaded: ${failed.join(', ')}.\nThe project was created without them.`);
+      alert(`Some photos couldn't be uploaded: ${failed.join(', ')}.\nThe station was created without them.`);
     }
 
     location.assign('/' + created.id);
@@ -126,7 +126,7 @@ export function createOrchestration({
   async function onPhotoDropped(
     tex: THREE.Texture, blob: Blob, aspect: number, dir: THREE.Vector3, revokeUrl: () => void,
   ): Promise<void> {
-    const locId = getCurrentLocationId();
+    const locId = getCurrentStationId();
     if (!locId) {
       revokeUrl();
       alert('Set a camera location before dropping photos.');
@@ -257,7 +257,7 @@ export function createOrchestration({
   }
 
   async function onAddMapMeasurement(latlng: LatLng): Promise<void> {
-    const locId = getCurrentLocationId();
+    const locId = getCurrentStationId();
     if (!locId) return;
     // Create the CP first; the map measurement attaches to it. v1 mirrors
     // the measurement's lat/lng into the CP's est_*.
@@ -272,7 +272,7 @@ export function createOrchestration({
   }
 
   async function onAnchorImageMeasurementByMapClick(handle: THREE.Mesh, latlng: LatLng): Promise<void> {
-    const locId = getCurrentLocationId();
+    const locId = getCurrentStationId();
     if (!locId) return;
     const pd = poiData(handle);
     // Already linked: find the linked map measurement (if any) and move it.
@@ -314,7 +314,7 @@ export function createOrchestration({
 
   return {
     onSetLocation,
-    onStartProjectHere,
+    onStartStationHere,
     onPhotoDropped,
     onAddImageMeasurement,
     onMatchImageMeasurement,

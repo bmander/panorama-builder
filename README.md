@@ -1,6 +1,6 @@
 # panorama-builder
 
-Tools for compositing flat photos into a 360° equirectangular panorama and sharing them. The frontend is a browser-only TypeScript app; the backend is a small Go HTTP service that stores the constituent objects (locations, photos with pose, map POIs, image POIs).
+Tools for compositing flat photos into a 360° equirectangular panorama and sharing them. The frontend is a browser-only TypeScript app; the backend is a small Go HTTP service that stores the constituent objects (stations, photos with pose, map measurements, image measurements).
 
 ## Layout
 
@@ -34,7 +34,7 @@ make run                                     # API on :8080
 - **360° tab** — pan with mouse, zoom with wheel. Drop a JPEG/PNG to add a photo overlay. Drag a photo to reposition; corner handles to resize; shift-drag to roll. *+ POI* drops an image marker on the photo.
 - **Match by hover** — in 360°, hover a blue map-POI column to highlight it; click on the underlying photo to create a paired image-POI anchored to that landmark. The pose solver kicks in once a photo has anchored POIs.
 - **⚙ Settings** — Lock camera position, Auto-solve photo rotation, Terrain mode (off / wireframe / shaded), sun datetime, photo opacity, atmospheric haze, Earth curvature, atmospheric refraction.
-- **Save…** / **Load…** / **Clear** — round-trip the project as a JSON bundle (photos base64-encoded inline) or wipe IDB.
+- **Save…** / **Load…** / **Clear** — round-trip the station as a JSON bundle (photos base64-encoded inline) or wipe IDB.
 - **download PNG** — 8192-wide composite of the current panorama.
 
 ## Stack
