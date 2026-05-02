@@ -131,18 +131,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/stations/{id}/map-measurements": {
+    "/map-measurements": {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                id: components["parameters"]["StationId"];
-            };
+            path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List every map measurement */
+        get: operations["listMapMeasurements"];
         put?: never;
-        /** Create a map measurement on a station */
+        /**
+         * Create a global map measurement
+         * @description Map measurements are global, station-less assertions: the user
+         *     clicked on the map and asserts that some control point is at this
+         *     lat/lng. The optional `control_point_id` link can be set on
+         *     creation or attached later via PUT.
+         */
         post: operations["createMapMeasurement"];
         delete?: never;
         options?: never;
@@ -348,11 +353,11 @@ export interface components {
         };
         /**
          * @description User-asserted ground-truth observation: the user clicked on the
-         *     map and asserts that some control point is here.
+         *     map and asserts that some control point is here. Global — not
+         *     owned by any station.
          */
         MapMeasurement: {
             id: components["schemas"]["Id"];
-            station_id: components["schemas"]["Id"];
             /** Format: double */
             lat: number;
             /** Format: double */
@@ -446,8 +451,6 @@ export interface components {
             lat: number;
             /** Format: double */
             lng: number;
-            station_id: components["schemas"]["Id"];
-            station_name: string | null;
         };
         ControlPointObservations: {
             image_measurements: components["schemas"]["ControlPointImageObservation"][];
@@ -456,7 +459,6 @@ export interface components {
         HydratedStation: {
             station: components["schemas"]["Station"];
             photos: components["schemas"]["Photo"][];
-            map_measurements: components["schemas"]["MapMeasurement"][];
             image_measurements: components["schemas"]["ImageMeasurement"][];
             /**
              * @description Control points reachable from this station — i.e., those
@@ -860,13 +862,31 @@ export interface operations {
             };
         };
     };
+    listMapMeasurements: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MapMeasurement"][];
+                };
+            };
+        };
+    };
     createMapMeasurement: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                id: components["parameters"]["StationId"];
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody: {
@@ -885,7 +905,6 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
         };
     };
     updateMapMeasurement: {

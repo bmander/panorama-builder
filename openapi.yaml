@@ -233,12 +233,15 @@ paths:
                 format: binary
         '404': { $ref: '#/components/responses/NotFound' }
 
-  /stations/{id}/map-measurements:
-    parameters:
-      - $ref: '#/components/parameters/StationId'
+  /map-measurements:
     post:
       tags: [map-measurements]
-      summary: Create a map measurement on a station
+      summary: Create a global map measurement
+      description: |
+        Map measurements are global, station-less assertions: the user
+        clicked on the map and asserts that some control point is at this
+        lat/lng. The optional `control_point_id` link can be set on
+        creation or attached later via PUT.
       operationId: createMapMeasurement
       requestBody:
         required: true
@@ -252,7 +255,18 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MapMeasurement' }
         '400': { $ref: '#/components/responses/BadRequest' }
-        '404': { $ref: '#/components/responses/NotFound' }
+    get:
+      tags: [map-measurements]
+      summary: List every map measurement
+      operationId: listMapMeasurements
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MapMeasurement' }
 
   /map-measurements/{id}:
     parameters:
@@ -543,11 +557,11 @@ components:
       type: object
       description: |
         User-asserted ground-truth observation: the user clicked on the
-        map and asserts that some control point is here.
-      required: [id, station_id, lat, lng, control_point_id, created_at, updated_at]
+        map and asserts that some control point is here. Global — not
+        owned by any station.
+      required: [id, lat, lng, control_point_id, created_at, updated_at]
       properties:
         id: { $ref: '#/components/schemas/Id' }
-        station_id: { $ref: '#/components/schemas/Id' }
         lat: { type: number, format: double, minimum: -90, maximum: 90 }
         lng: { type: number, format: double, minimum: -180, maximum: 180 }
         control_point_id:
@@ -627,13 +641,11 @@ components:
 
     ControlPointMapObservation:
       type: object
-      required: [id, lat, lng, station_id, station_name]
+      required: [id, lat, lng]
       properties:
         id: { $ref: '#/components/schemas/Id' }
         lat: { type: number, format: double, minimum: -90, maximum: 90 }
         lng: { type: number, format: double, minimum: -180, maximum: 180 }
-        station_id: { $ref: '#/components/schemas/Id' }
-        station_name: { type: string, nullable: true }
 
     ControlPointObservations:
       type: object
@@ -648,15 +660,12 @@ components:
 
     HydratedStation:
       type: object
-      required: [station, photos, map_measurements, image_measurements, control_points]
+      required: [station, photos, image_measurements, control_points]
       properties:
         station: { $ref: '#/components/schemas/Station' }
         photos:
           type: array
           items: { $ref: '#/components/schemas/Photo' }
-        map_measurements:
-          type: array
-          items: { $ref: '#/components/schemas/MapMeasurement' }
         image_measurements:
           type: array
           items: { $ref: '#/components/schemas/ImageMeasurement' }

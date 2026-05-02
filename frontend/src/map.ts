@@ -40,6 +40,9 @@ export interface MapView {
   // small red markers regardless of which station owns them. Click → popup
   // with a link to the CP's detail page.
   setIndexControlPoints(cps: readonly IndexControlPoint[]): void;
+  // Pan/zoom the index map to the named CP and open its popup. No-op if the
+  // CP isn't in the current `indexControlPoints` list (e.g. no estimate yet).
+  focusIndexControlPoint(id: string): boolean;
   isVisible(): boolean;
   onShow(): void;
   onHide(): void;
@@ -59,6 +62,7 @@ export interface CreateMapViewOptions {
   onStationMarkerOpen?: (id: string) => void;
   onStationMarkerPreview?: (id: string) => void;
   onStartStationHere?: (latlng: LatLng) => void;
+  onAddControlPointHere?: (latlng: LatLng) => void;
   onControlPointSolveLocation?: (id: string) => void;
   onShowRefresh?: () => void;
   onMapPoiArmedChange?: (armed: boolean) => void;
@@ -181,6 +185,7 @@ export function createMapView({
   onStationMarkerOpen,
   onStationMarkerPreview,
   onStartStationHere,
+  onAddControlPointHere,
   onControlPointSolveLocation,
   onShowRefresh,
   onMapPoiArmedChange,
@@ -270,10 +275,11 @@ export function createMapView({
     stationPreview?.observedCpIds.has(id) ? INDEX_CP_OBSERVED_STYLE : INDEX_CP_DOT_STYLE;
   const INDEX_CP_POPUP_OPTS: L.PopupOptions = { className: 'index-cp-popup', closeButton: true };
   const GO_POPUP_OPTS: L.PopupOptions = { className: 'station-popup', closeButton: true };
-  const goButtonHtml = (label: string): string => `<button type="button" class="go">${label}</button>`;
+  const goButtonHtml = (label: string, cls = ''): string =>
+    `<button type="button" class="go${cls ? ' ' + cls : ''}">${label}</button>`;
   const solveButtonHtml = (): string => '<button type="button" class="go solve-location">Solve location</button>';
-  function wireGoButton(popup: L.Popup, onClick: () => void): void {
-    const btn = popup.getElement()?.querySelector<HTMLButtonElement>('.go');
+  function wireGoButton(popup: L.Popup, selector: string, onClick: () => void): void {
+    const btn = popup.getElement()?.querySelector<HTMLButtonElement>(selector);
     btn?.addEventListener('click', () => {
       map.closePopup(popup);
       onClick();
@@ -421,6 +427,22 @@ export function createMapView({
     }
   }
 
+  function openIndexCpPopup(cp: IndexControlPoint): void {
+    const label = cp.description || `cp ${cp.id.slice(0, 6)}`;
+    const popupHtml = `<span class="name">${escapeHtml(label)}</span>`
+      + `<a class="go" href="${cpHref(cp.id)}">View details →</a>`
+      + solveButtonHtml();
+    const popup = L.popup(INDEX_CP_POPUP_OPTS)
+      .setLatLng([cp.latlng.lat, cp.latlng.lng])
+      .setContent(popupHtml)
+      .openOn(map);
+    const solveBtn = popup.getElement()?.querySelector<HTMLButtonElement>('.solve-location');
+    solveBtn?.addEventListener('click', () => {
+      map.closePopup(popup);
+      onControlPointSolveLocation?.(cp.id);
+    }, { once: true });
+  }
+
   // Rebuild the entire index-CP layer from `indexControlPoints`. Use only
   // when the CP list itself changes; toggling preview state should call
   // restyleIndexControlPoints() to avoid tearing down per-marker handlers.
@@ -430,24 +452,9 @@ export function createMapView({
     indexCpDots.clear();
     for (const cp of indexControlPoints) {
       const dot = L.circleMarker([cp.latlng.lat, cp.latlng.lng], styleForCp(cp.id));
-      const openPopup = (): void => {
-        const label = cp.description || `cp ${cp.id.slice(0, 6)}`;
-        const popupHtml = `<span class="name">${escapeHtml(label)}</span>`
-          + `<a class="go" href="${cpHref(cp.id)}">View details →</a>`
-          + solveButtonHtml();
-        const popup = L.popup(INDEX_CP_POPUP_OPTS)
-          .setLatLng([cp.latlng.lat, cp.latlng.lng])
-          .setContent(popupHtml)
-          .openOn(map);
-        const solveBtn = popup.getElement()?.querySelector<HTMLButtonElement>('.solve-location');
-        solveBtn?.addEventListener('click', () => {
-          map.closePopup(popup);
-          onControlPointSolveLocation?.(cp.id);
-        }, { once: true });
-      };
       dot.on('click', (e: L.LeafletMouseEvent) => {
         L.DomEvent.stopPropagation(e);
-        openPopup();
+        openIndexCpPopup(cp);
       });
       dot.on('contextmenu', (e: L.LeafletMouseEvent) => {
         L.DomEvent.preventDefault(e.originalEvent);
@@ -496,9 +503,13 @@ export function createMapView({
     const latlng: LatLng = { lat: e.latlng.lat, lng: e.latlng.lng };
     const popup = L.popup(GO_POPUP_OPTS)
       .setLatLng(e.latlng)
-      .setContent(goButtonHtml('Start station here'))
+      .setContent(
+        goButtonHtml('Start station here', 'start-station')
+        + goButtonHtml('Add control point', 'add-cp'),
+      )
       .openOn(map);
-    wireGoButton(popup, () => onStartStationHere?.(latlng));
+    wireGoButton(popup, '.go.start-station', () => onStartStationHere?.(latlng));
+    wireGoButton(popup, '.go.add-cp', () => onAddControlPointHere?.(latlng));
   });
   map.on('zoomend', redrawAll);
   map.on('resize', redrawAll);
@@ -530,6 +541,15 @@ export function createMapView({
       indexControlPoints = cps;
       redrawIndexControlPoints();
     },
+    focusIndexControlPoint(id: string): boolean {
+      const cp = indexControlPoints.find(c => c.id === id);
+      if (!cp) return false;
+      const FOCUS_ZOOM = 18;
+      map.setView([cp.latlng.lat, cp.latlng.lng],
+        Math.max(map.getZoom(), FOCUS_ZOOM), { animate: false });
+      openIndexCpPopup(cp);
+      return true;
+    },
     setStationMarkers(stations: readonly StationMarker[]): void {
       const wantedIds = new Set(stations.map(p => p.id));
       for (const [id, m] of stationMarkers) {
@@ -555,7 +575,7 @@ export function createMapView({
             .openOn(map);
           popup.on('remove', () => { applyStationPreview(null); });
           onStationMarkerPreview?.(p.id);
-          wireGoButton(popup, () => onStationMarkerOpen?.(p.id));
+          wireGoButton(popup, '.go', () => onStationMarkerOpen?.(p.id));
         });
         m.on('contextmenu', (e: L.LeafletMouseEvent) => {
           L.DomEvent.preventDefault(e.originalEvent);

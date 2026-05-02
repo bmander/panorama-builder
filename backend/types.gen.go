@@ -64,10 +64,6 @@ type ControlPointMapObservation struct {
 	ID  ID      `json:"id"`
 	Lat float64 `json:"lat"`
 	Lng float64 `json:"lng"`
-
-	// StationID 13-character base32 server-assigned id
-	StationID   ID      `json:"station_id"`
-	StationName *string `json:"station_name"`
 }
 
 // ControlPointObservations defines model for ControlPointObservations.
@@ -111,7 +107,6 @@ type HydratedStation struct {
 	// Other CPs (in other stations) are not included.
 	ControlPoints     []ControlPoint     `json:"control_points"`
 	ImageMeasurements []ImageMeasurement `json:"image_measurements"`
-	MapMeasurements   []MapMeasurement   `json:"map_measurements"`
 	Photos            []Photo            `json:"photos"`
 	Station           Station            `json:"station"`
 }
@@ -143,18 +138,16 @@ type ImageMeasurementPatch struct {
 }
 
 // MapMeasurement User-asserted ground-truth observation: the user clicked on the
-// map and asserts that some control point is here.
+// map and asserts that some control point is here. Global — not
+// owned by any station.
 type MapMeasurement struct {
 	ControlPointID *ID       `json:"control_point_id"`
 	CreatedAt      time.Time `json:"created_at"`
 
 	// ID 13-character base32 server-assigned id
-	ID  ID      `json:"id"`
-	Lat float64 `json:"lat"`
-	Lng float64 `json:"lng"`
-
-	// StationID 13-character base32 server-assigned id
-	StationID ID        `json:"station_id"`
+	ID        ID        `json:"id"`
+	Lat       float64   `json:"lat"`
+	Lng       float64   `json:"lng"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -263,6 +256,9 @@ type UpdateControlPointJSONRequestBody = ControlPointPatch
 // UpdateImageMeasurementJSONRequestBody defines body for UpdateImageMeasurement for application/json ContentType.
 type UpdateImageMeasurementJSONRequestBody = ImageMeasurementPatch
 
+// CreateMapMeasurementJSONRequestBody defines body for CreateMapMeasurement for application/json ContentType.
+type CreateMapMeasurementJSONRequestBody = MapMeasurementRequest
+
 // UpdateMapMeasurementJSONRequestBody defines body for UpdateMapMeasurement for application/json ContentType.
 type UpdateMapMeasurementJSONRequestBody = MapMeasurementRequest
 
@@ -277,9 +273,6 @@ type CreateStationJSONRequestBody = CreateStationRequest
 
 // UpdateStationJSONRequestBody defines body for UpdateStation for application/json ContentType.
 type UpdateStationJSONRequestBody = CreateStationRequest
-
-// CreateMapMeasurementJSONRequestBody defines body for CreateMapMeasurement for application/json ContentType.
-type CreateMapMeasurementJSONRequestBody = MapMeasurementRequest
 
 // CreatePhotoJSONRequestBody defines body for CreatePhoto for application/json ContentType.
 type CreatePhotoJSONRequestBody = PhotoPosePatch

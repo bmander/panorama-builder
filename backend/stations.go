@@ -103,11 +103,6 @@ func (s *Server) getStation(w http.ResponseWriter, r *http.Request) {
 		writeErrorFromDB(w, err)
 		return
 	}
-	mapMeasurements, err := s.mapMeasurementsByStation(ctx, id)
-	if err != nil {
-		writeErrorFromDB(w, err)
-		return
-	}
 	imageMeasurements, err := s.imageMeasurementsByStation(ctx, id)
 	if err != nil {
 		writeErrorFromDB(w, err)
@@ -121,7 +116,6 @@ func (s *Server) getStation(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, HydratedStation{
 		Station:           st,
 		Photos:            photos,
-		MapMeasurements:   mapMeasurements,
 		ImageMeasurements: imageMeasurements,
 		ControlPoints:     controlPoints,
 	})
@@ -216,25 +210,6 @@ func (s *Server) photosByStation(ctx context.Context, stationID string) ([]Photo
 			return nil, err
 		}
 		out = append(out, p)
-	}
-	return out, rows.Err()
-}
-
-func (s *Server) mapMeasurementsByStation(ctx context.Context, stationID string) ([]MapMeasurement, error) {
-	out := []MapMeasurement{}
-	rows, err := s.db.Query(ctx, `
-		SELECT `+mapMeasurementCols+`
-		FROM map_measurements WHERE station_id = $1 ORDER BY created_at`, stationID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var m MapMeasurement
-		if err := rows.Scan(&m.ID, &m.StationID, &m.Lat, &m.Lng, &m.ControlPointID, &m.CreatedAt, &m.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, m)
 	}
 	return out, rows.Err()
 }

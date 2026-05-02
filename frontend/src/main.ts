@@ -9,7 +9,7 @@ import { createTerrainView } from './terrain.js';
 import { createSunMarker } from './sun-marker.js';
 import { createControlPointColumns, findHitColumn } from './map-poi-columns.js';
 import type { ControlPointColumn } from './map-poi-columns.js';
-import { cpHref, FOCUS_QUERY_PARAM, getElement, overlayData, poiData, stationHref } from './types.js';
+import { cpHref, FOCUS_QUERY_PARAM, getElement, INDEX_CP_QUERY_PARAM, overlayData, poiData, stationHref } from './types.js';
 import { vecToAzAlt } from './geo.js';
 import type { LatLng } from './types.js';
 import * as api from './api.js';
@@ -38,6 +38,10 @@ const getCurrentStationId = (): string | null => currentStationId;
 const FOCUS_RE = /^[A-Z2-7]{13}$/;
 const focusImageMeasurementId: string | null = (() => {
   const id = new URLSearchParams(location.search).get(FOCUS_QUERY_PARAM);
+  return id && FOCUS_RE.test(id) ? id : null;
+})();
+const focusIndexControlPointId: string | null = (() => {
+  const id = new URLSearchParams(location.search).get(INDEX_CP_QUERY_PARAM);
   return id && FOCUS_RE.test(id) ? id : null;
 })();
 
@@ -245,6 +249,7 @@ const mapView = createMapView({
   onStationMarkerOpen: id => { location.assign(stationHref(id)); },
   onStationMarkerPreview: id => { void showStationPreview(id); },
   onStartStationHere: loc => { startStationModal.open(loc); },
+  onAddControlPointHere: loc => { observationModal.openForMap(loc); },
   onControlPointSolveLocation: id => { void solveAndPersistControlPointLocation(id); },
 });
 
@@ -276,6 +281,11 @@ const observationModal = createObservationModal({
   },
   onCreateAndObserve: (overlay, u, v, description) =>
     handlers.onCreateCPAndObserve(overlay, u, v, description),
+  onCreateMapAndObserve: async (latlng, description) => {
+    await handlers.onCreateCPAndMapObserve(latlng, description);
+    // The new CP needs to appear immediately on the index map.
+    if (currentStationId === null) refreshIndexControlPoints();
+  },
 });
 
 const input = attachInput({
@@ -382,11 +392,6 @@ async function hydrateFromAPI(id: string): Promise<void> {
     console.error('list control points failed:', err);
   }
 
-  for (const m of data.map_measurements) {
-    overlays.addMapMeasurement(m.id, { lat: m.lat, lng: m.lng }, m.control_point_id);
-    sync.registerMapMeasurement(m.id, { lat: m.lat, lng: m.lng, control_point_id: m.control_point_id });
-  }
-
   for (const im of data.image_measurements) {
     const overlay = overlays.getOverlayById(im.photo_id);
     if (!overlay) continue;
@@ -413,19 +418,45 @@ async function showStationMarkers(): Promise<void> {
   })));
 }
 
+async function loadMapMeasurements(): Promise<void> {
+  let mms;
+  try {
+    mms = await api.listMapMeasurements();
+  } catch (err) {
+    console.error('list map measurements failed:', err);
+    return;
+  }
+  const known = new Set(overlays.getMapMeasurements().map(m => m.id));
+  for (const m of mms) {
+    if (known.has(m.id)) continue;
+    overlays.addMapMeasurement(m.id, { lat: m.lat, lng: m.lng }, m.control_point_id);
+    sync.registerMapMeasurement(m.id, {
+      lat: m.lat, lng: m.lng, control_point_id: m.control_point_id,
+    });
+  }
+}
+
+function refreshIndexControlPoints(): void {
+  const dots = [];
+  for (const cp of overlays.getControlPoints()) {
+    if (cp.estLat === null || cp.estLng === null) continue;
+    dots.push({
+      id: cp.id,
+      latlng: { lat: cp.estLat, lng: cp.estLng },
+      description: cp.description,
+    });
+  }
+  mapView.setIndexControlPoints(dots);
+}
+
 async function showIndexControlPoints(): Promise<void> {
   try {
     const cps = await api.listControlPoints();
-    mapView.setIndexControlPoints(cps
-      .filter(cp => cp.est_lat !== null && cp.est_lng !== null)
-      .map(cp => ({
-        id: cp.id,
-        latlng: { lat: cp.est_lat!, lng: cp.est_lng! },
-        description: cp.description,
-      })));
+    for (const cp of cps) registerControlPoint(cp);
   } catch (err) {
     console.error('list control points failed:', err);
   }
+  refreshIndexControlPoints();
 }
 
 async function solveAndPersistControlPointLocation(id: string): Promise<void> {
@@ -508,8 +539,14 @@ function focusCameraOnImageMeasurement(id: string): boolean {
 }
 
 async function bootstrap(): Promise<void> {
+  // Map measurements are global (no station ownership). Load them up-front
+  // so both the station map and the index map can render them without an
+  // additional fetch later.
+  const mmReady = loadMapMeasurements();
+
   if (currentStationId) {
     await hydrateFromAPI(currentStationId);
+    await mmReady;
     const prefs = loadPrefs(currentStationId);
     settings.apply(prefs);
     if (prefs.tab !== undefined) viewTabs.setMode(prefs.tab);
@@ -528,7 +565,16 @@ async function bootstrap(): Promise<void> {
     }
   } else {
     void showStationMarkers();
-    void showIndexControlPoints();
+    const cpsReady = showIndexControlPoints();
+    if (focusIndexControlPointId) {
+      // Wait for the CP layer to populate before panning, or the lookup misses.
+      // applyLocationGate (below) flips to the map tab so the CPs actually draw.
+      void cpsReady.then(() => {
+        if (!mapView.focusIndexControlPoint(focusIndexControlPointId)) {
+          console.warn('focus control point not found:', focusIndexControlPointId);
+        }
+      });
+    }
   }
   sync.markLoaded();
   applyLocationGate();

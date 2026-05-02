@@ -228,3 +228,7 @@ export function stationHref(stationId: string, focusImageId?: string): string {
   return focusImageId ? `${base}?focus=${focusImageId}` : base;
 }
 export const FOCUS_QUERY_PARAM = 'focus';
+
+// Index map deep-link: pan/zoom and open the popup for a specific control point.
+export const indexCpHref = (cpId: string): string => `/?cp=${cpId}`;
+export const INDEX_CP_QUERY_PARAM = 'cp';

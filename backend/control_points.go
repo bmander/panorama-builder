@@ -217,9 +217,8 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 
 	maps := []ControlPointMapObservation{}
 	mRows, err := s.db.Query(r.Context(), `
-		SELECT m.id, m.lat, m.lng, m.station_id, st.name
+		SELECT m.id, m.lat, m.lng
 		FROM map_measurements m
-		JOIN stations st ON st.id = m.station_id
 		WHERE m.control_point_id = $1
 		ORDER BY m.created_at`, id)
 	if err != nil {
@@ -229,7 +228,7 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 	defer mRows.Close()
 	for mRows.Next() {
 		var o ControlPointMapObservation
-		if err := mRows.Scan(&o.ID, &o.Lat, &o.Lng, &o.StationID, &o.StationName); err != nil {
+		if err := mRows.Scan(&o.ID, &o.Lat, &o.Lng); err != nil {
 			writeErrorFromDB(w, err)
 			return
 		}
@@ -246,18 +245,16 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// controlPointsByStation returns CPs referenced by any image or map measurement
-// of this station. Cross-station CPs that aren't referenced from this station
-// are excluded.
+// controlPointsByStation returns CPs referenced by any image measurement on
+// this station's photos. Map measurements are global (not station-owned), so
+// they don't participate in this filter; the frontend pulls them via the
+// global list endpoint.
 func (s *Server) controlPointsByStation(ctx context.Context, stationID string) ([]ControlPoint, error) {
 	out := []ControlPoint{}
 	rows, err := s.db.Query(ctx, `
 		SELECT `+controlPointCols+`
 		FROM control_points cp
 		WHERE cp.id IN (
-		  SELECT control_point_id FROM map_measurements
-		  WHERE station_id = $1 AND control_point_id IS NOT NULL
-		  UNION
 		  SELECT im.control_point_id FROM image_measurements im
 		  JOIN photos p ON p.id = im.photo_id
 		  WHERE p.station_id = $1 AND im.control_point_id IS NOT NULL

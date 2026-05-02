@@ -167,7 +167,7 @@ export function createSyncManager({
       (id, val) => api.updatePhoto(id, val),
       api.deletePhoto, tasks);
     syncResource(currentMapMeasurements, synced.mapMeasurements, mapMeasurementsEqual,
-      (_id, val) => api.createMapMeasurement(locId, val),
+      (_id, val) => api.createMapMeasurement(val),
       (id, val) => api.updateMapMeasurement(id, val),
       api.deleteMapMeasurement, tasks);
     // Image measurements + control points are created via explicit handlers.

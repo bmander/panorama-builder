@@ -108,10 +108,12 @@ export function photoBlobUrl(id: string): string {
 
 // --- Map measurements ---
 
-export function createMapMeasurement(
-  stationId: string, body: MapMeasurementRequest,
-): Promise<ApiMapMeasurement> {
-  return request<ApiMapMeasurement>('POST', `/stations/${encodeURIComponent(stationId)}/map-measurements`, body);
+export function createMapMeasurement(body: MapMeasurementRequest): Promise<ApiMapMeasurement> {
+  return request<ApiMapMeasurement>('POST', '/map-measurements', body);
+}
+
+export function listMapMeasurements(): Promise<ApiMapMeasurement[]> {
+  return request<ApiMapMeasurement[]>('GET', '/map-measurements');
 }
 
 export function updateMapMeasurement(
