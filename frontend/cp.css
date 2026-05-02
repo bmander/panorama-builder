@@ -50,3 +50,15 @@ button.danger { font: inherit; color: #ff8080; background: transparent;
                 padding: 6px 12px; cursor: pointer; }
 button.danger:hover:not(:disabled) { background: rgba(255,128,128,0.12); }
 button.danger:disabled { opacity: 0.5; cursor: default; }
+
+/* Touch devices: scale text up roughly 1.6×. Layout stays the same. */
+@media (pointer: coarse) {
+  html, body { font-size: 22px; }
+  main { padding: 24px; }
+  .back { font-size: 18px; }
+  h1 { font-size: 32px; }
+  dl { font-size: 18px; gap: 10px 20px; }
+  .observations li { font-size: 18px; padding: 10px 12px; }
+  .actions { margin-top: 40px; }
+  button.danger { padding: 12px 20px; }
+}

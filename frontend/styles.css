@@ -100,3 +100,40 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
               display: flex; align-items: center; gap: 10px; max-width: 80vw; }
 #save-error[hidden] { display: none; }
 #save-error .btn { background: rgba(0,0,0,0.3); }
+
+/* Touch devices: scale chrome up so labels stay readable and buttons are
+   reachable with a fingertip. Roughly 2× the desktop sizing. */
+@media (pointer: coarse) {
+  /* Below the button row (which may wrap to two lines on narrow screens). */
+  #hud { font-size: 14px; top: auto; bottom: 14px; left: 14px; }
+  #map-coords { font-size: 18px; padding: 8px 14px; bottom: 50px; left: 14px; }
+  .btn { font-size: 16px; padding: 8px 12px; }
+  #top-right { top: 12px; right: 12px; gap: 6px; flex-wrap: wrap;
+               justify-content: flex-end; max-width: calc(100vw - 24px); }
+  #tabs { gap: 6px; }
+  #settings-panel { font-size: 18px; top: 56px; right: 12px;
+                    padding: 12px 16px; gap: 12px; min-width: 260px; }
+  .settings-row { gap: 8px; }
+  .settings-check { gap: 12px; }
+  .settings-inline { gap: 12px; }
+  .settings-inline select, .settings-inline input[type="datetime-local"] {
+    font-size: 18px; padding: 4px 8px;
+  }
+  .modal-panel { font-size: 18px; padding: 24px; gap: 18px; min-width: 360px; }
+  .modal-panel .modal-header .btn { padding: 6px 12px; }
+  .modal-field input[type="text"],
+  .modal-field input[type="datetime-local"] { font-size: 18px; padding: 8px 12px; }
+  .modal-actions { gap: 12px; }
+  .drop-zone { padding: 24px; min-height: 100px; }
+  .photo-thumb .remove { font-size: 22px; padding: 0 10px; }
+  #context-menu { font-size: 20px; min-width: 240px; }
+  #context-menu button { padding: 12px 18px; }
+  .cp-list { max-height: 60vh; padding: 8px; gap: 4px; }
+  .cp-row { padding: 8px 12px; gap: 12px; }
+  .cp-row .meta { font-size: 16px; }
+  .project-popup .leaflet-popup-content,
+  .index-cp-popup .leaflet-popup-content { font-size: 18px; margin: 12px 14px; }
+  .project-popup .go,
+  .index-cp-popup .go { font-size: 18px; padding: 8px 14px; }
+  #save-error { font-size: 18px; padding: 14px 20px; }
+}
