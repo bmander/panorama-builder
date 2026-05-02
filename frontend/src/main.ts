@@ -43,7 +43,10 @@ const focusImageMeasurementId: string | null = (() => {
 
 // Index mode (no station in URL) hides the station-scoped chrome — the
 // upper-right buttons + tabs only make sense once a station is loaded.
-if (currentStationId === null) getElement('top-right').hidden = true;
+if (currentStationId === null) {
+  getElement('top-right').hidden = true;
+  getElement('map-coords').hidden = true;
+}
 
 // --- Viewer + scene singletons -----------------------------------------
 
@@ -133,7 +136,6 @@ function refreshControlPointColumns(): void {
 }
 
 const coordsEl = getElement('map-coords');
-coordsEl.textContent = 'no location set — left-click a station marker, or click the map to start a new station';
 
 function applyCameraLocation(loc: LatLng): void {
   coordsEl.textContent = `lat ${loc.lat.toFixed(5)}  lng ${loc.lng.toFixed(5)}`;
