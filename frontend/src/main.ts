@@ -481,19 +481,16 @@ async function showStationPreview(id: string): Promise<void> {
     azL: p.photo_az - p.size_rad / 2,
     azR: p.photo_az + p.size_rad / 2,
   }));
-  // Linked CPs: any CP referenced by at least one image measurement, drawn at
-  // its est_lat/est_lng. CPs without an estimate are excluded from the dots.
-  const linkedCPIds = new Set<string>();
+  // Map.ts only colors CPs that appear in the index layer (those with
+  // est_lat/lng), so unestimated CPs in the set are silently ignored.
+  const observedCpIds = new Set<string>();
   for (const im of data.image_measurements) {
-    if (im.control_point_id !== null) linkedCPIds.add(im.control_point_id);
+    if (im.control_point_id !== null) observedCpIds.add(im.control_point_id);
   }
-  const linkedMapPOIs = data.control_points
-    .filter(cp => linkedCPIds.has(cp.id) && cp.est_lat !== null && cp.est_lng !== null)
-    .map(cp => ({ lat: cp.est_lat!, lng: cp.est_lng! }));
   mapView.setStationPreview({
     origin: { lat: data.station.lat, lng: data.station.lng },
     cones,
-    linkedMapPOIs,
+    observedCpIds,
   });
 }
 

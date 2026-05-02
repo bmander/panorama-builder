@@ -16,7 +16,9 @@ export interface StationMarker {
 export interface StationPreview {
   origin: LatLng;
   cones: Cone[];
-  linkedMapPOIs: readonly LatLng[];
+  // CP IDs observed by this station — turns the matching index dots green
+  // while the preview is active.
+  observedCpIds: ReadonlySet<string>;
 }
 
 export interface IndexControlPoint {
@@ -257,17 +259,15 @@ export function createMapView({
   // fetch and rendered relative to the station marker's own location.
   let stationPreview: StationPreview | null = null;
   const previewConeLayers: L.Polygon[] = [];
-  const previewDotLayers: L.CircleMarker[] = [];
-  const PREVIEW_DOT_STYLE: L.PathOptions = {
-    radius: 4, color: '#ff5050', weight: 1, fillColor: '#ff5050',
-    fillOpacity: 0.85, interactive: false,
-  } as L.CircleMarkerOptions;
   let indexControlPoints: readonly IndexControlPoint[] = [];
-  const indexCpDotLayers: L.CircleMarker[] = [];
-  const INDEX_CP_DOT_STYLE: L.PathOptions = {
-    radius: 3, color: '#ff5050', weight: 1, fillColor: '#ff5050',
-    fillOpacity: 0.9,
-  } as L.CircleMarkerOptions;
+  const indexCpDots = new Map<string, L.CircleMarker>();
+  const indexCpStyle = (color: string): L.PathOptions => ({
+    radius: 3, color, weight: 1, fillColor: color, fillOpacity: 0.9,
+  } as L.CircleMarkerOptions);
+  const INDEX_CP_DOT_STYLE = indexCpStyle('#ff5050');
+  const INDEX_CP_OBSERVED_STYLE = indexCpStyle('#50d050');
+  const styleForCp = (id: string): L.PathOptions =>
+    stationPreview?.observedCpIds.has(id) ? INDEX_CP_OBSERVED_STYLE : INDEX_CP_DOT_STYLE;
   const INDEX_CP_POPUP_OPTS: L.PopupOptions = { className: 'index-cp-popup', closeButton: true };
   const GO_POPUP_OPTS: L.PopupOptions = { className: 'station-popup', closeButton: true };
   const goButtonHtml = (label: string): string => `<button type="button" class="go">${label}</button>`;
@@ -406,7 +406,6 @@ export function createMapView({
   function redrawStationPreview(): void {
     if (!visible) return;
     while (previewConeLayers.length) map.removeLayer(previewConeLayers.pop()!);
-    while (previewDotLayers.length) map.removeLayer(previewDotLayers.pop()!);
     if (!stationPreview) return;
     const distM = screenDiagonalMeters();
     const origin = stationPreview.origin;
@@ -420,16 +419,17 @@ export function createMapView({
       ], CONE_STYLE).addTo(map);
       previewConeLayers.push(poly);
     }
-    for (const dot of stationPreview.linkedMapPOIs) {
-      previewDotLayers.push(L.circleMarker([dot.lat, dot.lng], PREVIEW_DOT_STYLE).addTo(map));
-    }
   }
 
+  // Rebuild the entire index-CP layer from `indexControlPoints`. Use only
+  // when the CP list itself changes; toggling preview state should call
+  // restyleIndexControlPoints() to avoid tearing down per-marker handlers.
   function redrawIndexControlPoints(): void {
     if (!visible) return;
-    while (indexCpDotLayers.length) map.removeLayer(indexCpDotLayers.pop()!);
+    for (const dot of indexCpDots.values()) map.removeLayer(dot);
+    indexCpDots.clear();
     for (const cp of indexControlPoints) {
-      const dot = L.circleMarker([cp.latlng.lat, cp.latlng.lng], INDEX_CP_DOT_STYLE);
+      const dot = L.circleMarker([cp.latlng.lat, cp.latlng.lng], styleForCp(cp.id));
       const openPopup = (): void => {
         const label = cp.description || `cp ${cp.id.slice(0, 6)}`;
         const popupHtml = `<span class="name">${escapeHtml(label)}</span>`
@@ -454,8 +454,18 @@ export function createMapView({
         L.DomEvent.stopPropagation(e);
       });
       dot.addTo(map);
-      indexCpDotLayers.push(dot);
+      indexCpDots.set(cp.id, dot);
     }
+  }
+
+  function restyleIndexControlPoints(): void {
+    for (const [id, dot] of indexCpDots) dot.setStyle(styleForCp(id));
+  }
+
+  function applyStationPreview(next: StationPreview | null): void {
+    stationPreview = next;
+    redrawStationPreview();
+    restyleIndexControlPoints();
   }
 
   function redrawAll(): void { redrawCones(); redrawPOIs(); redrawMapPoiAnchors(); redrawStationPreview(); redrawIndexControlPoints(); }
@@ -514,8 +524,7 @@ export function createMapView({
       redrawMapPoiAnchors();
     },
     setStationPreview(preview: StationPreview | null): void {
-      stationPreview = preview;
-      redrawStationPreview();
+      applyStationPreview(preview);
     },
     setIndexControlPoints(cps: readonly IndexControlPoint[]): void {
       indexControlPoints = cps;
@@ -544,10 +553,7 @@ export function createMapView({
             .setLatLng([p.latlng.lat, p.latlng.lng])
             .setContent(popupHtml)
             .openOn(map);
-          popup.on('remove', () => {
-            stationPreview = null;
-            redrawStationPreview();
-          });
+          popup.on('remove', () => { applyStationPreview(null); });
           onStationMarkerPreview?.(p.id);
           wireGoButton(popup, () => onStationMarkerOpen?.(p.id));
         });
