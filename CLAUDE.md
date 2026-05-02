@@ -7,7 +7,7 @@ Notes for future sessions in this repo.
 Monorepo with two top-level dirs:
 
 - **`frontend/`** — TypeScript frontend. Source under `frontend/src/`; `tsc` output lands in `frontend/build/` (gitignored); `frontend/index.html` loads `build/main.js`. Loads Three.js + Leaflet via importmap from unpkg — **no bundler, no dev server, no test suite, by design**.
-- **`backend/`** — Go HTTP API backed by Postgres + PostGIS. Also serves the frontend static files (`STATIC_DIR=../frontend` by default; SPA fallback for `/<station-id>` routes). Stores stations (camera setup points), photos with embedded pose, map measurements, image measurements (which optionally reference a control point to encode a "match"). Single binary, no framework. Runs locally via `docker compose` for the DB.
+- **`backend/`** — Go HTTP API backed by Postgres + PostGIS. Also serves the frontend static files (`STATIC_DIR=../frontend` by default; SPA fallback for `/station/<id>` and `/cp/<id>` routes). Stores stations (camera setup points), photos with embedded pose, map measurements, image measurements (which optionally reference a control point to encode a "match"). Single binary, no framework. Runs locally via `docker compose` for the DB.
 
 ## Frontend architecture
 
@@ -30,7 +30,7 @@ Factory functions, not classes. Each module exports a `createX({...}): X` factor
 - `main.ts` — wires everything; URL parsing, hydrate from API, diff-based sync via `flushSync`, async create handlers
 - `types.ts` — cross-cutting types **and** small shared helpers (`overlayData`, `poiData`, `meshMat`, `lineMat`, `getRole`, `getElement`, `Mutable<T>`)
 
-`main.ts` owns the solve loop. `runSolve()` is the single re-entrancy guard around `solveAllPhotos()`. The 360° tab is gated on `mapView.getLocation() !== null` via `applyLocationGate()`. The active station is identified by URL path `/<13-char-id>`; visiting `/` is the empty state.
+`main.ts` owns the solve loop. `runSolve()` is the single re-entrancy guard around `solveAllPhotos()`. The 360° tab is gated on `mapView.getLocation() !== null` via `applyLocationGate()`. The active station is identified by URL path `/station/<13-char-id>`; visiting `/` is the empty state.
 
 ## Backend architecture
 
@@ -98,7 +98,7 @@ Sole external dep: `github.com/jackc/pgx/v5`. Targets Go 1.22+ for stdlib method
 ### Frontend
 `cd frontend && npm run lint && npm run typecheck` should both exit 0, then `npm run build` (or `npm run watch`) to compile.
 
-The Go backend serves the frontend on `:8080`, so smoke tests are: bring up the backend (below), visit `http://localhost:8080/`, set a camera location → URL updates to `/<id>`, drop a JPEG. Browser console should be silent.
+The Go backend serves the frontend on `:8080`, so smoke tests are: bring up the backend (below), visit `http://localhost:8080/`, set a camera location → URL updates to `/station/<id>`, drop a JPEG. Browser console should be silent.
 
 ### Backend
 `go build ./... && go vet ./...` from `backend/` should exit 0. Then:

@@ -27,7 +27,7 @@ committed.
 
 Make sure the frontend has been built once: `cd ../frontend && npm install && npm run build`.
 
-Open <http://localhost:8080>. Setting a station pushes the URL to `/<id>`.
+Open <http://localhost:8080>. Setting a station pushes the URL to `/station/<id>`.
 
 ## Env vars
 
@@ -43,7 +43,7 @@ Open <http://localhost:8080>. Setting a station pushes the URL to `/<id>`.
 ## Routes
 
 API endpoints all live under `/api/`. Anything else is served from `STATIC_DIR`,
-falling back to `index.html` (SPA `/<id>` deep-links).
+falling back to `index.html` (SPA `/station/<id>` and `/cp/<id>` deep-links).
 
 | Method | Path                                |
 |--------|-------------------------------------|

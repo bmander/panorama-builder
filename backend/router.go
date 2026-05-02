@@ -59,7 +59,7 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 // spaFallback serves a static file if it exists under STATIC_DIR; otherwise
-// serves index.html. This makes path-based routes like /<station-id> work
+// serves index.html. This makes path-based routes like /station/<id> work
 // on hard refresh — the SPA reads location.pathname at startup.
 //
 // Only GET (and HEAD) requests are served; everything else falls through

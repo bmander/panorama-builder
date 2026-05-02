@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import * as api from './api.js';
 import { DEFAULT_SIZE_RAD } from './overlay.js';
-import { overlayData, poiData } from './types.js';
+import { overlayData, poiData, stationHref } from './types.js';
 import type { LatLng } from './types.js';
 import type { OverlayManager } from './overlay.js';
 import type { SyncManager } from './sync.js';
@@ -105,7 +105,7 @@ export function createOrchestration({
       alert(`Some photos couldn't be uploaded: ${failed.join(', ')}.\nThe station was created without them.`);
     }
 
-    location.assign('/' + created.id);
+    location.assign(stationHref(created.id));
   }
 
   async function readAspectRatio(file: File): Promise<number> {

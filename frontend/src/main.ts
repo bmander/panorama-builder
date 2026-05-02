@@ -27,7 +27,7 @@ import { solveControlPointLocation } from './cp-location-solver.js';
 
 // --- URL ↔ station id ---------------------------------------------------
 
-const ID_RE = /^\/([A-Z2-7]{13})$/;
+const ID_RE = /^\/station\/([A-Z2-7]{13})$/;
 function parseStationIdFromURL(): string | null {
   const m = ID_RE.exec(location.pathname);
   return m ? m[1]! : null;

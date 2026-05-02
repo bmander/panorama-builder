@@ -224,6 +224,7 @@ export const cpHref = (id: string): string => `/cp/${id}`;
 // Optional `focusImageId` deep-links the station page to recenter the 360°
 // camera on a specific image measurement after hydrate.
 export function stationHref(stationId: string, focusImageId?: string): string {
-  return focusImageId ? `/${stationId}?focus=${focusImageId}` : `/${stationId}`;
+  const base = `/station/${stationId}`;
+  return focusImageId ? `${base}?focus=${focusImageId}` : base;
 }
 export const FOCUS_QUERY_PARAM = 'focus';
