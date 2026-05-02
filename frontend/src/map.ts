@@ -1,6 +1,7 @@
 import * as L from 'leaflet';
 import type * as THREE from 'three';
 import { R_EARTH, bearingFromLocation, viewerAzToBearing, bearingToViewerAz } from './geo.js';
+import { cpHref } from './types.js';
 import type { Cone, LatLng, MapMeasurementView, ImageMeasurementBearing } from './types.js';
 import { TILE_PX, fetchTileElevations, tileYToLat } from './dem.js';
 
@@ -382,7 +383,7 @@ export function createMapView({
         L.DomEvent.stopPropagation(e);
         if (!view.controlPointId) return;
         const popupHtml = `<span class="name">cp ${escapeHtml(view.controlPointId.slice(0, 6))}</span>`
-          + `<a class="go" href="/cp/${view.controlPointId}">View details →</a>`
+          + `<a class="go" href="${cpHref(view.controlPointId)}">View details →</a>`
           + solveButtonHtml();
         const popup = L.popup(INDEX_CP_POPUP_OPTS)
           .setLatLng([view.latlng.lat, view.latlng.lng])
@@ -432,7 +433,7 @@ export function createMapView({
       const openPopup = (): void => {
         const label = cp.description || `cp ${cp.id.slice(0, 6)}`;
         const popupHtml = `<span class="name">${escapeHtml(label)}</span>`
-          + `<a class="go" href="/cp/${cp.id}">View details →</a>`
+          + `<a class="go" href="${cpHref(cp.id)}">View details →</a>`
           + solveButtonHtml();
         const popup = L.popup(INDEX_CP_POPUP_OPTS)
           .setLatLng([cp.latlng.lat, cp.latlng.lng])

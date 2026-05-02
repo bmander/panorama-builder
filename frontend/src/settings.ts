@@ -5,7 +5,7 @@
 import { HAZE_DENSITY_MAX } from './viewer.js';
 import { savePrefs, type Prefs } from './prefs.js';
 import { solarAzAlt } from './solar.js';
-import { getElement } from './types.js';
+import { formatLocalDateTime, getElement } from './types.js';
 import type { LatLng } from './types.js';
 import type { Viewer } from './viewer.js';
 import type { TerrainView, TerrainMode } from './terrain.js';
@@ -39,11 +39,6 @@ function hazeSliderToDensity(v: number): number {
 function hazeDensityToSlider(d: number): number {
   if (d <= 0) return 0;
   return Math.pow(d / HAZE_DENSITY_MAX, 1 / HAZE_SLIDER_EXPONENT) * 100;
-}
-
-function pad2(n: number): string { return String(n).padStart(2, '0'); }
-export function formatLocalDateTime(d: Date): string {
-  return `${d.getFullYear().toString()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
 export function createSettingsPanel({

@@ -4,9 +4,8 @@
 // with the new project. The actual create + upload happens in the caller's
 // onSubmit; the modal owns form state and the disabled-while-pending latch.
 
-import { getElement } from './types.js';
+import { formatLocalDateTime, getElement } from './types.js';
 import type { LatLng } from './types.js';
-import { formatLocalDateTime } from './settings.js';
 
 export interface StartProjectModal {
   open(loc: LatLng): void;

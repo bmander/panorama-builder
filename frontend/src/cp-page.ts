@@ -1,6 +1,5 @@
 import * as api from './api.js';
-import { formatLocalDateTime } from './settings.js';
-import { getElement } from './types.js';
+import { formatLocalDateTime, getElement } from './types.js';
 
 const CP_ID_RE = /^\/cp\/([A-Z2-7]{13})$/;
 

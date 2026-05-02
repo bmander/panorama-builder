@@ -210,3 +210,13 @@ export const getElement = <T extends HTMLElement = HTMLElement>(id: string): T =
   if (!el) throw new Error(`Missing required element #${id}`);
   return el as T;
 };
+
+// Wall-clock string in the form `<input type="datetime-local">` accepts:
+// 'YYYY-MM-DDTHH:mm', no zone suffix.
+const pad2 = (n: number): string => String(n).padStart(2, '0');
+export function formatLocalDateTime(d: Date): string {
+  return `${d.getFullYear().toString()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+    + `T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+export const cpHref = (id: string): string => `/cp/${id}`;

@@ -9,7 +9,7 @@ import { createTerrainView } from './terrain.js';
 import { createSunMarker } from './sun-marker.js';
 import { createControlPointColumns, findHitColumn } from './map-poi-columns.js';
 import type { ControlPointColumn } from './map-poi-columns.js';
-import { getElement, overlayData } from './types.js';
+import { cpHref, getElement, overlayData, poiData } from './types.js';
 import type { LatLng } from './types.js';
 import * as api from './api.js';
 import type { ApiControlPoint, ApiHydratedLocation, ApiLocation } from './api.js';
@@ -298,6 +298,13 @@ const input = attachInput({
   onPhotoBodyContextMenu: (overlay, u, v, sx, sy) => {
     contextMenu.open(sx, sy, [
       { label: 'Add observation here', onClick: () => { observationModal.open(overlay, u, v); } },
+    ]);
+  },
+  onImagePOIContextMenu: (poi, sx, sy) => {
+    const cpId = poiData(poi).controlPointId;
+    if (!cpId) return;
+    contextMenu.open(sx, sy, [
+      { label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } },
     ]);
   },
 });

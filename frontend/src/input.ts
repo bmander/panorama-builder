@@ -78,9 +78,10 @@ export interface AttachInputOptions {
   onPhotoBodyContextMenu?: (
     overlay: THREE.Group, u: number, v: number, screenX: number, screenY: number,
   ) => void;
+  onImagePOIContextMenu?: (poi: THREE.Mesh, screenX: number, screenY: number) => void;
 }
 
-export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddImagePOI, onMatchImagePOI, onShiftWheel, onPoiArmChange, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu }: AttachInputOptions): InputController {
+export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddImagePOI, onMatchImagePOI, onShiftWheel, onPoiArmChange, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu }: AttachInputOptions): InputController {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -240,14 +241,23 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
   });
 
   canvas.addEventListener('contextmenu', (e: MouseEvent) => {
-    if (!onPhotoBodyContextMenu || mode) return;
+    if (mode) return;
     ndcFromEvent(e);
     raycaster.setFromCamera(ndc, camera);
-    const bodyHit = raycastOverlays().find(h => getRole(h.object) === ROLE_BODY);
-    if (!bodyHit?.uv) return;
-    e.preventDefault();
-    const o = bodyHit.object.parent as THREE.Group;
-    onPhotoBodyContextMenu(o, bodyHit.uv.x, bodyHit.uv.y, e.clientX, e.clientY);
+    const hits = raycastOverlays();
+    // POI sits visually on top of body, so a hit on both means the user
+    // targeted the POI.
+    const poiHit = hits.find(h => getRole(h.object) === ROLE_POI);
+    if (poiHit && onImagePOIContextMenu) {
+      e.preventDefault();
+      onImagePOIContextMenu(poiHit.object as THREE.Mesh, e.clientX, e.clientY);
+      return;
+    }
+    const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
+    if (bodyHit?.uv && onPhotoBodyContextMenu) {
+      e.preventDefault();
+      onPhotoBodyContextMenu(bodyHit.object.parent as THREE.Group, bodyHit.uv.x, bodyHit.uv.y, e.clientX, e.clientY);
+    }
   });
 
   function endDrag(): void {
