@@ -9,11 +9,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const controlPointCols = `id, description, est_lat, est_lng, est_alt, created_at, updated_at`
+const controlPointCols = `id, description, notes, est_lat, est_lng, est_alt, started_at, ended_at, created_at, updated_at`
 
 func scanControlPoint(row pgx.Row) (ControlPoint, error) {
 	var cp ControlPoint
-	err := row.Scan(&cp.ID, &cp.Description, &cp.EstLat, &cp.EstLng, &cp.EstAlt, &cp.CreatedAt, &cp.UpdatedAt)
+	err := row.Scan(&cp.ID, &cp.Description, &cp.Notes, &cp.EstLat, &cp.EstLng, &cp.EstAlt, &cp.StartedAt, &cp.EndedAt, &cp.CreatedAt, &cp.UpdatedAt)
 	return cp, err
 }
 
@@ -30,11 +30,16 @@ func (s *Server) postControlPoint(w http.ResponseWriter, r *http.Request) {
 	if req.Description != nil {
 		desc = *req.Description
 	}
+	notes := ""
+	if req.Notes != nil {
+		notes = *req.Notes
+	}
 	id := newID()
-	q := `INSERT INTO control_points (id, description, est_lat, est_lng, est_alt)
-	      VALUES ($1, $2, $3, $4, $5)
+	q := `INSERT INTO control_points (id, description, notes, est_lat, est_lng, est_alt, started_at, ended_at)
+	      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	      RETURNING ` + controlPointCols
-	cp, err := scanControlPoint(s.db.QueryRow(r.Context(), q, id, desc, req.EstLat, req.EstLng, req.EstAlt))
+	cp, err := scanControlPoint(s.db.QueryRow(r.Context(), q, id, desc, notes,
+		req.EstLat, req.EstLng, req.EstAlt, req.StartedAt, req.EndedAt))
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -120,16 +125,22 @@ func (s *Server) putControlPoint(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
-	// COALESCE the existing value when a field is omitted from the patch.
+	// description / notes COALESCE so omitting keeps the existing value;
+	// the other fields are unconditional `=`, so callers must always include
+	// them in the patch or they'll be cleared.
 	q := `UPDATE control_points SET
 	        description = COALESCE($2, description),
-	        est_lat     = $3,
-	        est_lng     = $4,
-	        est_alt     = $5,
+	        notes       = COALESCE($3, notes),
+	        est_lat     = $4,
+	        est_lng     = $5,
+	        est_alt     = $6,
+	        started_at  = $7,
+	        ended_at    = $8,
 	        updated_at  = NOW()
 	      WHERE id = $1
 	      RETURNING ` + controlPointCols
-	cp, err := scanControlPoint(s.db.QueryRow(r.Context(), q, id, req.Description, req.EstLat, req.EstLng, req.EstAlt))
+	cp, err := scanControlPoint(s.db.QueryRow(r.Context(), q, id, req.Description, req.Notes,
+		req.EstLat, req.EstLng, req.EstAlt, req.StartedAt, req.EndedAt))
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -174,7 +185,9 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 
 	images := []ControlPointImageObservation{}
 	imRows, err := s.db.Query(r.Context(), `
-		SELECT im.id, im.photo_id, im.u, im.v, p.location_id, l.name
+		SELECT im.id, im.photo_id, im.u, im.v,
+		       p.location_id, l.name, l.lat, l.lng,
+		       p.photo_az, p.photo_tilt, p.photo_roll, p.size_rad, p.aspect
 		FROM image_measurements im
 		JOIN photos p    ON p.id = im.photo_id
 		JOIN locations l ON l.id = p.location_id
@@ -187,7 +200,11 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 	defer imRows.Close()
 	for imRows.Next() {
 		var o ControlPointImageObservation
-		if err := imRows.Scan(&o.ID, &o.PhotoID, &o.U, &o.V, &o.LocationID, &o.LocationName); err != nil {
+		if err := imRows.Scan(
+			&o.ID, &o.PhotoID, &o.U, &o.V,
+			&o.LocationID, &o.LocationName, &o.LocationLat, &o.LocationLng,
+			&o.PhotoAz, &o.PhotoTilt, &o.PhotoRoll, &o.SizeRad, &o.Aspect,
+		); err != nil {
 			writeErrorFromDB(w, err)
 			return
 		}

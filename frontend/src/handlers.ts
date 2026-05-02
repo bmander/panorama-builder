@@ -182,6 +182,7 @@ export function createOrchestration({
   function pushControlPoint(cp: api.ApiControlPoint): void {
     sync.registerControlPoint(cp.id, {
       description: cp.description, est_lat: cp.est_lat, est_lng: cp.est_lng, est_alt: cp.est_alt,
+      started_at: cp.started_at, ended_at: cp.ended_at,
     });
     overlays.addControlPoint(cp.id, {
       description: cp.description, estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,

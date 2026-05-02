@@ -390,6 +390,8 @@ export interface components {
         ControlPoint: {
             id: components["schemas"]["Id"];
             description: string;
+            /** @description free-form prose describing the control point in detail */
+            notes: string;
             /** Format: double */
             est_lat: number | null;
             /** Format: double */
@@ -399,6 +401,16 @@ export interface components {
              * @description meters above sea level
              */
             est_alt: number | null;
+            /**
+             * Format: date-time
+             * @description when the landmark began existing
+             */
+            started_at: string | null;
+            /**
+             * Format: date-time
+             * @description when the landmark ceased to exist
+             */
+            ended_at: string | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -413,6 +425,20 @@ export interface components {
             v: number;
             location_id: components["schemas"]["Id"];
             location_name: string | null;
+            /** Format: double */
+            location_lat: number;
+            /** Format: double */
+            location_lng: number;
+            /** Format: double */
+            photo_az: number;
+            /** Format: double */
+            photo_tilt: number;
+            /** Format: double */
+            photo_roll: number;
+            /** Format: double */
+            size_rad: number;
+            /** Format: double */
+            aspect: number;
         };
         ControlPointMapObservation: {
             id: components["schemas"]["Id"];
@@ -476,12 +502,17 @@ export interface components {
         };
         ControlPointPatch: {
             description?: string;
+            notes?: string;
             /** Format: double */
             est_lat?: number | null;
             /** Format: double */
             est_lng?: number | null;
             /** Format: double */
             est_alt?: number | null;
+            /** Format: date-time */
+            started_at?: string | null;
+            /** Format: date-time */
+            ended_at?: string | null;
         };
     };
     responses: {

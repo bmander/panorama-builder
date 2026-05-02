@@ -74,6 +74,7 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .index-cp-popup .go { display: inline-block; padding: 4px 8px; background: #1a73e8;
                      color: #fff; text-decoration: none; cursor: pointer;
                      border: none; font: 12px monospace; }
+.index-cp-popup .go + .go { margin-left: 6px; }
 .index-cp-popup .go:hover { background: #155bbd; }
 #context-menu { position: fixed; background: rgba(0,0,0,0.9); color: #fff;
                 border: 1px solid #fff; font: 12px monospace; z-index: 2500;

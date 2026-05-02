@@ -12,7 +12,7 @@ import type { ControlPointColumn } from './map-poi-columns.js';
 import { getElement, overlayData } from './types.js';
 import type { LatLng } from './types.js';
 import * as api from './api.js';
-import type { ApiHydratedLocation, ApiLocation } from './api.js';
+import type { ApiControlPoint, ApiHydratedLocation, ApiLocation } from './api.js';
 import { loadPrefs } from './prefs.js';
 import { createSyncManager } from './sync.js';
 import { createSolverLoop } from './solver-loop.js';
@@ -22,6 +22,7 @@ import { createAdminModal } from './admin-modal.js';
 import { createStartProjectModal } from './start-project-modal.js';
 import { createContextMenu } from './context-menu.js';
 import { createObservationModal } from './observation-modal.js';
+import { solveControlPointLocation } from './cp-location-solver.js';
 
 // --- URL ↔ project id ---------------------------------------------------
 
@@ -145,6 +146,37 @@ function applyLocationGate(): void {
   if (!hasLocation && viewTabs.getMode() === '360') viewTabs.setMode('map');
 }
 
+function registerControlPoint(cp: ApiControlPoint): void {
+  if (overlays.getControlPointById(cp.id) !== null) return;
+  overlays.addControlPoint(cp.id, {
+    description: cp.description, estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,
+  });
+  sync.registerControlPoint(cp.id, {
+    description: cp.description, est_lat: cp.est_lat, est_lng: cp.est_lng, est_alt: cp.est_alt,
+    started_at: cp.started_at, ended_at: cp.ended_at,
+  });
+}
+
+function syncControlPoint(cp: ApiControlPoint): void {
+  sync.registerControlPoint(cp.id, {
+    description: cp.description, est_lat: cp.est_lat, est_lng: cp.est_lng, est_alt: cp.est_alt,
+    started_at: cp.started_at, ended_at: cp.ended_at,
+  });
+  if (overlays.getControlPointById(cp.id) === null) {
+    overlays.addControlPoint(cp.id, {
+      description: cp.description, estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,
+    });
+    return;
+  }
+  overlays.withBatch(() => {
+    overlays.setControlPointDescription(cp.id, cp.description);
+    overlays.setControlPointEst(
+      cp.id,
+      cp.est_lat === null || cp.est_lng === null ? null : { lat: cp.est_lat, lng: cp.est_lng },
+    );
+  });
+}
+
 // --- Sync, solver, settings, handlers, admin ---------------------------
 
 const sync = createSyncManager({
@@ -204,6 +236,7 @@ const mapView = createMapView({
   onProjectMarkerOpen: id => { location.assign('/' + id); },
   onProjectMarkerPreview: id => { void showProjectPreview(id); },
   onStartProjectHere: loc => { startProjectModal.open(loc); },
+  onControlPointSolveLocation: id => { void solveAndPersistControlPointLocation(id); },
 });
 
 const SHIFT_WHEEL_LOG_PER_PX = 0.005;
@@ -323,12 +356,14 @@ async function hydrateFromAPI(id: string): Promise<void> {
 
   // Control points first so subsequent measurement adds reference an existing CP entry.
   for (const cp of data.control_points) {
-    overlays.addControlPoint(cp.id, {
-      description: cp.description, estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,
-    });
-    sync.registerControlPoint(cp.id, {
-      description: cp.description, est_lat: cp.est_lat, est_lng: cp.est_lng, est_alt: cp.est_alt,
-    });
+    registerControlPoint(cp);
+  }
+
+  try {
+    const cps = await api.listControlPoints();
+    for (const cp of cps) registerControlPoint(cp);
+  } catch (err) {
+    console.error('list control points failed:', err);
   }
 
   for (const m of data.map_measurements) {
@@ -375,6 +410,44 @@ async function showIndexControlPoints(): Promise<void> {
   } catch (err) {
     console.error('list control points failed:', err);
   }
+}
+
+async function solveAndPersistControlPointLocation(id: string): Promise<void> {
+  let cp: ApiControlPoint;
+  let obs: api.ApiControlPointObservations;
+  try {
+    [cp, obs] = await Promise.all([
+      api.getControlPoint(id),
+      api.listControlPointObservations(id),
+    ]);
+  } catch (err) {
+    sync.reportError('load control point observations', err);
+    return;
+  }
+
+  const result = solveControlPointLocation(cp, obs);
+  if (!result) {
+    sync.reportError('solve control point location', new Error('not enough observations'));
+    return;
+  }
+
+  let updated: ApiControlPoint;
+  try {
+    updated = await api.updateControlPoint(id, {
+      description: cp.description,
+      est_lat: result.latlng.lat,
+      est_lng: result.latlng.lng,
+      est_alt: cp.est_alt,
+      started_at: cp.started_at,
+      ended_at: cp.ended_at,
+    });
+  } catch (err) {
+    sync.reportError('save solved control point location', err);
+    return;
+  }
+
+  syncControlPoint(updated);
+  if (!currentLocationId) void showIndexControlPoints();
 }
 
 async function showProjectPreview(id: string): Promise<void> {

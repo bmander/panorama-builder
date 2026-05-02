@@ -4,13 +4,35 @@ main { max-width: 640px; margin: 0 auto; padding: 32px; }
 .back { color: #5080ff; text-decoration: none; font-size: 12px; }
 .back:hover { text-decoration: underline; }
 h1 { font-size: 22px; margin: 16px 0 24px; word-break: break-word; }
+h1.editable { cursor: text; border-radius: 3px;
+              padding: 2px 6px; margin-left: -6px; margin-right: -6px; }
+h1.editable:hover { background: rgba(255,255,255,0.06); }
+h1 input.name-edit { font: inherit; color: inherit; background: #000;
+                     border: 1px solid #5080ff; border-radius: 3px;
+                     padding: 1px 5px; width: 100%; box-sizing: border-box;
+                     outline: none; }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px;
      font-size: 12px; margin: 0; }
 dt { color: #aaa; margin: 0; }
 dd { margin: 0; }
 dd.empty { color: #888; font-style: italic; }
+dd.editable { cursor: text; padding: 1px 4px; margin-left: -4px; border-radius: 3px; }
+dd.editable:hover { background: rgba(255,255,255,0.06); }
+dd input.date-edit { font: inherit; color: inherit; background: #000;
+                     border: 1px solid #5080ff; border-radius: 3px;
+                     padding: 0 4px; outline: none; color-scheme: dark; }
 h2 { font-size: 14px; color: #aaa; margin: 32px 0 8px; font-weight: normal;
      text-transform: uppercase; letter-spacing: 0.05em; }
+.notes { font: inherit; line-height: 1.5; white-space: pre-wrap;
+         word-break: break-word; padding: 8px; border-radius: 3px;
+         background: rgba(255,255,255,0.04); cursor: text;
+         min-height: 1.5em; }
+.notes:hover { background: rgba(255,255,255,0.08); }
+.notes.empty { color: #888; font-style: italic; }
+.notes textarea { font: inherit; color: inherit; background: #000;
+                  border: 1px solid #5080ff; border-radius: 3px;
+                  padding: 6px 8px; width: 100%; box-sizing: border-box;
+                  outline: none; resize: vertical; min-height: 6em; }
 .observations { list-style: none; margin: 0; padding: 0;
                 display: flex; flex-direction: column; gap: 4px; }
 .observations li { display: flex; gap: 12px; padding: 6px 8px;
@@ -22,3 +44,9 @@ h2 { font-size: 14px; color: #aaa; margin: 32px 0 8px; font-weight: normal;
 .observations a:hover { text-decoration: underline; }
 .observations .meta { color: #888; }
 .observations .empty { color: #888; font-style: italic; padding: 6px 8px; }
+.actions { margin-top: 32px; }
+button.danger { font: inherit; color: #ff8080; background: transparent;
+                border: 1px solid #ff8080; border-radius: 3px;
+                padding: 6px 12px; cursor: pointer; }
+button.danger:hover:not(:disabled) { background: rgba(255,128,128,0.12); }
+button.danger:disabled { opacity: 0.5; cursor: default; }

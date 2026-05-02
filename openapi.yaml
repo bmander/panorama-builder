@@ -581,19 +581,35 @@ components:
         measurements. The estimated location (est_lat / est_lng /
         est_alt) is updated by the solver as observations accumulate;
         for v1 the estimate mirrors any linked map measurement.
-      required: [id, description, est_lat, est_lng, est_alt, created_at, updated_at]
+      required: [id, description, notes, est_lat, est_lng, est_alt, started_at, ended_at, created_at, updated_at]
       properties:
         id: { $ref: '#/components/schemas/Id' }
         description: { type: string }
+        notes: { type: string, description: free-form prose describing the control point in detail }
         est_lat: { type: number, format: double, nullable: true, minimum: -90, maximum: 90 }
         est_lng: { type: number, format: double, nullable: true, minimum: -180, maximum: 180 }
         est_alt: { type: number, format: double, nullable: true, description: meters above sea level }
+        started_at: { type: string, format: date-time, nullable: true, description: when the landmark began existing }
+        ended_at: { type: string, format: date-time, nullable: true, description: when the landmark ceased to exist }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
     ControlPointImageObservation:
       type: object
-      required: [id, photo_id, u, v, location_id, location_name]
+      required:
+        - id
+        - photo_id
+        - u
+        - v
+        - location_id
+        - location_name
+        - location_lat
+        - location_lng
+        - photo_az
+        - photo_tilt
+        - photo_roll
+        - size_rad
+        - aspect
       properties:
         id: { $ref: '#/components/schemas/Id' }
         photo_id: { $ref: '#/components/schemas/Id' }
@@ -601,6 +617,13 @@ components:
         v: { type: number, format: double, minimum: 0, maximum: 1 }
         location_id: { $ref: '#/components/schemas/Id' }
         location_name: { type: string, nullable: true }
+        location_lat: { type: number, format: double, minimum: -90, maximum: 90 }
+        location_lng: { type: number, format: double, minimum: -180, maximum: 180 }
+        photo_az: { type: number, format: double }
+        photo_tilt: { type: number, format: double }
+        photo_roll: { type: number, format: double }
+        size_rad: { type: number, format: double }
+        aspect: { type: number, format: double }
 
     ControlPointMapObservation:
       type: object
@@ -688,6 +711,9 @@ components:
       type: object
       properties:
         description: { type: string }
+        notes: { type: string }
         est_lat: { type: number, format: double, nullable: true, minimum: -90, maximum: 90 }
         est_lng: { type: number, format: double, nullable: true, minimum: -180, maximum: 180 }
         est_alt: { type: number, format: double, nullable: true }
+        started_at: { type: string, format: date-time, nullable: true }
+        ended_at: { type: string, format: date-time, nullable: true }

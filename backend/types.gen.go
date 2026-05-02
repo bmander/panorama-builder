@@ -16,29 +16,46 @@ type ControlPoint struct {
 	CreatedAt   time.Time `json:"created_at"`
 	Description string    `json:"description"`
 
+	// EndedAt when the landmark ceased to exist
+	EndedAt *time.Time `json:"ended_at"`
+
 	// EstAlt meters above sea level
 	EstAlt *float64 `json:"est_alt"`
 	EstLat *float64 `json:"est_lat"`
 	EstLng *float64 `json:"est_lng"`
 
 	// ID 13-character base32 server-assigned id
-	ID        ID        `json:"id"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID ID `json:"id"`
+
+	// Notes free-form prose describing the control point in detail
+	Notes string `json:"notes"`
+
+	// StartedAt when the landmark began existing
+	StartedAt *time.Time `json:"started_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 // ControlPointImageObservation defines model for ControlPointImageObservation.
 type ControlPointImageObservation struct {
+	Aspect float64 `json:"aspect"`
+
 	// ID 13-character base32 server-assigned id
 	ID ID `json:"id"`
 
 	// LocationID 13-character base32 server-assigned id
 	LocationID   ID      `json:"location_id"`
+	LocationLat  float64 `json:"location_lat"`
+	LocationLng  float64 `json:"location_lng"`
 	LocationName *string `json:"location_name"`
+	PhotoAz      float64 `json:"photo_az"`
 
 	// PhotoID 13-character base32 server-assigned id
-	PhotoID ID      `json:"photo_id"`
-	U       float64 `json:"u"`
-	V       float64 `json:"v"`
+	PhotoID   ID      `json:"photo_id"`
+	PhotoRoll float64 `json:"photo_roll"`
+	PhotoTilt float64 `json:"photo_tilt"`
+	SizeRad   float64 `json:"size_rad"`
+	U         float64 `json:"u"`
+	V         float64 `json:"v"`
 }
 
 // ControlPointMapObservation defines model for ControlPointMapObservation.
@@ -61,10 +78,13 @@ type ControlPointObservations struct {
 
 // ControlPointPatch defines model for ControlPointPatch.
 type ControlPointPatch struct {
-	Description *string  `json:"description,omitempty"`
-	EstAlt      *float64 `json:"est_alt,omitempty"`
-	EstLat      *float64 `json:"est_lat,omitempty"`
-	EstLng      *float64 `json:"est_lng,omitempty"`
+	Description *string    `json:"description,omitempty"`
+	EndedAt     *time.Time `json:"ended_at,omitempty"`
+	EstAlt      *float64   `json:"est_alt,omitempty"`
+	EstLat      *float64   `json:"est_lat,omitempty"`
+	EstLng      *float64   `json:"est_lng,omitempty"`
+	Notes       *string    `json:"notes,omitempty"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
 }
 
 // CreateLocationRequest defines model for CreateLocationRequest.

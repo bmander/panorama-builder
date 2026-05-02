@@ -56,6 +56,7 @@ export interface CreateMapViewOptions {
   onProjectMarkerOpen?: (id: string) => void;
   onProjectMarkerPreview?: (id: string) => void;
   onStartProjectHere?: (latlng: LatLng) => void;
+  onControlPointSolveLocation?: (id: string) => void;
   onShowRefresh?: () => void;
   onMapPoiArmedChange?: (armed: boolean) => void;
 }
@@ -177,6 +178,7 @@ export function createMapView({
   onProjectMarkerOpen,
   onProjectMarkerPreview,
   onStartProjectHere,
+  onControlPointSolveLocation,
   onShowRefresh,
   onMapPoiArmedChange,
 }: CreateMapViewOptions): MapView {
@@ -268,6 +270,7 @@ export function createMapView({
   const INDEX_CP_POPUP_OPTS: L.PopupOptions = { className: 'index-cp-popup', closeButton: true };
   const GO_POPUP_OPTS: L.PopupOptions = { className: 'project-popup', closeButton: true };
   const goButtonHtml = (label: string): string => `<button type="button" class="go">${label}</button>`;
+  const solveButtonHtml = (): string => '<button type="button" class="go solve-location">Solve location</button>';
   function wireGoButton(popup: L.Popup, onClick: () => void): void {
     const btn = popup.getElement()?.querySelector<HTMLButtonElement>('.go');
     btn?.addEventListener('click', () => {
@@ -364,10 +367,6 @@ export function createMapView({
           const ll = (e.target as L.Marker).getLatLng();
           onMapPoiDragged?.(id, ll);
         });
-        m.on('click', (e: L.LeafletMouseEvent) => {
-          onMapPoiClick?.(id);
-          L.DomEvent.stopPropagation(e);
-        });
         mapPoiMarkers.set(id, { marker: m, selected: view.selected });
       } else {
         existing.marker.setLatLng([view.latlng.lat, view.latlng.lng]);
@@ -376,6 +375,30 @@ export function createMapView({
           existing.selected = view.selected;
         }
       }
+      const entry = mapPoiMarkers.get(id)!;
+      entry.marker.off('click');
+      entry.marker.on('click', (e: L.LeafletMouseEvent) => {
+        onMapPoiClick?.(id);
+        L.DomEvent.stopPropagation(e);
+        if (!view.controlPointId) return;
+        const popupHtml = `<span class="name">cp ${escapeHtml(view.controlPointId.slice(0, 6))}</span>`
+          + `<a class="go" href="/cp/${view.controlPointId}">View details →</a>`
+          + solveButtonHtml();
+        const popup = L.popup(INDEX_CP_POPUP_OPTS)
+          .setLatLng([view.latlng.lat, view.latlng.lng])
+          .setContent(popupHtml)
+          .openOn(map);
+        const solveBtn = popup.getElement()?.querySelector<HTMLButtonElement>('.solve-location');
+        solveBtn?.addEventListener('click', () => {
+          map.closePopup(popup);
+          onControlPointSolveLocation?.(view.controlPointId!);
+        }, { once: true });
+      });
+      entry.marker.off('contextmenu');
+      entry.marker.on('contextmenu', (e: L.LeafletMouseEvent) => {
+        L.DomEvent.preventDefault(e.originalEvent);
+        L.DomEvent.stopPropagation(e);
+      });
     }
   }
 
@@ -406,15 +429,28 @@ export function createMapView({
     while (indexCpDotLayers.length) map.removeLayer(indexCpDotLayers.pop()!);
     for (const cp of indexControlPoints) {
       const dot = L.circleMarker([cp.latlng.lat, cp.latlng.lng], INDEX_CP_DOT_STYLE);
-      dot.on('click', (e: L.LeafletMouseEvent) => {
-        L.DomEvent.stopPropagation(e);
+      const openPopup = (): void => {
         const label = cp.description || `cp ${cp.id.slice(0, 6)}`;
         const popupHtml = `<span class="name">${escapeHtml(label)}</span>`
-          + `<a class="go" href="/cp/${cp.id}">View details →</a>`;
-        L.popup(INDEX_CP_POPUP_OPTS)
+          + `<a class="go" href="/cp/${cp.id}">View details →</a>`
+          + solveButtonHtml();
+        const popup = L.popup(INDEX_CP_POPUP_OPTS)
           .setLatLng([cp.latlng.lat, cp.latlng.lng])
           .setContent(popupHtml)
           .openOn(map);
+        const solveBtn = popup.getElement()?.querySelector<HTMLButtonElement>('.solve-location');
+        solveBtn?.addEventListener('click', () => {
+          map.closePopup(popup);
+          onControlPointSolveLocation?.(cp.id);
+        }, { once: true });
+      };
+      dot.on('click', (e: L.LeafletMouseEvent) => {
+        L.DomEvent.stopPropagation(e);
+        openPopup();
+      });
+      dot.on('contextmenu', (e: L.LeafletMouseEvent) => {
+        L.DomEvent.preventDefault(e.originalEvent);
+        L.DomEvent.stopPropagation(e);
       });
       dot.addTo(map);
       indexCpDotLayers.push(dot);
