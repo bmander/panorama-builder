@@ -535,13 +535,20 @@ export function createMapView({
         const m = L.marker([p.latlng.lat, p.latlng.lng]);
         m.on('click', (e: L.LeafletMouseEvent) => {
           L.DomEvent.stopPropagation(e);
-          onStationMarkerPreview?.(p.id);
           const popupHtml = `<span class="name">${escapeHtml(p.label)}</span>`
             + goButtonHtml('Go to station →');
+          // openOn auto-closes any prior popup; that fires its 'remove' event
+          // which clears the previous station's preview before we kick off
+          // the new one below.
           const popup = L.popup(GO_POPUP_OPTS)
             .setLatLng([p.latlng.lat, p.latlng.lng])
             .setContent(popupHtml)
             .openOn(map);
+          popup.on('remove', () => {
+            stationPreview = null;
+            redrawStationPreview();
+          });
+          onStationMarkerPreview?.(p.id);
           wireGoButton(popup, () => onStationMarkerOpen?.(p.id));
         });
         m.on('contextmenu', (e: L.LeafletMouseEvent) => {
