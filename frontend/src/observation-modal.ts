@@ -1,16 +1,14 @@
 // Modal opened from the photo-body right-click context menu (image mode) or
-// from the index-map right-click context menu (map mode). Picks an existing
-// control point to attach the new observation to, or creates a fresh CP and
-// attaches.
-//
-// Image mode is the original use case: the new observation is an image
-// measurement on `(overlay, u, v)`. Map mode is for the index map: the new
-// observation is a map measurement at `latlng`, and the existing-CP picker
-// is hidden — the user is always creating a fresh CP at the click point.
+// from the index-map right-click context menu (map mode). Image mode picks
+// an existing CP to anchor a new image measurement to or creates a fresh CP
+// + image measurement. Map mode is always "create CP at this lat/lng" — the
+// modal also asks for an elevation above grade, which combines with the DEM
+// ground elevation at the click to seed the CP's est_alt.
 
 import * as THREE from 'three';
 import { getElement } from './types.js';
 import type { ControlPointView, LatLng } from './types.js';
+import { getElevationAt } from './dem.js';
 
 export interface ObservationModal {
   open(overlay: THREE.Group, u: number, v: number): void;
@@ -21,7 +19,7 @@ export interface CreateObservationModalOptions {
   getControlPoints: () => readonly ControlPointView[];
   onPickExisting: (overlay: THREE.Group, u: number, v: number, controlPointId: string) => void;
   onCreateAndObserve: (overlay: THREE.Group, u: number, v: number, description: string) => Promise<void>;
-  onCreateMapAndObserve: (latlng: LatLng, description: string) => Promise<void>;
+  onCreateMapAndObserve: (latlng: LatLng, description: string, estAlt: number | null) => Promise<void>;
 }
 
 type Pending =
@@ -32,11 +30,15 @@ export function createObservationModal({
   getControlPoints, onPickExisting, onCreateAndObserve, onCreateMapAndObserve,
 }: CreateObservationModalOptions): ObservationModal {
   const modalEl = getElement('observe-modal');
+  const titleEl = getElement('observe-title');
   const closeBtn = getElement<HTMLButtonElement>('observe-close');
   const cancelBtn = getElement<HTMLButtonElement>('observe-cancel');
   const createBtn = getElement<HTMLButtonElement>('observe-create');
+  const descLabelEl = getElement('observe-desc-label');
   const descEl = getElement<HTMLInputElement>('observe-new-desc');
   const listEl = getElement('observe-cp-list');
+  const elevRow = getElement('observe-elev-row');
+  const elevInput = getElement<HTMLInputElement>('observe-new-elev');
 
   let pending: Pending | null = null;
 
@@ -44,6 +46,7 @@ export function createObservationModal({
     modalEl.hidden = true;
     pending = null;
     descEl.value = '';
+    elevInput.value = '0';
     listEl.replaceChildren();
   }
 
@@ -84,9 +87,13 @@ export function createObservationModal({
 
   function open(overlay: THREE.Group, u: number, v: number): void {
     pending = { kind: 'image', overlay, u, v };
+    titleEl.textContent = 'Add observation';
+    descLabelEl.textContent = 'Or create a new control point';
     descEl.value = '';
+    elevInput.value = '0';
     createBtn.disabled = false;
     listEl.hidden = false;
+    elevRow.hidden = true;
     renderList();
     modalEl.hidden = false;
     descEl.focus();
@@ -94,12 +101,15 @@ export function createObservationModal({
 
   function openForMap(latlng: LatLng): void {
     pending = { kind: 'map', latlng };
+    titleEl.textContent = 'Add control point';
+    descLabelEl.textContent = 'Name';
     descEl.value = '';
+    elevInput.value = '0';
     createBtn.disabled = false;
-    // Per design: map mode only offers "create new" — the existing-CP list
-    // doesn't make sense without an image observation to pair with.
+    // Map mode only creates a CP — no existing-CP picker, no observation row.
     listEl.hidden = true;
     listEl.replaceChildren();
+    elevRow.hidden = false;
     modalEl.hidden = false;
     descEl.focus();
   }
@@ -110,6 +120,12 @@ export function createObservationModal({
   closeBtn.addEventListener('click', close);
   cancelBtn.addEventListener('click', close);
 
+  async function submitMap(latlng: LatLng, description: string, aboveGrade: number): Promise<void> {
+    const ground = await getElevationAt(latlng.lat, latlng.lng);
+    const estAlt = ground === null ? null : ground + aboveGrade;
+    await onCreateMapAndObserve(latlng, description, estAlt);
+  }
+
   createBtn.addEventListener('click', () => {
     if (!pending) return;
     const ctx = pending;
@@ -118,10 +134,15 @@ export function createObservationModal({
       descEl.focus();
       return;
     }
+    let promise: Promise<void>;
+    if (ctx.kind === 'image') {
+      promise = onCreateAndObserve(ctx.overlay, ctx.u, ctx.v, description);
+    } else {
+      const aboveGrade = parseFloat(elevInput.value);
+      if (!Number.isFinite(aboveGrade)) { elevInput.focus(); return; }
+      promise = submitMap(ctx.latlng, description, aboveGrade);
+    }
     createBtn.disabled = true;
-    const promise = ctx.kind === 'image'
-      ? onCreateAndObserve(ctx.overlay, ctx.u, ctx.v, description)
-      : onCreateMapAndObserve(ctx.latlng, description);
     promise.then(() => { close(); })
       .catch((err: unknown) => {
         console.error('create CP + observe failed:', err);

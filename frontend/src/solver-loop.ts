@@ -1,38 +1,31 @@
-// Wraps the pure pose solver in the station-specific re-entrancy guard,
-// scene-graph extraction, and camera-lock state. Callers invoke runSolve()
-// after any mutation that could change anchored-POI residuals.
+// Wraps the pure pose solver in the station-specific re-entrancy guard and
+// scene-graph extraction. Callers invoke runSolve() after any mutation that
+// could change image-measurement residuals.
+//
+// Camera position is fixed at the user-asserted station location; the joint
+// solver only refines per-photo orientation/size against the seeded CPs.
 
 import * as THREE from 'three';
 import { solveJointPose, autoLocalFreeParams } from './solver.js';
 import { overlayData, poiData } from './types.js';
 import type {
-  ControlPointSeed, JointPhoto, LatLng, MapPrior, POIProjection, SolverParam,
+  ControlPointSeed, JointPhoto, LatLng, POIProjection,
 } from './types.js';
 import type { OverlayManager } from './overlay.js';
 
-// One global σ in meters for every map prior. Roughly equivalent to ~1.7° of
-// bearing slop at typical anchor distances; image bearings outvote the prior
-// when they agree more strongly than that.
-const MAP_PRIOR_SIGMA_M = 30;
-
 export interface SolverLoop {
   runSolve(): void;
-  setCameraLocked(locked: boolean): void;
 }
 
 export interface CreateSolverLoopOptions {
   overlays: OverlayManager;
   getCameraLocation: () => LatLng | null;
   isSolveRollEnabled: () => boolean;
-  // Fired only when the joint solve actually moves the camera; the consumer
-  // updates the cached station location and re-applies derived state.
-  onCameraMovedBySolver: (loc: LatLng) => void;
 }
 
 export function createSolverLoop({
-  overlays, getCameraLocation, isSolveRollEnabled, onCameraMovedBySolver,
+  overlays, getCameraLocation, isSolveRollEnabled,
 }: CreateSolverLoopOptions): SolverLoop {
-  const lockedParams = new Set<SolverParam>();
   let isSolving = false;
 
   function solveAllPhotos(): void {
@@ -70,33 +63,17 @@ export function createSolverLoop({
       return { id, lat: cp.estLat!, lng: cp.estLng! };
     });
 
-    // Priors only for CPs that also have image observations — a prior alone
-    // has nothing to fight against and would just sit on the dot.
-    const mapPriors: MapPrior[] = overlays.getMapMeasurements()
-      .filter(m => m.controlPointId !== null && cpsWithImageObs.has(m.controlPointId))
-      .map(m => ({
-        cpId: m.controlPointId!, lat: m.latlng.lat, lng: m.latlng.lng,
-        sigmaMeters: MAP_PRIOR_SIGMA_M,
-      }));
-
-    const cameraLocked = lockedParams.has('camLat') || lockedParams.has('camLng');
-
-    const proposed: { camLoc: LatLng | null } = { camLoc: null };
     overlays.withBatch(() => {
       const result = solveJointPose({
         camLoc,
         photos: entries.map(e => e.photo),
         controlPoints,
-        mapPriors,
-        solveCamera: !cameraLocked,
       });
       entries.forEach((e, i) => { overlays.applyPose(e.overlay, result.photos[i]!.pose); });
       for (const cp of result.controlPoints) {
         overlays.setControlPointEst(cp.id, { lat: cp.lat, lng: cp.lng });
       }
-      if (result.cameraMoved) proposed.camLoc = result.camLoc;
     });
-    if (proposed.camLoc) onCameraMovedBySolver(proposed.camLoc);
   }
 
   return {
@@ -104,10 +81,6 @@ export function createSolverLoop({
       if (isSolving) return;
       isSolving = true;
       try { solveAllPhotos(); } finally { isSolving = false; }
-    },
-    setCameraLocked(locked) {
-      if (locked) { lockedParams.add('camLat'); lockedParams.add('camLng'); }
-      else { lockedParams.delete('camLat'); lockedParams.delete('camLng'); }
     },
   };
 }

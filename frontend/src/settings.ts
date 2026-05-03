@@ -10,7 +10,6 @@ import type { LatLng } from './types.js';
 import type { Viewer } from './viewer.js';
 import type { TerrainView, TerrainMode } from './terrain.js';
 import type { SunMarker } from './sun-marker.js';
-import type { Hud } from './ui.js';
 
 export interface SettingsPanel {
   persist(): void;
@@ -23,11 +22,9 @@ export interface CreateSettingsPanelOptions {
   viewer: Viewer;
   terrain: TerrainView;
   sunMarker: SunMarker;
-  hud: Hud;
   getCameraLocation: () => LatLng | null;
   getCurrentStationId: () => string | null;
   runSolve: () => void;
-  setCameraLocked: (locked: boolean) => void;
 }
 
 const HAZE_SLIDER_EXPONENT = 3;
@@ -40,11 +37,10 @@ function hazeDensityToSlider(d: number): number {
 }
 
 export function createSettingsPanel({
-  viewer, terrain, sunMarker, hud,
+  viewer, terrain, sunMarker,
   getCameraLocation, getCurrentStationId,
-  runSolve, setCameraLocked,
+  runSolve,
 }: CreateSettingsPanelOptions): SettingsPanel {
-  const lockCameraEl = getElement<HTMLInputElement>('lock-camera');
   const terrainModeEl = getElement<HTMLSelectElement>('terrain-mode');
   const sunDateTimeEl = getElement<HTMLInputElement>('sun-datetime');
   const settingsBtnEl = getElement<HTMLButtonElement>('settings-btn');
@@ -63,7 +59,6 @@ export function createSettingsPanel({
     const prefs: Prefs = {
       azimuth, altitude,
       fov: viewer.camera.fov,
-      lockCamera: lockCameraEl.checked,
       solvePhotoRoll: solveRollToggleEl.checked,
       terrainMode: terrain.getMode(),
       sunDateTime: sunDateTimeEl.value,
@@ -92,10 +87,6 @@ export function createSettingsPanel({
   function apply(p: Partial<Prefs>): void {
     if (p.azimuth !== undefined && p.altitude !== undefined) viewer.setAzAlt(p.azimuth, p.altitude);
     if (p.fov !== undefined) viewer.setFov(p.fov);
-    if (p.lockCamera !== undefined) {
-      lockCameraEl.checked = p.lockCamera;
-      setCameraLocked(p.lockCamera);
-    }
     if (p.solvePhotoRoll !== undefined) solveRollToggleEl.checked = p.solvePhotoRoll;
     if (p.cameraHeight !== undefined) terrain.setCameraHeight(p.cameraHeight);
     if (p.hazeDensity !== undefined) {
@@ -133,15 +124,6 @@ export function createSettingsPanel({
     refractionToggleEl.disabled = !curvatureToggleEl.checked;
   }
   refreshRefractionAvailability();
-
-  setCameraLocked(lockCameraEl.checked);
-  lockCameraEl.addEventListener('change', () => {
-    setCameraLocked(lockCameraEl.checked);
-    runSolve();
-    viewer.requestRender();
-    hud.refresh();
-    persist();
-  });
 
   terrainModeEl.addEventListener('change', () => {
     terrain.setMode(terrainModeEl.value as TerrainMode);

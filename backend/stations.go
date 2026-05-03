@@ -7,10 +7,9 @@ import (
 	"strings"
 )
 
-// Domain shapes (Station, Photo, MapMeasurement, ImageMeasurement,
-// HydratedStation, CreateStationRequest, MapMeasurementRequest,
-// PhotoPosePatch, ImageMeasurementPatch) are generated from
-// ../openapi.yaml into types.gen.go.
+// Domain shapes (Station, Photo, ImageMeasurement, HydratedStation,
+// CreateStationRequest, PhotoPosePatch, ImageMeasurementPatch) are
+// generated from ../openapi.yaml into types.gen.go.
 
 func (s *Server) postStation(w http.ResponseWriter, r *http.Request) {
 	var req CreateStationRequest

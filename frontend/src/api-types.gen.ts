@@ -131,50 +131,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/map-measurements": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List every map measurement */
-        get: operations["listMapMeasurements"];
-        put?: never;
-        /**
-         * Create a global map measurement
-         * @description Map measurements are global, station-less assertions: the user
-         *     clicked on the map and asserts that some control point is at this
-         *     lat/lng. The optional `control_point_id` link can be set on
-         *     creation or attached later via PUT.
-         */
-        post: operations["createMapMeasurement"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/map-measurements/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["MapMeasurementId"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        /** Update a map measurement's lat/lng or control point link */
-        put: operations["updateMapMeasurement"];
-        post?: never;
-        /** Delete a map measurement */
-        delete: operations["deleteMapMeasurement"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/photos/{id}/image-measurements": {
         parameters: {
             query?: never;
@@ -274,9 +230,9 @@ export interface paths {
         };
         /**
          * List every observation referencing this control point
-         * @description Returns image and map measurements across every station that
-         *     link back to the given control point. Each row carries enough
-         *     context (station id + name) for the caller to deep-link.
+         * @description Returns image measurements across every station that link back
+         *     to the given control point. Each row carries enough context
+         *     (station id + name) for the caller to deep-link.
          */
         get: operations["listControlPointObservations"];
         put?: never;
@@ -352,23 +308,6 @@ export interface components {
             updated_at: string;
         };
         /**
-         * @description User-asserted ground-truth observation: the user clicked on the
-         *     map and asserts that some control point is here. Global — not
-         *     owned by any station.
-         */
-        MapMeasurement: {
-            id: components["schemas"]["Id"];
-            /** Format: double */
-            lat: number;
-            /** Format: double */
-            lng: number;
-            control_point_id: components["schemas"]["Id"] | null;
-            /** Format: date-time */
-            created_at: string;
-            /** Format: date-time */
-            updated_at: string;
-        };
-        /**
          * @description Reticle anchor on a photo at (u, v): the user identifies that
          *     some control point is visible at this image-space position.
          */
@@ -386,11 +325,10 @@ export interface components {
             updated_at: string;
         };
         /**
-         * @description A real-world landmark with a latent location. May be referenced
-         *     by image measurements (across photos / stations) and map
-         *     measurements. The estimated location (est_lat / est_lng /
-         *     est_alt) is updated by the solver as observations accumulate;
-         *     for v1 the estimate mirrors any linked map measurement.
+         * @description A real-world landmark with a user-seeded location estimate
+         *     (est_lat / est_lng / est_alt) and image-measurement observations
+         *     across photos and stations. The estimate is set when the CP is
+         *     created and refined by the location solver as observations accumulate.
          */
         ControlPoint: {
             id: components["schemas"]["Id"];
@@ -445,16 +383,8 @@ export interface components {
             /** Format: double */
             aspect: number;
         };
-        ControlPointMapObservation: {
-            id: components["schemas"]["Id"];
-            /** Format: double */
-            lat: number;
-            /** Format: double */
-            lng: number;
-        };
         ControlPointObservations: {
             image_measurements: components["schemas"]["ControlPointImageObservation"][];
-            map_measurements: components["schemas"]["ControlPointMapObservation"][];
         };
         HydratedStation: {
             station: components["schemas"]["Station"];
@@ -487,13 +417,6 @@ export interface components {
             size_rad: number;
             /** Format: double */
             opacity?: number;
-        };
-        MapMeasurementRequest: {
-            /** Format: double */
-            lat: number;
-            /** Format: double */
-            lng: number;
-            control_point_id?: components["schemas"]["Id"] | null;
         };
         ImageMeasurementPatch: {
             /** Format: double */
@@ -540,7 +463,6 @@ export interface components {
     parameters: {
         StationId: components["schemas"]["Id"];
         PhotoId: components["schemas"]["Id"];
-        MapMeasurementId: components["schemas"]["Id"];
         ImageMeasurementId: components["schemas"]["Id"];
         ControlPointId: components["schemas"]["Id"];
     };
@@ -860,100 +782,6 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-        };
-    };
-    listMapMeasurements: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MapMeasurement"][];
-                };
-            };
-        };
-    };
-    createMapMeasurement: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["MapMeasurementRequest"];
-            };
-        };
-        responses: {
-            /** @description Created */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MapMeasurement"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-        };
-    };
-    updateMapMeasurement: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["MapMeasurementId"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["MapMeasurementRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["MapMeasurement"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
-        };
-    };
-    deleteMapMeasurement: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["MapMeasurementId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Deleted */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            404: components["responses"]["NotFound"];
         };
     };
     createImageMeasurement: {

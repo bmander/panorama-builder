@@ -10,7 +10,7 @@ import { createTerrainView } from './terrain.js';
 import { createSunMarker } from './sun-marker.js';
 import { createControlPointColumns, findHitColumn } from './map-poi-columns.js';
 import type { ControlPointColumn } from './map-poi-columns.js';
-import { cpHref, FOCUS_QUERY_PARAM, getElement, INDEX_CP_QUERY_PARAM, overlayData, poiData, stationHref } from './types.js';
+import { cpHref, FOCUS_QUERY_PARAM, getElement, INDEX_CP_QUERY_PARAM, INDEX_STATION_QUERY_PARAM, indexStationHref, overlayData, poiData, stationHref } from './types.js';
 import { vecToAzAlt } from './geo.js';
 import type { ControlPointView, LatLng } from './types.js';
 import * as api from './api.js';
@@ -45,11 +45,17 @@ const focusIndexControlPointId: string | null = (() => {
   const id = new URLSearchParams(location.search).get(INDEX_CP_QUERY_PARAM);
   return id && FOCUS_RE.test(id) ? id : null;
 })();
+const focusIndexStationId: string | null = (() => {
+  const id = new URLSearchParams(location.search).get(INDEX_STATION_QUERY_PARAM);
+  return id && FOCUS_RE.test(id) ? id : null;
+})();
 
 // Index mode (no station in URL) hides the station-scoped chrome — the
 // upper-right buttons only make sense once a station is loaded.
 if (currentStationId === null) {
   getElement('top-right').hidden = true;
+} else {
+  getElement<HTMLAnchorElement>('view-on-map').href = indexStationHref(currentStationId);
 }
 
 // --- Viewer + scene singletons -----------------------------------------
@@ -193,15 +199,13 @@ const solver = createSolverLoop({
   overlays,
   getCameraLocation: getStationLocation,
   isSolveRollEnabled: () => settings.isSolveRollEnabled(),
-  onCameraMovedBySolver: loc => { applyCameraLocation(loc); },
 });
 
 const settings = createSettingsPanel({
-  viewer, terrain, sunMarker, hud,
+  viewer, terrain, sunMarker,
   getCameraLocation: getStationLocation,
   getCurrentStationId,
   runSolve: () => { solver.runSolve(); },
-  setCameraLocked: locked => { solver.setCameraLocked(locked); },
 });
 
 const handlers = createOrchestration({
@@ -247,8 +251,8 @@ const observationModal = createObservationModal({
   },
   onCreateAndObserve: (overlay, u, v, description) =>
     handlers.onCreateCPAndObserve(overlay, u, v, description),
-  onCreateMapAndObserve: async (latlng, description) => {
-    await handlers.onCreateCPAndMapObserve(latlng, description);
+  onCreateMapAndObserve: async (latlng, description, estAlt) => {
+    await handlers.onCreateCPAtLocation(latlng, description, estAlt);
     refreshIndexControlPoints();
   },
 });
@@ -307,26 +311,28 @@ async function hydrateFromAPI(id: string): Promise<void> {
   sync.registerLocation(loc);
   applyCameraLocation(loc);
 
+  // Place each photo synchronously with a placeholder so the viewer can
+  // paint terrain + rectangles before any blob arrives.
   const loader = new THREE.TextureLoader();
-  await Promise.all(data.photos.map(p => new Promise<void>(resolve => {
-    loader.load(api.photoBlobUrl(p.id), tex => {
-      const dir = dirFromAzAlt(p.photo_az, p.photo_tilt);
-      const o = overlays.addOverlay(tex, p.aspect, dir, { id: p.id });
-      // applyPose handles photoAz/photoTilt/photoRoll/sizeRad; setOpacity
-      // handles the body material. Together they restore everything that
-      // userData carries, without the caller poking userData directly.
-      overlays.applyPose(o, {
-        photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
-        sizeRad: p.size_rad, aspect: p.aspect, camLat: loc.lat, camLng: loc.lng,
-      });
-      overlays.setOpacity(o, p.opacity);
-      sync.registerPhoto(p.id, {
-        aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,
-        photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
-      });
-      resolve();
-    }, undefined, () => { resolve(); });
-  })));
+  for (const p of data.photos) {
+    const dir = dirFromAzAlt(p.photo_az, p.photo_tilt);
+    const o = overlays.addPendingOverlay(p.aspect, dir, { id: p.id });
+    overlays.applyPose(o, {
+      photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
+      sizeRad: p.size_rad, aspect: p.aspect, camLat: loc.lat, camLng: loc.lng,
+    });
+    overlays.setOpacity(o, p.opacity);
+    sync.registerPhoto(p.id, {
+      aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,
+      photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
+    });
+    loader.load(
+      api.photoBlobUrl(p.id),
+      tex => { overlays.setOverlayTexture(o, tex); },
+      undefined,
+      err => { console.error(`photo ${p.id} load failed:`, err); },
+    );
+  }
 
   // Control points first so subsequent measurement adds reference an existing CP entry.
   for (const cp of data.control_points) {
@@ -364,24 +370,6 @@ async function showStationMarkers(view: MapView): Promise<void> {
     latlng: { lat: st.lat, lng: st.lng },
     label: st.name ?? `Untitled ${st.id.slice(0, 6)}`,
   })));
-}
-
-async function loadMapMeasurements(): Promise<void> {
-  let mms;
-  try {
-    mms = await api.listMapMeasurements();
-  } catch (err) {
-    console.error('list map measurements failed:', err);
-    return;
-  }
-  const known = new Set(overlays.getMapMeasurements().map(m => m.id));
-  for (const m of mms) {
-    if (known.has(m.id)) continue;
-    overlays.addMapMeasurement(m.id, { lat: m.lat, lng: m.lng }, m.control_point_id);
-    sync.registerMapMeasurement(m.id, {
-      lat: m.lat, lng: m.lng, control_point_id: m.control_point_id,
-    });
-  }
 }
 
 function refreshIndexControlPoints(): void {
@@ -488,21 +476,15 @@ function focusCameraOnImageMeasurement(id: string): boolean {
 }
 
 async function bootstrap(): Promise<void> {
-  // Map measurements are global. Load them up-front so both pages have the
-  // data available without an additional fetch later.
-  const mmReady = loadMapMeasurements();
-
   const isStation = currentStationId !== null;
   viewer.setCanvasVisible(isStation);
   hud.setVisible(isStation);
 
   if (currentStationId) {
     await hydrateFromAPI(currentStationId);
-    await mmReady;
     settings.apply(loadPrefs(currentStationId));
     overlays.setSelected(null);
     overlays.setSelectedImageMeasurement(null);
-    overlays.setSelectedMapMeasurement(null);
     admin.setVisible(true);
     if (focusImageMeasurementId && !focusCameraOnImageMeasurement(focusImageMeasurementId)) {
       console.warn('focus image measurement not found:', focusImageMeasurementId);
@@ -520,13 +502,20 @@ async function bootstrap(): Promise<void> {
       onControlPointSolveLocation: id => { void solveAndPersistControlPointLocation(id); },
     });
     mapView = view;
-    void showStationMarkers(view);
+    const stationsReady = showStationMarkers(view);
     const cpsReady = showIndexControlPoints();
     if (focusIndexControlPointId) {
       // Wait for the CP layer to populate before panning, or the lookup misses.
       void cpsReady.then(() => {
         if (!view.focusIndexControlPoint(focusIndexControlPointId)) {
           console.warn('focus control point not found:', focusIndexControlPointId);
+        }
+      });
+    }
+    if (focusIndexStationId) {
+      void stationsReady.then(() => {
+        if (!view.focusStationMarker(focusIndexStationId)) {
+          console.warn('focus station not found:', focusIndexStationId);
         }
       });
     }

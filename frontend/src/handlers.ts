@@ -33,9 +33,9 @@ export interface OrchestrationHandlers {
   onCreateCPAndObserve(
     overlay: THREE.Group, u: number, v: number, description: string,
   ): Promise<void>;
-  // Index-map right-click → modal "Create & observe": a CP seeded at the
-  // click latlng plus a global map measurement linked to it.
-  onCreateCPAndMapObserve(latlng: LatLng, description: string): Promise<void>;
+  // Index-map right-click → modal: a CP seeded at the click latlng with the
+  // user-supplied estimated altitude (meters above mean sea level).
+  onCreateCPAtLocation(latlng: LatLng, description: string, estAlt: number | null): Promise<void>;
 }
 
 export interface CreateOrchestrationOptions {
@@ -171,7 +171,7 @@ export function createOrchestration({
   // POST a CP with the given payload, register it. Returns null on API
   // failure (the banner has already been surfaced via reportError).
   async function createControlPoint(
-    payload: { description: string; est_lat: number | null; est_lng: number | null },
+    payload: { description: string; est_lat: number | null; est_lng: number | null; est_alt: number | null },
   ): Promise<api.ApiControlPoint | null> {
     try {
       const cp = await api.createControlPoint(payload);
@@ -186,34 +186,13 @@ export function createOrchestration({
   async function onCreateCPAndObserve(
     overlay: THREE.Group, u: number, v: number, description: string,
   ): Promise<void> {
-    const cp = await createControlPoint({ description, est_lat: null, est_lng: null });
+    const cp = await createControlPoint({ description, est_lat: null, est_lng: null, est_alt: null });
     if (!cp) return;
     const measurement = await createImageMeasurement(overlay, u, v, cp.id);
     if (!measurement) {
       // Roll back the CP — would otherwise be an orphan with no observations.
       await api.deleteControlPoint(cp.id).catch((e: unknown) => { console.error('orphan CP cleanup failed:', e); });
       overlays.removeControlPoint(cp.id);
-    }
-  }
-
-  // POST a map measurement linked to controlPointId at latlng, register it.
-  // On API failure surfaces the banner and returns null; caller can treat
-  // the CP as orphaned and roll it back if appropriate.
-  async function createLinkedMapMeasurement(
-    latlng: LatLng, controlPointId: string,
-  ): Promise<{ id: string } | null> {
-    try {
-      const mm = await api.createMapMeasurement({
-        lat: latlng.lat, lng: latlng.lng, control_point_id: controlPointId,
-      });
-      sync.registerMapMeasurement(mm.id, {
-        lat: latlng.lat, lng: latlng.lng, control_point_id: controlPointId,
-      });
-      overlays.addMapMeasurement(mm.id, latlng, controlPointId);
-      return { id: mm.id };
-    } catch (err) {
-      sync.reportError('add map measurement', err);
-      return null;
     }
   }
 
@@ -224,29 +203,22 @@ export function createOrchestration({
     const existing = overlays.getImageMeasurementOnOverlayByControlPointId(overlay, controlPointId);
     if (existing) {
       overlays.moveImageMeasurement(existing, u, v);
-      // Surfaces the linked map measurement if any (the FK ↔ FK link via CP).
-      overlays.setSelectedPair(existing, findMapMeasurementByControlPointId(controlPointId));
+      overlays.setSelectedImageMeasurement(existing);
       return;
     }
     const created = await createImageMeasurement(overlay, u, v, controlPointId);
-    if (created) overlays.setSelectedPair(created, findMapMeasurementByControlPointId(controlPointId));
+    if (created) overlays.setSelectedImageMeasurement(created);
   }
 
-  async function onCreateCPAndMapObserve(latlng: LatLng, description: string): Promise<void> {
-    const cp = await createControlPoint({ description, est_lat: latlng.lat, est_lng: latlng.lng });
-    if (!cp) return;
-    const mm = await createLinkedMapMeasurement(latlng, cp.id);
-    if (!mm) {
-      await api.deleteControlPoint(cp.id).catch((e: unknown) => { console.error('orphan CP cleanup failed:', e); });
-      overlays.removeControlPoint(cp.id);
-    }
-  }
-
-  function findMapMeasurementByControlPointId(controlPointId: string): string | null {
-    for (const mm of overlays.getMapMeasurements()) {
-      if (mm.controlPointId === controlPointId) return mm.id;
-    }
-    return null;
+  async function onCreateCPAtLocation(
+    latlng: LatLng, description: string, estAlt: number | null,
+  ): Promise<void> {
+    await createControlPoint({
+      description,
+      est_lat: latlng.lat,
+      est_lng: latlng.lng,
+      est_alt: estAlt,
+    });
   }
 
   return {
@@ -254,6 +226,6 @@ export function createOrchestration({
     onPhotoDropped,
     onMatchImageMeasurement,
     onCreateCPAndObserve,
-    onCreateCPAndMapObserve,
+    onCreateCPAtLocation,
   };
 }

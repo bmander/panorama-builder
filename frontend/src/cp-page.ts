@@ -1,5 +1,6 @@
 import * as api from './api.js';
 import { formatLocalDateTime, getElement, indexCpHref, stationHref } from './types.js';
+import { solveControlPointLocation } from './cp-location-solver.js';
 
 const CP_ID_RE = /^\/cp\/([A-Z2-7]{13})$/;
 
@@ -168,6 +169,38 @@ function attachDateEditor(cp: api.ApiControlPoint, host: HTMLElement, field: Dat
   });
 }
 
+function attachSolveButton(
+  cp: api.ApiControlPoint,
+  obs: api.ApiControlPointObservations,
+  onUpdate: (next: api.ApiControlPoint) => void,
+): void {
+  const btn = getElement<HTMLButtonElement>('solve');
+  if (obs.image_measurements.length < 2) {
+    btn.title = 'Need at least 2 image observations to refine';
+    return;
+  }
+  btn.disabled = false;
+  btn.addEventListener('click', () => {
+    const result = solveControlPointLocation(cp, obs);
+    if (!result) {
+      alert('Solver returned no result — not enough observations.');
+      return;
+    }
+    btn.disabled = true;
+    api.updateControlPoint(cp.id, cpPatch(cp, {
+      est_lat: result.latlng.lat,
+      est_lng: result.latlng.lng,
+    })).then(
+      updated => { onUpdate(updated); btn.disabled = false; },
+      (err: unknown) => {
+        console.error('solve save failed:', err);
+        alert('Solve failed — see console.');
+        btn.disabled = false;
+      },
+    );
+  });
+}
+
 function attachDeleteButton(cp: api.ApiControlPoint, obsCount: number): void {
   const btn = getElement<HTMLButtonElement>('delete');
   btn.disabled = false;
@@ -204,26 +237,15 @@ function appendObservationItem(
   list.appendChild(li);
 }
 
-function renderObservations(cpId: string, obs: api.ApiControlPointObservations): void {
+function renderObservations(obs: api.ApiControlPointObservations): void {
   const list = getElement('observations');
   list.replaceChildren();
-  if (obs.image_measurements.length === 0 && obs.map_measurements.length === 0) {
+  if (obs.image_measurements.length === 0) {
     const empty = document.createElement('li');
     empty.className = 'empty';
     empty.textContent = 'no observations yet';
     list.appendChild(empty);
     return;
-  }
-  for (const m of obs.map_measurements) {
-    // Map observations are global (no station ownership). Link the lat/lng
-    // text to the index map, panned/zoomed to this control point.
-    const meta = document.createElement('span');
-    meta.className = 'meta';
-    const a = document.createElement('a');
-    a.href = indexCpHref(cpId);
-    a.textContent = `${m.lat.toFixed(5)}, ${m.lng.toFixed(5)}`;
-    meta.append('observed at ', a);
-    appendObservationItem(list, 'map', meta);
   }
   for (const m of obs.image_measurements) {
     const meta = document.createElement('span');
@@ -238,7 +260,7 @@ function renderObservations(cpId: string, obs: api.ApiControlPointObservations):
 
 function renderEstimate(el: HTMLElement, text: string | null, placeholder: string): void {
   el.textContent = text ?? placeholder;
-  if (text === null) el.classList.add('empty');
+  el.classList.toggle('empty', text === null);
 }
 
 async function main(): Promise<void> {
@@ -273,17 +295,31 @@ async function main(): Promise<void> {
   attachDateEditor(cp, getElement('started_at'), 'started_at');
   attachDateEditor(cp, getElement('ended_at'), 'ended_at');
 
-  renderEstimate(locEl,
-    cp.est_lat !== null && cp.est_lng !== null
-      ? `${cp.est_lat.toFixed(6)}, ${cp.est_lng.toFixed(6)}`
-      : null, 'no estimate');
-  renderEstimate(altEl, cp.est_alt !== null ? `${cp.est_alt.toFixed(1)} m` : null, '—');
+  function renderLocation(): void {
+    if (cp.est_lat !== null && cp.est_lng !== null) {
+      const a = document.createElement('a');
+      a.href = indexCpHref(cp.id);
+      a.textContent = `${cp.est_lat.toFixed(6)}, ${cp.est_lng.toFixed(6)}`;
+      locEl.replaceChildren(a);
+      locEl.classList.remove('empty');
+    } else {
+      renderEstimate(locEl, null, 'no estimate');
+    }
+    renderEstimate(altEl, cp.est_alt !== null ? `${cp.est_alt.toFixed(1)} m` : null, '—');
+  }
+  renderLocation();
 
   let obsCount = 0;
   if (obsResult.status === 'fulfilled') {
-    renderObservations(cp.id, obsResult.value);
-    obsCount = obsResult.value.image_measurements.length
-      + obsResult.value.map_measurements.length;
+    const obs = obsResult.value;
+    renderObservations(obs);
+    obsCount = obs.image_measurements.length;
+    attachSolveButton(cp, obs, updated => {
+      cp.est_lat = updated.est_lat;
+      cp.est_lng = updated.est_lng;
+      cp.est_alt = updated.est_alt;
+      renderLocation();
+    });
   } else {
     console.error('observations fetch failed:', obsResult.reason);
   }

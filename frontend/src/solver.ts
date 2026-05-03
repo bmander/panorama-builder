@@ -1,38 +1,35 @@
-// Joint photo-pose + control-point solver. Given many photos sharing a
-// single panorama camera location, runs Gauss-Newton with finite-difference
-// Jacobian to minimize:
+// Joint photo-pose solver. Given many photos sharing a single panorama
+// camera location, runs Gauss-Newton with finite-difference Jacobian to
+// minimize per-image-POI bearing residuals (predicted azimuth from camera +
+// pose vs. azimuth toward the linked CP's current lat/lng estimate).
 //
-//   1. Per-image-POI bearing residuals (predicted azimuth from camera + pose
-//      vs. azimuth toward the linked CP's current lat/lng estimate).
-//   2. Per-map-prior penalty residuals: gaussian (1/σ-scaled) pulls on each
-//      CP's lat/lng toward the user's map-measurement observation.
-//
-// Camera location and per-photo photoAz/sizeRad are free; CP lat/lng become
-// free for any CP that has a map prior (otherwise it'd be unbounded along the
-// bearing ray).
+// Per-photo photoAz/sizeRad (and optionally photoRoll) are free; camera
+// location and CP lat/lng are fixed inputs (the user-asserted station origin
+// and the seeded CP estimates).
 //
 // Pose shape (per photo): { photoAz, photoTilt, photoRoll, sizeRad, aspect, camLat, camLng }
 //   - photoAz:        viewer-azimuth (CCW from −Z) of overlay center — local free
 //   - photoTilt:      altitude of overlay center — INPUT ONLY (used by projectPOI for
 //                     accurate azimuth at non-zero tilt; never modified)
-//   - photoRoll:      in-plane rotation around the overlay's center axis — INPUT
-//                     ONLY (rotates the local X/Y basis in projectPOI; not solved
-//                     for since it isn't observable from azimuth-only residuals)
+//   - photoRoll:      in-plane rotation around the overlay's center axis — local
+//                     free only when the user opts in via "Auto-solve photo rotation"
+//                     and the photo has ≥3 POIs to constrain it
 //   - sizeRad:        angular width (FOV) of the overlay — local free at N≥2
 //   - aspect:         photo width/height (locked input)
-//   - camLat, camLng: panorama camera location — GLOBAL free, shared across photos
+//   - camLat, camLng: panorama camera location — INPUT ONLY (fixed at the
+//                     user-asserted station origin; refining it would drift
+//                     stations around as CPs move)
 //
 // POI shape: { u, v, controlPointId } — the solver dereferences the CP's
 // current working lat/lng each residual evaluation.
 
-import { bearingFromLocation, bearingToViewerAz, latLngToCameraRelativeMeters } from './geo.js';
+import { bearingFromLocation, bearingToViewerAz } from './geo.js';
 import type {
   ControlPointSeed,
   JointPhoto,
   JointSolveResult,
   LatLng,
   LocalParam,
-  MapPrior,
   Mutable,
   Pose,
 } from './types.js';
@@ -53,19 +50,17 @@ function clampSizeRad(p: WorkingPose): void {
   else if (p.sizeRad > SIZE_RAD_MAX) p.sizeRad = SIZE_RAD_MAX;
 }
 
-// Free-parameter slot in the joint state vector.
-type Slot =
-  | { kind: 'camLat' }
-  | { kind: 'camLng' }
-  | { kind: 'photo'; photoIndex: number; name: LocalParam }
-  | { kind: 'cpLat'; cpId: string }
-  | { kind: 'cpLng'; cpId: string };
+// Free-parameter slot in the joint state vector. Each slot points at one
+// per-photo local param the solver is allowed to vary.
+interface Slot {
+  readonly photoIndex: number;
+  readonly name: LocalParam;
+}
 
 // Decides which per-photo params are worth solving for given a photo's POI
-// count. Camera params are decided globally by the caller (see solveCamera).
-// `solveRoll` is the user-controlled "Auto-solve photo rotation" toggle —
-// roll only adds a useful DOF once 3+ POIs constrain it, so we keep it off
-// at lower counts even when the toggle is on.
+// count. `solveRoll` is the user-controlled "Auto-solve photo rotation"
+// toggle — roll only adds a useful DOF once 3+ POIs constrain it, so we
+// keep it off at lower counts even when the toggle is on.
 export function autoLocalFreeParams(numPois: number, solveRoll = false): LocalParam[] {
   if (numPois <= 0) return [];
   if (numPois === 1) return ['photoAz'];
@@ -170,15 +165,13 @@ function solveLinear(A: number[][], b: number[]): number[] | null {
 }
 
 function emptyResult(
-  camLoc: LatLng, photos: readonly JointPhoto[], controlPoints: readonly ControlPointSeed[],
+  photos: readonly JointPhoto[], controlPoints: readonly ControlPointSeed[],
 ): JointSolveResult {
   return {
-    camLoc,
     photos: photos.map(p => ({ pose: { ...p.pose } })),
     controlPoints: controlPoints.map(cp => ({ id: cp.id, lat: cp.lat, lng: cp.lng })),
     residualRMS: 0,
     iterations: 0,
-    cameraMoved: false,
   };
 }
 
@@ -186,74 +179,39 @@ export function solveJointPose(options: {
   readonly camLoc: LatLng;
   readonly photos: readonly JointPhoto[];
   readonly controlPoints: readonly ControlPointSeed[];
-  readonly mapPriors: readonly MapPrior[];
-  readonly solveCamera: boolean;
 }): JointSolveResult {
-  const { camLoc, photos, controlPoints, mapPriors, solveCamera } = options;
+  const { camLoc, photos, controlPoints } = options;
 
-  // Build per-photo working poses, all sharing the starting camLoc.
+  // Per-photo working poses, all sharing the fixed camLoc. Camera position
+  // is never modified — it's the user-asserted station origin.
   const work: WorkingPose[] = photos.map(p => ({
     ...p.pose,
     camLat: camLoc.lat,
     camLng: camLoc.lng,
   }));
-  let camLat = camLoc.lat;
-  let camLng = camLoc.lng;
 
   const cpWork = new Map<string, { lat: number; lng: number }>();
   for (const cp of controlPoints) cpWork.set(cp.id, { lat: cp.lat, lng: cp.lng });
 
-  const totalImageObs = photos.reduce((s, p) => s + p.pois.length, 0);
-  const sumLocalFree = photos.reduce((s, p) => s + p.free.length, 0);
-  const cpFreeSlotCount = mapPriors.length * 2;
-  const totalObs = totalImageObs + 2 * mapPriors.length;
+  const totalObs = photos.reduce((s, p) => s + p.pois.length, 0);
 
-  // Demote camera-solving if the count makes it underdetermined.
-  let solveCameraFinal = solveCamera;
-  if (solveCameraFinal) {
-    const totalUnknowns = 2 + sumLocalFree + cpFreeSlotCount;
-    if (totalObs < totalUnknowns + 2) solveCameraFinal = false;
-  }
-
-  // Slot layout: camLat, camLng (if free), per-photo locals in declaration
-  // order, then cpLat/cpLng for each CP that has a prior.
   const slots: Slot[] = [];
-  if (solveCameraFinal) slots.push({ kind: 'camLat' }, { kind: 'camLng' });
   photos.forEach((p, photoIndex) => {
-    for (const name of p.free) slots.push({ kind: 'photo', photoIndex, name });
+    for (const name of p.free) slots.push({ photoIndex, name });
   });
-  for (const prior of mapPriors) {
-    slots.push({ kind: 'cpLat', cpId: prior.cpId }, { kind: 'cpLng', cpId: prior.cpId });
-  }
 
-  if (slots.length === 0 || totalObs === 0) return emptyResult(camLoc, photos, controlPoints);
-
-  function syncCamToPhotos(): void {
-    for (const p of work) { p.camLat = camLat; p.camLng = camLng; }
-  }
+  if (slots.length === 0 || totalObs === 0) return emptyResult(photos, controlPoints);
 
   function applyState(state: readonly number[]): void {
     for (let k = 0; k < slots.length; k++) {
       const slot = slots[k]!;
-      const v = state[k]!;
-      if (slot.kind === 'camLat') camLat = v;
-      else if (slot.kind === 'camLng') camLng = v;
-      else if (slot.kind === 'photo') work[slot.photoIndex]![slot.name] = v;
-      else if (slot.kind === 'cpLat') cpWork.get(slot.cpId)!.lat = v;
-      else cpWork.get(slot.cpId)!.lng = v;
+      work[slot.photoIndex]![slot.name] = state[k]!;
     }
-    syncCamToPhotos();
     for (const p of work) clampSizeRad(p);
   }
 
   function readState(): number[] {
-    return slots.map(slot => {
-      if (slot.kind === 'camLat') return camLat;
-      if (slot.kind === 'camLng') return camLng;
-      if (slot.kind === 'photo') return work[slot.photoIndex]![slot.name];
-      if (slot.kind === 'cpLat') return cpWork.get(slot.cpId)!.lat;
-      return cpWork.get(slot.cpId)!.lng;
-    });
+    return slots.map(slot => work[slot.photoIndex]![slot.name]);
   }
 
   function computeResiduals(): number[] {
@@ -265,12 +223,6 @@ export function solveJointPose(options: {
         const img = projectPOI(pose, poi.u, poi.v);
         r.push(wrapPI(img.az - targetBearing(pose, cp.lat, cp.lng)));
       }
-    }
-    for (const prior of mapPriors) {
-      const cp = cpWork.get(prior.cpId)!;
-      const { x, z } = latLngToCameraRelativeMeters(cp, prior);
-      r.push(-z / prior.sigmaMeters);
-      r.push( x / prior.sigmaMeters);
     }
     return r;
   }
@@ -345,9 +297,7 @@ export function solveJointPose(options: {
     }
   }
 
-  const cameraMoved = solveCameraFinal && (camLat !== camLoc.lat || camLng !== camLoc.lng);
   return {
-    camLoc: { lat: camLat, lng: camLng },
     photos: work.map(p => ({
       pose: {
         photoAz: p.photoAz,
@@ -355,8 +305,8 @@ export function solveJointPose(options: {
         photoRoll: p.photoRoll,
         sizeRad: p.sizeRad,
         aspect: p.aspect,
-        camLat,
-        camLng,
+        camLat: camLoc.lat,
+        camLng: camLoc.lng,
       },
     })),
     controlPoints: controlPoints.map(cp => {
@@ -365,7 +315,6 @@ export function solveJointPose(options: {
     }),
     residualRMS: residualNorm(r) / Math.sqrt(Math.max(r.length, 1)),
     iterations: iters,
-    cameraMoved,
   };
 }
 

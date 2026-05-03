@@ -215,40 +215,13 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	maps := []ControlPointMapObservation{}
-	mRows, err := s.db.Query(r.Context(), `
-		SELECT m.id, m.lat, m.lng
-		FROM map_measurements m
-		WHERE m.control_point_id = $1
-		ORDER BY m.created_at`, id)
-	if err != nil {
-		writeErrorFromDB(w, err)
-		return
-	}
-	defer mRows.Close()
-	for mRows.Next() {
-		var o ControlPointMapObservation
-		if err := mRows.Scan(&o.ID, &o.Lat, &o.Lng); err != nil {
-			writeErrorFromDB(w, err)
-			return
-		}
-		maps = append(maps, o)
-	}
-	if err := mRows.Err(); err != nil {
-		writeErrorFromDB(w, err)
-		return
-	}
-
 	writeJSON(w, http.StatusOK, ControlPointObservations{
 		ImageMeasurements: images,
-		MapMeasurements:   maps,
 	})
 }
 
 // controlPointsByStation returns CPs referenced by any image measurement on
-// this station's photos. Map measurements are global (not station-owned), so
-// they don't participate in this filter; the frontend pulls them via the
-// global list endpoint.
+// this station's photos.
 func (s *Server) controlPointsByStation(ctx context.Context, stationID string) ([]ControlPoint, error) {
 	out := []ControlPoint{}
 	rows, err := s.db.Query(ctx, `

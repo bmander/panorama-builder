@@ -16,12 +16,10 @@ type Schemas = components['schemas'];
 
 export type ApiStation = Schemas['Station'];
 export type ApiPhoto = Schemas['Photo'];
-export type ApiMapMeasurement = Schemas['MapMeasurement'];
 export type ApiImageMeasurement = Schemas['ImageMeasurement'];
 export type ApiControlPoint = Schemas['ControlPoint'];
 export type ApiHydratedStation = Schemas['HydratedStation'];
 export type PhotoPosePatch = Schemas['PhotoPosePatch'];
-export type MapMeasurementRequest = Schemas['MapMeasurementRequest'];
 export type ImageMeasurementPatch = Schemas['ImageMeasurementPatch'];
 export type ControlPointPatch = Schemas['ControlPointPatch'];
 export type ApiControlPointObservations = Schemas['ControlPointObservations'];
@@ -104,26 +102,6 @@ export async function uploadPhotoBlob(id: string, blob: Blob): Promise<void> {
 // URL the browser can use directly (e.g., as a TextureLoader source).
 export function photoBlobUrl(id: string): string {
   return `${API}/photos/${encodeURIComponent(id)}/blob`;
-}
-
-// --- Map measurements ---
-
-export function createMapMeasurement(body: MapMeasurementRequest): Promise<ApiMapMeasurement> {
-  return request<ApiMapMeasurement>('POST', '/map-measurements', body);
-}
-
-export function listMapMeasurements(): Promise<ApiMapMeasurement[]> {
-  return request<ApiMapMeasurement[]>('GET', '/map-measurements');
-}
-
-export function updateMapMeasurement(
-  id: string, body: MapMeasurementRequest,
-): Promise<ApiMapMeasurement> {
-  return request<ApiMapMeasurement>('PUT', `/map-measurements/${encodeURIComponent(id)}`, body);
-}
-
-export function deleteMapMeasurement(id: string): Promise<void> {
-  return requestVoid('DELETE', `/map-measurements/${encodeURIComponent(id)}`);
 }
 
 // --- Image measurements ---

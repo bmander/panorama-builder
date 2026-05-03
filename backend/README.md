@@ -59,9 +59,6 @@ falling back to `index.html` (SPA `/station/<id>` and `/cp/<id>` deep-links).
 | DELETE | `/api/photos/{id}`                  |
 | PUT    | `/api/photos/{id}/blob`             |
 | GET    | `/api/photos/{id}/blob`             |
-| POST   | `/api/stations/{id}/map-measurements`    |
-| PUT    | `/api/map-measurements/{id}`             |
-| DELETE | `/api/map-measurements/{id}`             |
 | POST   | `/api/photos/{id}/image-measurements`    |
 | PUT    | `/api/image-measurements/{id}`           |
 | DELETE | `/api/image-measurements/{id}`           |

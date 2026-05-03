@@ -346,8 +346,8 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
     if (e.key === 'Backspace' || e.key === 'Delete') {
       // POI selection takes priority: a selected POI (photo-attached OR
       // standalone map-POI) is the more specific target the user is acting
-      // on (vs the photo it sits on). deleteSelectedMeasurement handles both kinds.
-      if (overlays.getSelectedImageMeasurement() || overlays.getSelectedMapMeasurement()) {
+      // on (vs the photo it sits on).
+      if (overlays.getSelectedImageMeasurement()) {
         overlays.deleteSelectedMeasurement();
         endDrag();
         onChange();

@@ -39,13 +39,6 @@ export interface ControlPointSeed {
   readonly lng: number;
 }
 
-// Gaussian penalty pulling a CP toward a map-measurement observation.
-export interface MapPrior {
-  readonly cpId: string;
-  readonly lat: number;
-  readonly lng: number;
-  readonly sigmaMeters: number;
-}
 
 // Snapshot for the HUD readout.
 export interface AzAltSnapshot {
@@ -77,19 +70,8 @@ export interface ImageMeasurementBearing {
   readonly selected: boolean;
 }
 
-// Map measurement: a user-asserted ground-truth observation on the map. A
-// measurement may be linked to a control point (the latent landmark it
-// observes); the column in the 360° viewer is drawn at the linked CP's
-// estimated location, not the measurement's own lat/lng.
-export interface MapMeasurementView {
-  readonly id: string;
-  readonly latlng: LatLng;
-  readonly controlPointId: string | null;
-  readonly selected: boolean;
-}
-
-// Control point: a real-world landmark with a latent location. May be
-// referenced by image and map measurements across photos / stations.
+// Control point: a real-world landmark with a latent location, observed by
+// image measurements across photos / stations.
 export interface ControlPointView {
   readonly id: string;
   readonly description: string;
@@ -110,20 +92,15 @@ export interface JointPhoto {
 }
 
 export interface JointSolveResult {
-  readonly camLoc: LatLng;
   readonly photos: readonly { readonly pose: Pose }[];
   readonly controlPoints: readonly ControlPointSeed[];
   readonly residualRMS: number;
   readonly iterations: number;
-  readonly cameraMoved: boolean;
 }
 
-// Per-photo free parameters. Camera params are global (see solveCamera flag).
+// Per-photo free parameters the solver can adjust. Camera location is fixed
+// at the user-asserted station origin and never modified.
 export type LocalParam = 'photoAz' | 'sizeRad' | 'photoRoll';
-
-// Names of every parameter the solver can adjust — used by main.ts's lock
-// state. Includes the global camera params alongside the per-photo locals.
-export type SolverParam = LocalParam | 'camLat' | 'camLng';
 
 // Bake (pixel buffer + dimensions) returned by the equirect baker.
 export interface Baked {
@@ -232,3 +209,7 @@ export const FOCUS_QUERY_PARAM = 'focus';
 // Index map deep-link: pan/zoom and open the popup for a specific control point.
 export const indexCpHref = (cpId: string): string => `/?cp=${cpId}`;
 export const INDEX_CP_QUERY_PARAM = 'cp';
+
+// Index map deep-link: pan/zoom and open the popup for a specific station.
+export const indexStationHref = (stationId: string): string => `/?station=${stationId}`;
+export const INDEX_STATION_QUERY_PARAM = 'station';

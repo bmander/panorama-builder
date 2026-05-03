@@ -1,4 +1,4 @@
-import { bearingFromLocation, bearingToViewerAz, latLngToCameraRelativeMeters } from './geo.js';
+import { bearingFromLocation, bearingToViewerAz } from './geo.js';
 import { projectPOI } from './solver.js';
 import type { ApiControlPoint, ApiControlPointObservations } from './api.js';
 import type { LatLng, Pose } from './types.js';
@@ -7,7 +7,6 @@ const MAX_ITERS = 20;
 const STEP_TOL = 1e-7;
 const RESIDUAL_TOL = 1e-5;
 const FD_EPS = 1e-5;
-const MAP_PRIOR_SIGMA_M = 30;
 
 const wrapPI = (a: number): number =>
   ((a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
@@ -36,14 +35,11 @@ function initialGuess(
   cp: ApiControlPoint,
   obs: ApiControlPointObservations,
 ): LatLng | null {
-  const mapAverage = averageLatLng(obs.map_measurements.map(m => ({ lat: m.lat, lng: m.lng })));
-  if (mapAverage) return mapAverage;
   if (cp.est_lat !== null && cp.est_lng !== null) return { lat: cp.est_lat, lng: cp.est_lng };
-  const locAverage = averageLatLng(obs.image_measurements.map(im => ({
+  return averageLatLng(obs.image_measurements.map(im => ({
     lat: im.station_lat,
     lng: im.station_lng,
   })));
-  return locAverage;
 }
 
 function poseFromObservation(im: ApiControlPointObservations['image_measurements'][number]): Pose {
@@ -72,9 +68,7 @@ export function solveControlPointLocation(
     const pose = poseFromObservation(im);
     return { pose, observedAz: projectPOI(pose, im.u, im.v).az };
   });
-  const mapObs = obs.map_measurements.map(m => ({ lat: m.lat, lng: m.lng }));
-  if (imageObs.length === 0 && mapObs.length === 0) return null;
-  if (imageObs.length + 2 * mapObs.length < 2) return null;
+  if (imageObs.length < 2) return null;
 
   const start = initialGuess(cp, obs);
   if (!start) return null;
@@ -88,11 +82,6 @@ export function solveControlPointLocation(
         latlng,
       ));
       r.push(wrapPI(im.observedAz - target));
-    }
-    for (const m of mapObs) {
-      const { x, z } = latLngToCameraRelativeMeters(latlng, m);
-      r.push(-z / MAP_PRIOR_SIGMA_M);
-      r.push(x / MAP_PRIOR_SIGMA_M);
     }
     return r;
   }

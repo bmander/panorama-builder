@@ -18,7 +18,6 @@ export interface SyncedPhoto {
   size_rad: number;
   opacity: number;
 }
-export interface SyncedMapMeasurement { lat: number; lng: number; control_point_id: string | null; }
 export interface SyncedImageMeasurement { u: number; v: number; control_point_id: string | null; }
 export interface SyncedControlPoint {
   description: string;
@@ -32,7 +31,6 @@ export interface SyncedControlPoint {
 export interface SyncManager {
   registerLocation(loc: LatLng): void;
   registerPhoto(id: string, pose: SyncedPhoto): void;
-  registerMapMeasurement(id: string, payload: SyncedMapMeasurement): void;
   registerImageMeasurement(id: string, payload: SyncedImageMeasurement): void;
   registerControlPoint(id: string, payload: SyncedControlPoint): void;
   flush(): void;
@@ -53,7 +51,6 @@ export function createSyncManager({
   const synced = {
     location: null as SyncedLocation | null,
     photos: new Map<string, SyncedPhoto>(),
-    mapMeasurements: new Map<string, SyncedMapMeasurement>(),
     imageMeasurements: new Map<string, SyncedImageMeasurement>(),
     controlPoints: new Map<string, SyncedControlPoint>(),
   };
@@ -90,9 +87,6 @@ export function createSyncManager({
   function photosEqual(a: SyncedPhoto, b: SyncedPhoto): boolean {
     return a.aspect === b.aspect && a.photo_az === b.photo_az && a.photo_tilt === b.photo_tilt
       && a.photo_roll === b.photo_roll && a.size_rad === b.size_rad && a.opacity === b.opacity;
-  }
-  function mapMeasurementsEqual(a: SyncedMapMeasurement, b: SyncedMapMeasurement): boolean {
-    return a.lat === b.lat && a.lng === b.lng && a.control_point_id === b.control_point_id;
   }
   function imageMeasurementsEqual(a: SyncedImageMeasurement, b: SyncedImageMeasurement): boolean {
     return a.u === b.u && a.v === b.v && a.control_point_id === b.control_point_id;
@@ -142,10 +136,6 @@ export function createSyncManager({
     for (const o of overlays.listOverlays() as THREE.Group[]) {
       currentPhotos.set(overlayData(o).id, buildCurrentPhoto(o));
     }
-    const currentMapMeasurements = new Map<string, SyncedMapMeasurement>();
-    for (const m of overlays.getMapMeasurements()) {
-      currentMapMeasurements.set(m.id, { lat: m.latlng.lat, lng: m.latlng.lng, control_point_id: m.controlPointId });
-    }
     const currentImageMeasurements = new Map<string, SyncedImageMeasurement>();
     for (const p of overlays.getImageMeasurements()) {
       currentImageMeasurements.set(p.id, { u: p.uv.u, v: p.uv.v, control_point_id: p.controlPointId });
@@ -166,10 +156,6 @@ export function createSyncManager({
       (_id, val) => api.createPhoto(locId, val),
       (id, val) => api.updatePhoto(id, val),
       api.deletePhoto, tasks);
-    syncResource(currentMapMeasurements, synced.mapMeasurements, mapMeasurementsEqual,
-      (_id, val) => api.createMapMeasurement(val),
-      (id, val) => api.updateMapMeasurement(id, val),
-      api.deleteMapMeasurement, tasks);
     // Image measurements + control points are created via explicit handlers.
     syncResource(currentImageMeasurements, synced.imageMeasurements, imageMeasurementsEqual,
       null,
@@ -207,7 +193,6 @@ export function createSyncManager({
   return {
     registerLocation(loc) { synced.location = { lat: loc.lat, lng: loc.lng }; },
     registerPhoto(id, pose) { synced.photos.set(id, pose); },
-    registerMapMeasurement(id, payload) { synced.mapMeasurements.set(id, payload); },
     registerImageMeasurement(id, payload) { synced.imageMeasurements.set(id, payload); },
     registerControlPoint(id, payload) { synced.controlPoints.set(id, payload); },
     flush() {

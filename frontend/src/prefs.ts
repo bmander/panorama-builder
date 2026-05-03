@@ -8,7 +8,6 @@ export interface Prefs {
   azimuth: number;
   altitude: number;
   fov: number;
-  lockCamera: boolean;
   solvePhotoRoll: boolean;
   terrainMode: TerrainMode;
   sunDateTime: string;     // YYYY-MM-DDTHH:mm

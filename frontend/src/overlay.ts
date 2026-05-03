@@ -11,7 +11,6 @@ import type {
   ControlPointView,
   ImageMeasurementBearing,
   LatLng,
-  MapMeasurementView,
   Pose,
   Role,
 } from './types.js';
@@ -71,6 +70,27 @@ function setPoiColor(poi: THREE.Mesh, hex: number): void {
 
 const POI_GEOM = new THREE.PlaneGeometry(2, 2);
 
+// Lazy so the canvas isn't created on the index page (no overlays there).
+let placeholderTex: THREE.Texture | null = null;
+function getPlaceholderTexture(): THREE.Texture {
+  if (placeholderTex) return placeholderTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = 16;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#3a3a3a';
+  ctx.fillRect(0, 0, 16, 16);
+  ctx.strokeStyle = '#555';
+  ctx.lineWidth = 1;
+  for (let i = -16; i < 32; i += 4) {
+    ctx.beginPath();
+    ctx.moveTo(i, 0);
+    ctx.lineTo(i + 16, 16);
+    ctx.stroke();
+  }
+  placeholderTex = new THREE.CanvasTexture(c);
+  return placeholderTex;
+}
+
 const widthFromSizeRad = (sr: number): number => 2 * OVERLAY_R * Math.tan(sr / 2);
 
 const HANDLE_CORNERS: readonly (readonly [number, number])[] = [
@@ -109,6 +129,8 @@ export interface AddControlPointPayload {
 export interface OverlayManager {
   overlaySphere: THREE.Sphere;
   addOverlay(tex: THREE.Texture, aspect: number, dir: THREE.Vector3, opts: AddPhotoOptions): THREE.Group;
+  addPendingOverlay(aspect: number, dir: THREE.Vector3, opts: AddPhotoOptions): THREE.Group;
+  setOverlayTexture(o: THREE.Group, tex: THREE.Texture): void;
   getSelected(): THREE.Group | null;
   setSelected(o: THREE.Group | null): void;
   setHovered(o: THREE.Group | null): boolean;
@@ -129,19 +151,7 @@ export interface OverlayManager {
   deleteSelectedMeasurement(): void;
   getSelectedImageMeasurement(): THREE.Mesh | null;
   setSelectedImageMeasurement(measurement: THREE.Mesh | null): void;
-  // Sets image-measurement and map-measurement selection together, firing
-  // onSelectionChange exactly once. Used by the matcher click.
-  setSelectedPair(measurement: THREE.Mesh | null, mapMeasurementId: string | null): void;
   getImageMeasurements(): ImageMeasurementBearing[];
-
-  // --- Map measurements (per-station ground-truth observations) ---
-  addMapMeasurement(id: string, latlng: LatLng, controlPointId: string | null): void;
-  // Moves the measurement marker. If the measurement is linked to a CP, the
-  // CP's est_lat/est_lng are mirrored to the new latlng (v1 behavior).
-  setMapMeasurementLatLng(id: string, latlng: LatLng): void;
-  getMapMeasurements(): MapMeasurementView[];
-  getSelectedMapMeasurement(): string | null;
-  setSelectedMapMeasurement(id: string | null): void;
 
   // --- Control points (cross-station landmarks) ---
   addControlPoint(id: string, payload: AddControlPointPayload): void;
@@ -178,12 +188,6 @@ export interface CreateOverlayManagerOptions {
   onLightMutate?: () => void;
 }
 
-interface MapMeasurementEntry {
-  id: string;
-  latlng: LatLng;
-  controlPointId: string | null;
-}
-
 interface ControlPointEntry {
   id: string;
   description: string;
@@ -205,12 +209,6 @@ export function createOverlayManager(
   let selected: THREE.Group | null = null;
   let selectedImageMeasurement: THREE.Mesh | null = null;
   let hoveredOverlay: THREE.Group | null = null;
-
-  // Per-station map measurements; v1 keeps these scoped under the loaded
-  // station. Columns in the 360° view are drawn from the linked CPs (one
-  // column per CP), not from these directly.
-  const mapMeasurements: MapMeasurementEntry[] = [];
-  let selectedMapMeasurementId: string | null = null;
 
   // Cross-station control points reachable from the loaded station. The
   // hydrate path populates this on station load; new CPs created at runtime
@@ -321,15 +319,10 @@ export function createOverlayManager(
     applyOverlayDecoration(o);
   }
 
-  // The "selected control point" is derived from whichever measurement
-  // (image or map) is the primary selection. Selecting either side of a
-  // match lights up the CP and every other measurement that references it.
+  // The selected CP is derived from the selected image measurement, so a
+  // selection lights up every other measurement referencing the same CP.
   function selectedControlPointId(): string | null {
     if (selectedImageMeasurement) return poiData(selectedImageMeasurement).controlPointId;
-    if (selectedMapMeasurementId) {
-      const m = mapMeasurements.find(mm => mm.id === selectedMapMeasurementId);
-      return m?.controlPointId ?? null;
-    }
     return null;
   }
 
@@ -349,17 +342,46 @@ export function createOverlayManager(
     }
   }
 
+  function preparePhotoTexture(tex: THREE.Texture): void {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = getAnisotropy();
+  }
+
+  // The placeholder is shared across pending overlays; only photo textures
+  // are 1:1 with their owning material and safe to dispose here.
+  function disposeBodyTexture(mat: THREE.MeshBasicMaterial): void {
+    if (mat.map && mat.map !== placeholderTex) mat.map.dispose();
+  }
+
+  function placeNewOverlay(tex: THREE.Texture, aspect: number, dir: THREE.Vector3, opts: AddPhotoOptions): THREE.Group {
+    const o = makeOverlay(tex, aspect, opts.id);
+    placeAt(o, dir);
+    overlaysGroup.add(o);
+    manager.setSelected(o);
+    notify();
+    return o;
+  }
+
   const manager: OverlayManager = {
     overlaySphere,
     addOverlay(tex, aspect, dir, opts) {
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.anisotropy = getAnisotropy();
-      const o = makeOverlay(tex, aspect, opts.id);
-      placeAt(o, dir);
-      overlaysGroup.add(o);
-      manager.setSelected(o);
+      preparePhotoTexture(tex);
+      return placeNewOverlay(tex, aspect, dir, opts);
+    },
+    addPendingOverlay(aspect, dir, opts) {
+      return placeNewOverlay(getPlaceholderTexture(), aspect, dir, opts);
+    },
+    setOverlayTexture(o, tex) {
+      // Overlay was removed (e.g., user deleted the photo) before its blob
+      // arrived. Drop the texture rather than orphaning it on a disposed
+      // material.
+      if (!o.parent) { tex.dispose(); return; }
+      preparePhotoTexture(tex);
+      const mat = overlayData(o).body.material as THREE.MeshBasicMaterial;
+      disposeBodyTexture(mat);
+      mat.map = tex;
+      mat.needsUpdate = true;
       notify();
-      return o;
     },
     getSelected: () => selected,
     setSelected(o) {
@@ -409,7 +431,7 @@ export function createOverlayManager(
       const data = overlayData(o);
       data.body.geometry.dispose();
       const bodyMat = meshMat(data.body);
-      bodyMat.map?.dispose();
+      disposeBodyTexture(bodyMat);
       bodyMat.dispose();
       if (data.outline) {
         data.outline.geometry.dispose();
@@ -463,19 +485,6 @@ export function createOverlayManager(
       notify();
     },
     deleteSelectedMeasurement() {
-      if (selectedMapMeasurementId) {
-        const deletedId = selectedMapMeasurementId;
-        const i = mapMeasurements.findIndex(m => m.id === deletedId);
-        if (i >= 0) mapMeasurements.splice(i, 1);
-        // The CP this map measurement linked to (if any) is unaffected — it
-        // lives cross-station. Image measurements that used that same CP
-        // keep their FK; their column simply lacks a ground-truth observation
-        // until another map measurement is added.
-        selectedMapMeasurementId = null;
-        onSelectionChange?.();
-        notify();
-        return;
-      }
       if (!selectedImageMeasurement) return;
       const measurement = selectedImageMeasurement;
       manager.setSelectedImageMeasurement(null);
@@ -491,22 +500,8 @@ export function createOverlayManager(
     },
     getSelectedImageMeasurement: () => selectedImageMeasurement,
     setSelectedImageMeasurement(measurement) {
-      // Mutually exclusive with selectedMapMeasurementId — see the matching
-      // setSelectedMapMeasurement below for rationale. Linked highlighting
-      // still flows through poiData(measurement).controlPointId.
-      if (selectedImageMeasurement === measurement
-          && (measurement === null || selectedMapMeasurementId === null)) return;
+      if (selectedImageMeasurement === measurement) return;
       selectedImageMeasurement = measurement;
-      if (measurement !== null) selectedMapMeasurementId = null;
-      applyPOIColors();
-      onSelectionChange?.();
-    },
-    setSelectedPair(measurement, mapMeasurementId) {
-      const photoChanged = selectedImageMeasurement !== measurement;
-      const mapChanged = selectedMapMeasurementId !== mapMeasurementId;
-      if (!photoChanged && !mapChanged) return;
-      if (photoChanged) selectedImageMeasurement = measurement;
-      if (mapChanged) selectedMapMeasurementId = mapMeasurementId;
       applyPOIColors();
       onSelectionChange?.();
     },
@@ -529,37 +524,6 @@ export function createOverlayManager(
         }
       }
       return result;
-    },
-
-    addMapMeasurement(id, latlng, controlPointId) {
-      mapMeasurements.push({ id, latlng: { lat: latlng.lat, lng: latlng.lng }, controlPointId });
-      notify();
-    },
-    setMapMeasurementLatLng(id, latlng) {
-      const entry = mapMeasurements.find(m => m.id === id);
-      if (!entry) return;
-      entry.latlng = { lat: latlng.lat, lng: latlng.lng };
-      // CP est_* is solver-owned; the marker is a soft-prior observation only.
-      notify();
-    },
-    getMapMeasurements() {
-      const cpId = selectedControlPointId();
-      return mapMeasurements.map(m => ({
-        id: m.id,
-        latlng: m.latlng,
-        controlPointId: m.controlPointId,
-        selected: m.id === selectedMapMeasurementId
-          || (m.controlPointId !== null && m.controlPointId === cpId),
-      }));
-    },
-    getSelectedMapMeasurement: () => selectedMapMeasurementId,
-    setSelectedMapMeasurement(id) {
-      if (selectedMapMeasurementId === id
-          && (id === null || selectedImageMeasurement === null)) return;
-      selectedMapMeasurementId = id;
-      if (id !== null) selectedImageMeasurement = null;
-      applyPOIColors();
-      onSelectionChange?.();
     },
 
     addControlPoint(id, payload) {
@@ -607,10 +571,8 @@ export function createOverlayManager(
       const i = controlPoints.findIndex(c => c.id === id);
       if (i < 0) return;
       controlPoints.splice(i, 1);
-      // Clear linkage on dependent measurements (mirrors backend ON DELETE SET NULL).
-      for (const m of mapMeasurements) {
-        if (m.controlPointId === id) m.controlPointId = null;
-      }
+      // Clear linkage on dependent image measurements (mirrors the backend
+      // ON DELETE SET NULL on image_measurements.control_point_id).
       for (const child of overlaysGroup.children) {
         const data = overlayData(child as THREE.Group);
         if (!data.pois) continue;

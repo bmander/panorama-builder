@@ -14,6 +14,7 @@
   <div id="top-right">
     <button id="admin-btn" class="btn" hidden>Admin</button>
     <button id="settings-btn" class="btn" aria-expanded="false">⚙ Settings</button>
+    <a id="view-on-map" class="btn" href="/">📍 Map</a>
     <button id="download" class="btn">download PNG</button>
   </div>
   <div id="admin-modal" class="modal" hidden>
@@ -54,23 +55,26 @@
   <div id="observe-modal" class="modal" hidden>
     <div class="modal-panel">
       <div class="modal-header">
-        <span>Add observation</span>
+        <span id="observe-title">Add observation</span>
         <button type="button" id="observe-close" class="btn">✕</button>
       </div>
       <div id="observe-cp-list" class="cp-list"></div>
       <div class="modal-field">
-        <span>Or create a new control point</span>
+        <span id="observe-desc-label">Or create a new control point</span>
         <input type="text" id="observe-new-desc" placeholder="name" maxlength="200" required>
+      </div>
+      <div class="modal-field" id="observe-elev-row" hidden>
+        <span>Elevation above grade (m)</span>
+        <input type="number" id="observe-new-elev" step="0.1" value="0">
       </div>
       <div class="modal-actions">
         <button type="button" id="observe-cancel" class="btn">Cancel</button>
-        <button type="button" id="observe-create" class="btn">Create &amp; observe</button>
+        <button type="button" id="observe-create" class="btn">Create</button>
       </div>
     </div>
   </div>
   <div id="context-menu" hidden></div>
   <div id="settings-panel" hidden>
-    <label class="settings-check"><input type="checkbox" id="lock-camera"> Lock camera position</label>
     <label class="settings-check"><input type="checkbox" id="solve-roll-toggle"> Auto-solve photo rotation</label>
     <label class="settings-inline">Terrain
       <select id="terrain-mode">

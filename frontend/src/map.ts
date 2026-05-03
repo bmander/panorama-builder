@@ -36,6 +36,9 @@ export interface MapView {
   // Pan/zoom the index map to the named CP and open its popup. No-op if the
   // CP isn't in the current `indexControlPoints` list (e.g. no estimate yet).
   focusIndexControlPoint(id: string): boolean;
+  // Pan/zoom to the named station marker and open its popup. No-op if the
+  // marker isn't in the current set.
+  focusStationMarker(id: string): boolean;
 }
 
 export interface CreateMapViewOptions {
@@ -168,7 +171,7 @@ export function createMapView({
   L.control.layers(layers, {}, { collapsed: false, position: 'topleft' }).addTo(map);
 
   const CONE_STYLE: L.PolylineOptions = { color: '#ffd84a', weight: 1, fillColor: '#ffd84a', fillOpacity: 0.18 };
-  const stationMarkers = new Map<string, L.Marker>();
+  const stationMarkers = new Map<string, { marker: L.Marker; view: StationMarker }>();
   // Preview overlay drawn when a station marker is clicked.
   let stationPreview: StationPreview | null = null;
   const previewConeLayers: L.Polygon[] = [];
@@ -185,7 +188,7 @@ export function createMapView({
   const GO_POPUP_OPTS: L.PopupOptions = { className: 'station-popup', closeButton: true };
   const goButtonHtml = (label: string, cls = ''): string =>
     `<button type="button" class="go${cls ? ' ' + cls : ''}">${label}</button>`;
-  const solveButtonHtml = (): string => '<button type="button" class="go solve-location">Solve location</button>';
+  const solveButtonHtml = (): string => '<button type="button" class="go solve-location">Refine location</button>';
   function wireGoButton(popup: L.Popup, selector: string, onClick: () => void): void {
     const btn = popup.getElement()?.querySelector<HTMLButtonElement>(selector);
     btn?.addEventListener('click', () => {
@@ -302,38 +305,51 @@ export function createMapView({
     },
     setStationMarkers(stations: readonly StationMarker[]): void {
       const wantedIds = new Set(stations.map(p => p.id));
-      for (const [id, m] of stationMarkers) {
-        if (!wantedIds.has(id)) { map.removeLayer(m); stationMarkers.delete(id); }
+      for (const [id, entry] of stationMarkers) {
+        if (!wantedIds.has(id)) { map.removeLayer(entry.marker); stationMarkers.delete(id); }
       }
       for (const p of stations) {
         const existing = stationMarkers.get(p.id);
         if (existing) {
-          existing.setLatLng([p.latlng.lat, p.latlng.lng]);
+          existing.marker.setLatLng([p.latlng.lat, p.latlng.lng]);
+          existing.view = p;
           continue;
         }
         const m = L.marker([p.latlng.lat, p.latlng.lng]);
         m.on('click', (e: L.LeafletMouseEvent) => {
           L.DomEvent.stopPropagation(e);
-          const popupHtml = `<span class="name">${escapeHtml(p.label)}</span>`
-            + goButtonHtml('Go to station →');
-          // openOn auto-closes any prior popup; that fires its 'remove' event
-          // which clears the previous station's preview before we kick off
-          // the new one below.
-          const popup = L.popup(GO_POPUP_OPTS)
-            .setLatLng([p.latlng.lat, p.latlng.lng])
-            .setContent(popupHtml)
-            .openOn(map);
-          popup.on('remove', () => { applyStationPreview(null); });
-          onStationMarkerPreview?.(p.id);
-          wireGoButton(popup, '.go', () => onStationMarkerOpen?.(p.id));
+          openStationPopup(p);
         });
         m.on('contextmenu', (e: L.LeafletMouseEvent) => {
           L.DomEvent.preventDefault(e.originalEvent);
           L.DomEvent.stopPropagation(e);
         });
         m.addTo(map);
-        stationMarkers.set(p.id, m);
+        stationMarkers.set(p.id, { marker: m, view: p });
       }
     },
+    focusStationMarker(id: string): boolean {
+      const entry = stationMarkers.get(id);
+      if (!entry) return false;
+      const FOCUS_ZOOM = 18;
+      map.setView([entry.view.latlng.lat, entry.view.latlng.lng],
+        Math.max(map.getZoom(), FOCUS_ZOOM), { animate: false });
+      openStationPopup(entry.view);
+      return true;
+    },
   };
+
+  function openStationPopup(p: StationMarker): void {
+    const popupHtml = `<span class="name">${escapeHtml(p.label)}</span>`
+      + goButtonHtml('Go to station →');
+    // openOn auto-closes any prior popup; its 'remove' event clears the
+    // previous station's preview before the new preview is kicked off below.
+    const popup = L.popup(GO_POPUP_OPTS)
+      .setLatLng([p.latlng.lat, p.latlng.lng])
+      .setContent(popupHtml)
+      .openOn(map);
+    popup.on('remove', () => { applyStationPreview(null); });
+    onStationMarkerPreview?.(p.id);
+    wireGoButton(popup, '.go', () => onStationMarkerOpen?.(p.id));
+  }
 }
