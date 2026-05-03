@@ -87,10 +87,24 @@ export interface OverlayUserData {
   // 0 means the photo's local +Y is in the world's vertical plane through the
   // overlay center.
   photoRoll: number;
+  // Solver locks. Mirror lock_photo_* / lock_size_rad on the API.
+  lockPhotoAz: boolean;
+  lockPhotoTilt: boolean;
+  lockPhotoRoll: boolean;
+  lockSizeRad: boolean;
   body: THREE.Mesh;
   outline?: THREE.LineSegments;
   handles?: THREE.Mesh[];
   pois?: THREE.Mesh[];
+}
+
+// Per-pose-parameter solver locks for a photo. Maps 1:1 to the API's
+// PhotoPosePatch lock_* fields.
+export interface PhotoLocks {
+  readonly lockPhotoAz: boolean;
+  readonly lockPhotoTilt: boolean;
+  readonly lockPhotoRoll: boolean;
+  readonly lockSizeRad: boolean;
 }
 
 export interface POIUserData {

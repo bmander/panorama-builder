@@ -1,5 +1,5 @@
 import * as api from './api.js';
-import { formatLocalDateTime, getElement, indexCpHref, stationHref } from './types.js';
+import { formatLocalDateTime, getElement, stationHref } from './types.js';
 
 const CP_ID_RE = /^\/cp\/([A-Z2-7]{13})$/;
 
@@ -30,11 +30,14 @@ interface InlineEditorOptions<V, El extends EditorEl> {
   afterAttach?: (input: El) => void;
 }
 
-function attachInlineEditor<V, El extends EditorEl>(opts: InlineEditorOptions<V, El>): void {
+// Returns a refresh() that re-runs render against the current read() — used
+// when an external action (like a solve) mutates the underlying value.
+function attachInlineEditor<V, El extends EditorEl>(opts: InlineEditorOptions<V, El>): () => void {
   const { host, read, render, makeInput, parse, save,
     enter = 'enter', equal = Object.is, afterAttach } = opts;
   host.classList.add('editable');
-  render(read());
+  const refresh = (): void => { render(read()); };
+  refresh();
 
   host.addEventListener('click', () => {
     if (host.querySelector('input, textarea')) return;
@@ -79,6 +82,8 @@ function attachInlineEditor<V, El extends EditorEl>(opts: InlineEditorOptions<V,
     input.focus();
     afterAttach?.(input);
   });
+
+  return refresh;
 }
 
 function attachNameEditor(cp: api.ApiControlPoint, host: HTMLElement): void {
@@ -129,6 +134,74 @@ function attachNotesEditor(cp: api.ApiControlPoint, host: HTMLElement): void {
       host.classList.remove('empty');
       el.setSelectionRange(el.value.length, el.value.length);
     },
+  });
+}
+
+type LatLngField = 'est_lat' | 'est_lng';
+
+function attachLatLngEditor(
+  cp: api.ApiControlPoint, host: HTMLElement, field: LatLngField,
+): () => void {
+  const max = field === 'est_lat' ? 90 : 180;
+  host.title = 'Click to edit';
+  const renderText = (v: number | null): void => {
+    host.classList.toggle('empty', v === null);
+    host.textContent = v === null ? 'click to set' : v.toFixed(6);
+  };
+  return attachInlineEditor<number | null, HTMLInputElement>({
+    host,
+    read: () => cp[field],
+    render: renderText,
+    makeInput: (cur) => {
+      const el = document.createElement('input');
+      el.type = 'number';
+      el.className = 'num-edit';
+      el.step = 'any';
+      el.min = String(-max);
+      el.max = String(max);
+      if (cur !== null) el.value = String(cur);
+      return el;
+    },
+    parse: (el) => {
+      if (el.value.trim() === '') return null;
+      const n = parseFloat(el.value);
+      return Number.isFinite(n) ? n : cp[field];
+    },
+    save: async (next) => {
+      const updated = await api.updateControlPoint(cp.id, cpPatch(cp, { [field]: next }));
+      cp.est_lat = updated.est_lat;
+      cp.est_lng = updated.est_lng;
+    },
+    afterAttach: (el) => { host.classList.remove('empty'); el.select(); },
+  });
+}
+
+function attachAltEditor(cp: api.ApiControlPoint, host: HTMLElement): () => void {
+  host.title = 'Click to edit';
+  const renderText = (v: number): void => {
+    host.textContent = `${v.toFixed(1)} m`;
+  };
+  return attachInlineEditor<number, HTMLInputElement>({
+    host,
+    read: () => cp.est_alt,
+    render: renderText,
+    makeInput: (cur) => {
+      const el = document.createElement('input');
+      el.type = 'number';
+      el.className = 'num-edit';
+      el.step = 'any';
+      el.value = String(cur);
+      return el;
+    },
+    parse: (el) => {
+      const n = parseFloat(el.value);
+      return Number.isFinite(n) ? n : cp.est_alt;
+    },
+    save: async (next) => {
+      const updated = await api.updateControlPoint(cp.id, cpPatch(cp, { est_alt: next }));
+      cp.est_alt = updated.est_alt;
+    },
+    afterAttach: (el) => { el.select(); },
   });
 }
 
@@ -261,11 +334,6 @@ function renderObservations(obs: api.ApiControlPointObservations): void {
   }
 }
 
-function renderEstimate(el: HTMLElement, text: string | null, placeholder: string): void {
-  el.textContent = text ?? placeholder;
-  el.classList.toggle('empty', text === null);
-}
-
 type LockField = 'lock_est_lat' | 'lock_est_lng' | 'lock_est_alt';
 
 function attachLockToggle(cp: api.ApiControlPoint, elId: string, field: LockField): void {
@@ -289,7 +357,8 @@ async function main(): Promise<void> {
   const m = CP_ID_RE.exec(location.pathname);
   const nameEl = getElement('name');
   const idEl = getElement('id');
-  const locEl = getElement('loc');
+  const latEl = getElement('lat');
+  const lngEl = getElement('lng');
   const altEl = getElement('alt');
 
   if (!m) {
@@ -314,25 +383,14 @@ async function main(): Promise<void> {
 
   attachNameEditor(cp, nameEl);
   attachNotesEditor(cp, getElement('notes'));
+  const refreshLat = attachLatLngEditor(cp, latEl, 'est_lat');
+  const refreshLng = attachLatLngEditor(cp, lngEl, 'est_lng');
+  const refreshAlt = attachAltEditor(cp, altEl);
   attachDateEditor(cp, getElement('started_at'), 'started_at');
   attachDateEditor(cp, getElement('ended_at'), 'ended_at');
   attachLockToggle(cp, 'lock-est-lat', 'lock_est_lat');
   attachLockToggle(cp, 'lock-est-lng', 'lock_est_lng');
   attachLockToggle(cp, 'lock-est-alt', 'lock_est_alt');
-
-  function renderLocation(): void {
-    if (cp.est_lat !== null && cp.est_lng !== null) {
-      const a = document.createElement('a');
-      a.href = indexCpHref(cp.id);
-      a.textContent = `${cp.est_lat.toFixed(6)}, ${cp.est_lng.toFixed(6)}`;
-      locEl.replaceChildren(a);
-      locEl.classList.remove('empty');
-    } else {
-      renderEstimate(locEl, null, 'no estimate');
-    }
-    renderEstimate(altEl, `${cp.est_alt.toFixed(1)} m`, '—');
-  }
-  renderLocation();
 
   let obsCount = 0;
   if (obsResult.status === 'fulfilled') {
@@ -343,7 +401,9 @@ async function main(): Promise<void> {
       cp.est_lat = updated.est_lat;
       cp.est_lng = updated.est_lng;
       cp.est_alt = updated.est_alt;
-      renderLocation();
+      refreshLat();
+      refreshLng();
+      refreshAlt();
     });
   } else {
     console.error('observations fetch failed:', obsResult.reason);

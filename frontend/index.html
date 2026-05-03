@@ -73,6 +73,42 @@
       </div>
     </div>
   </div>
+  <div id="photo-params-modal" class="modal" hidden>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <span>Photo parameters</span>
+        <button type="button" id="photo-params-close" class="btn">✕</button>
+      </div>
+      <div class="modal-field photo-params-row">
+        <span>Azimuth (°)</span>
+        <input type="number" id="photo-params-az" step="0.1">
+        <label class="lock-check"><input type="checkbox" id="photo-params-az-lock"> lock</label>
+      </div>
+      <div class="modal-field photo-params-row">
+        <span>Tilt (°)</span>
+        <input type="number" id="photo-params-tilt" step="0.1">
+        <label class="lock-check"><input type="checkbox" id="photo-params-tilt-lock"> lock</label>
+      </div>
+      <div class="modal-field photo-params-row">
+        <span>Roll (°)</span>
+        <input type="number" id="photo-params-roll" step="0.1">
+        <label class="lock-check"><input type="checkbox" id="photo-params-roll-lock"> lock</label>
+      </div>
+      <div class="modal-field photo-params-row">
+        <span>FOV (°)</span>
+        <input type="number" id="photo-params-fov" step="0.1" min="2" max="162">
+        <label class="lock-check"><input type="checkbox" id="photo-params-fov-lock"> lock</label>
+      </div>
+      <div class="modal-field photo-params-row">
+        <span>Aspect</span>
+        <input type="text" id="photo-params-aspect" readonly>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="photo-params-cancel" class="btn">Cancel</button>
+        <button type="button" id="photo-params-save" class="btn">Save</button>
+      </div>
+    </div>
+  </div>
   <div id="context-menu" hidden></div>
   <div id="settings-panel" hidden>
     <div class="settings-row">

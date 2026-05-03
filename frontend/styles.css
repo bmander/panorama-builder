@@ -65,6 +65,13 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .photo-thumb .remove { padding: 0 6px; background: transparent; border: none;
                        color: #fff; cursor: pointer; font: 14px monospace; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.photo-params-row { flex-direction: row; align-items: center; gap: 8px; }
+.photo-params-row > span { flex: 0 0 90px; }
+.photo-params-row input[type="number"],
+.photo-params-row input[type="text"] { flex: 1; min-width: 0; }
+.photo-params-row .lock-check { display: flex; align-items: center; gap: 4px;
+                                 cursor: pointer; flex: 0 0 auto; }
+.photo-params-row .lock-check input { margin: 0; }
 .btn.danger { color: #ff8080; border-color: #ff8080; }
 .btn.danger:hover { background: rgba(255,80,80,0.2); }
 .index-cp-popup .leaflet-popup-content { margin: 8px 10px; font: 12px monospace; }

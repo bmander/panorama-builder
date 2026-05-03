@@ -21,6 +21,9 @@ dd.editable:hover { background: rgba(255,255,255,0.06); }
 dd input.date-edit { font: inherit; color: inherit; background: #000;
                      border: 1px solid #5080ff; border-radius: 3px;
                      padding: 0 4px; outline: none; color-scheme: dark; }
+dd input.num-edit { font: inherit; color: inherit; background: #000;
+                    border: 1px solid #5080ff; border-radius: 3px;
+                    padding: 0 4px; outline: none; width: 12em; }
 h2 { font-size: 14px; color: #aaa; margin: 32px 0 8px; font-weight: normal;
      text-transform: uppercase; letter-spacing: 0.05em; }
 .notes { font: inherit; line-height: 1.5; white-space: pre-wrap;

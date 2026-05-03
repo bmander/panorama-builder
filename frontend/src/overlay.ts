@@ -11,6 +11,7 @@ import type {
   ControlPointView,
   ImageMeasurementBearing,
   LatLng,
+  PhotoLocks,
   Pose,
   Role,
 } from './types.js';
@@ -142,6 +143,8 @@ export interface OverlayManager {
   getOpacity(o: THREE.Group): number;
   setSelectedOpacity(opacity: number): void;
   getSelectedOpacity(): number | null;
+  getPhotoLocks(o: THREE.Group): PhotoLocks;
+  setPhotoLocks(o: THREE.Group, locks: PhotoLocks): void;
 
   // --- Image measurements (per-photo reticles) ---
   addImageMeasurement(o: THREE.Group, u: number, v: number, opts: AddImageMeasurementOptions): THREE.Mesh;
@@ -247,6 +250,10 @@ export function createOverlayManager(
     data.sizeRad = DEFAULT_SIZE_RAD;
     data.aspect = aspect;
     data.photoRoll = 0;
+    data.lockPhotoAz = false;
+    data.lockPhotoTilt = false;
+    data.lockPhotoRoll = false;
+    data.lockSizeRad = false;
     data.body = body;
     data.outline = outline;
     applySize(o);
@@ -454,6 +461,22 @@ export function createOverlayManager(
       manager.setOpacity(selected, opacity);
     },
     getSelectedOpacity: () => selected ? manager.getOpacity(selected) : null,
+    getPhotoLocks(o) {
+      const d = overlayData(o);
+      return {
+        lockPhotoAz: d.lockPhotoAz,
+        lockPhotoTilt: d.lockPhotoTilt,
+        lockPhotoRoll: d.lockPhotoRoll,
+        lockSizeRad: d.lockSizeRad,
+      };
+    },
+    setPhotoLocks(o, locks) {
+      const d = overlayData(o);
+      d.lockPhotoAz = locks.lockPhotoAz;
+      d.lockPhotoTilt = locks.lockPhotoTilt;
+      d.lockPhotoRoll = locks.lockPhotoRoll;
+      d.lockSizeRad = locks.lockSizeRad;
+    },
 
     addImageMeasurement(o, u, v, opts) {
       const measurement = new THREE.Mesh(POI_GEOM, makePoiMaterial());

@@ -23,6 +23,7 @@ import { createAdminModal } from './admin-modal.js';
 import { createStartStationModal } from './start-station-modal.js';
 import { createContextMenu } from './context-menu.js';
 import { createObservationModal } from './observation-modal.js';
+import { createPhotoParamsModal } from './photo-params-modal.js';
 
 // --- URL ↔ station id ---------------------------------------------------
 
@@ -243,6 +244,7 @@ opacitySliderEl.addEventListener('input', () => {
 });
 
 const contextMenu = createContextMenu();
+const photoParamsModal = createPhotoParamsModal({ overlays, sync });
 const observationModal = createObservationModal({
   getControlPoints: () => overlays.getControlPoints(),
   onPickExisting: (overlay, u, v, controlPointId) => {
@@ -284,6 +286,7 @@ attachInput({
   onPhotoBodyContextMenu: (overlay, u, v, sx, sy) => {
     contextMenu.open(sx, sy, [
       { label: 'Add observation here', onClick: () => { observationModal.open(overlay, u, v); } },
+      { label: 'Photo parameters…', onClick: () => { photoParamsModal.open(overlay); } },
     ]);
   },
   onImagePOIContextMenu: (poi, sx, sy) => {
@@ -337,6 +340,10 @@ async function rehydrateAfterSolve(id: string): Promise<void> {
       overlays.applyPose(o, {
         photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
         sizeRad: p.size_rad, aspect: p.aspect, camLat: data.station.lat, camLng: data.station.lng,
+      });
+      overlays.setPhotoLocks(o, {
+        lockPhotoAz: p.lock_photo_az, lockPhotoTilt: p.lock_photo_tilt,
+        lockPhotoRoll: p.lock_photo_roll, lockSizeRad: p.lock_size_rad,
       });
       sync.registerPhoto(p.id, {
         aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,
@@ -422,6 +429,10 @@ async function hydrateFromAPI(id: string): Promise<void> {
       sizeRad: p.size_rad, aspect: p.aspect, camLat: loc.lat, camLng: loc.lng,
     });
     overlays.setOpacity(o, p.opacity);
+    overlays.setPhotoLocks(o, {
+      lockPhotoAz: p.lock_photo_az, lockPhotoTilt: p.lock_photo_tilt,
+      lockPhotoRoll: p.lock_photo_roll, lockSizeRad: p.lock_size_rad,
+    });
     sync.registerPhoto(p.id, {
       aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,
       photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
