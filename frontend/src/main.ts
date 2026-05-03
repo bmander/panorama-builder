@@ -12,7 +12,7 @@ import { createControlPointColumns, findHitColumn } from './map-poi-columns.js';
 import type { ControlPointColumn } from './map-poi-columns.js';
 import { cpHref, FOCUS_QUERY_PARAM, getElement, INDEX_CP_QUERY_PARAM, overlayData, poiData, stationHref } from './types.js';
 import { vecToAzAlt } from './geo.js';
-import type { LatLng } from './types.js';
+import type { ControlPointView, LatLng } from './types.js';
 import * as api from './api.js';
 import type { ApiControlPoint, ApiHydratedStation, ApiStation } from './api.js';
 import { loadPrefs } from './prefs.js';
@@ -121,18 +121,23 @@ const getStationLocation = (): LatLng | null => stationLocation;
 
 // --- Cross-cutting refreshers ------------------------------------------
 
-function refreshControlPointColumns(): void {
-  // Only show columns for CPs the user is actually observing in this station.
+// CPs with an estimated location that are observed by at least one image
+// measurement on this station. Same set drives column rendering and the
+// matcher hit-test, so what you see is what you can click.
+function getStationObservedControlPoints(): ControlPointView[] {
   const observed = new Set<string>();
   for (const im of overlays.getImageMeasurements()) {
     if (im.controlPointId) observed.add(im.controlPointId);
   }
-  const columns: ControlPointColumn[] = [];
-  for (const cp of overlays.getControlPoints()) {
-    if (cp.estLat === null || cp.estLng === null) continue;
-    if (!observed.has(cp.id)) continue;
-    columns.push({ id: cp.id, anchor: { lat: cp.estLat, lng: cp.estLng }, selected: cp.selected });
-  }
+  return overlays.getControlPoints().filter(cp =>
+    cp.estLat !== null && cp.estLng !== null && observed.has(cp.id),
+  );
+}
+
+function refreshControlPointColumns(): void {
+  const columns: ControlPointColumn[] = getStationObservedControlPoints().map(cp => ({
+    id: cp.id, anchor: { lat: cp.estLat!, lng: cp.estLng! }, selected: cp.selected,
+  }));
   cpColumns.update(stationLocation, columns);
 }
 
@@ -215,7 +220,7 @@ const startStationModal = createStartStationModal({
 let mapView: MapView | null = null;
 
 const SHIFT_WHEEL_LOG_PER_PX = 0.005;
-const COLUMN_NDC_HIT_RADIUS = 0.04;
+const COLUMN_NDC_HIT_RADIUS = 0.01;
 
 const opacityRowEl = getElement('overlay-opacity-row');
 const opacitySliderEl = getElement<HTMLInputElement>('overlay-opacity');
@@ -268,7 +273,7 @@ attachInput({
   },
   findColumnAtNDC: ndc => {
     if (!stationLocation) return null;
-    return findHitColumn(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, stationLocation, overlays.getControlPoints());
+    return findHitColumn(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, stationLocation, getStationObservedControlPoints());
   },
   onHoveredColumnChange: id => { cpColumns.setHoveredColumn(id); },
   onPhotoBodyContextMenu: (overlay, u, v, sx, sy) => {
