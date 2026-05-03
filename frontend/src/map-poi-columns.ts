@@ -1,135 +1,162 @@
-// Vertical lines rendered at each map-anchored POI's lat/lng in the 360°
-// viewer. A diagnostic aid mirroring the bearing rays drawn for anchored
-// POIs in the map view: the user can see at a glance where each anchor
-// projects to in 3D space relative to the camera and the photos.
+// Per-control-point markers + observation lines rendered in the 360° viewer.
 //
-// Always-on-top render order so the lines aren't hidden by terrain, photos,
-// or the sun marker.
+// Each control point with an estimated lat/lng/alt gets a small sphere at its
+// 3D position (camera-relative meters via latLngToCameraRelativeMeters; world
+// y = est_alt − cameraHeight). Each linked image-measurement (a POI on a photo
+// overlay) gets a line from the marker to the POI's world position — a visible
+// "residual": short = pose fits the CP well, long = poor fit.
 //
-// Position is camera-relative meters via the same tangent-plane formula used
-// in terrain.ts; rebuild on every camera-location change or POI mutation.
+// Always-on-top (depthTest off, renderOrder high) so markers and lines aren't
+// hidden by terrain, photos, or the sun marker.
 //
-// Geometry and material are shared across all columns and never disposed
-// (single-instance for the page lifetime).
+// (Filename retained from the original "map-poi columns" implementation; the
+// columns were replaced with point markers + lines.)
 
 import * as THREE from 'three';
 import type { LatLng, ControlPointView } from './types.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
 
-// Vertical extent relative to the camera origin: well below ground and well
-// above any plausible landmark. The matcher's hit-test (findHitColumn below)
-// projects the same endpoints when computing screen distance.
-export const COLUMN_Y_MIN_M = -1000;
-export const COLUMN_Y_MAX_M = 5000;
-// Blue is the visual vocabulary for map-POIs; yellow when selected (matches
-// the photo handle + anchor marker selected fill).
-const COLUMN_COLOR = 0x5080ff;
-const COLUMN_COLOR_SELECTED = 0xffff66;
-const COLUMN_RENDER_ORDER = 999;
+const MARKER_COLOR = 0x5080ff;
+const MARKER_COLOR_SELECTED = 0xffff66;
+const MARKER_RADIUS_M = 1.5;
+const MARKER_RENDER_ORDER = 999;
 
-export interface ControlPointColumn {
+export interface ControlPointMarker {
   readonly id: string;
   readonly anchor: LatLng;
+  readonly altitude: number;
   readonly selected: boolean;
+  // Scene-graph handles for image measurements linked to this CP. World
+  // positions are resolved during update() via getWorldPosition().
+  readonly observations: readonly THREE.Object3D[];
 }
 
-export interface ControlPointColumns {
-  update(camLoc: LatLng | null, columns: readonly ControlPointColumn[]): void;
-  // Highlights one column as the matcher target. The hover treatment uses
-  // the same yellow material as selection — pre-click feedback that "this
-  // is what would be matched if you clicked now."
-  setHoveredColumn(id: string | null): void;
+export interface ControlPointMarkers {
+  // markers: per-CP positions + linked observation handles. cameraHeight is
+  // the terrain.getCameraHeight() value used to translate est_alt into
+  // viewer-space y (the terrain group is shifted by −cameraHeight, so a CP
+  // at est_alt sits at viewer y = est_alt − cameraHeight).
+  update(camLoc: LatLng | null, cameraHeight: number, markers: readonly ControlPointMarker[]): void;
+  setHoveredMarker(id: string | null): void;
   setVisible(visible: boolean): void;
 }
 
-export interface CreateControlPointColumnsOptions {
+export interface CreateControlPointMarkersOptions {
   scene: THREE.Scene;
   requestRender: () => void;
 }
 
-export function createControlPointColumns({ scene, requestRender }: CreateControlPointColumnsOptions): ControlPointColumns {
-  // Single vertical segment along +Y, centered on the origin so each instance
-  // can be placed by setting position to the anchor's world coords.
-  const lineGeom = new THREE.BufferGeometry();
-  lineGeom.setAttribute('position', new THREE.Float32BufferAttribute([
-    0, COLUMN_Y_MIN_M, 0,
-    0, COLUMN_Y_MAX_M, 0,
-  ], 3));
+// Backwards-compat aliases. The exports were renamed when the columns became
+// point markers, but main.ts kept the old names — re-exported here so the
+// import surface stays small.
+export type ControlPointColumn = ControlPointMarker;
+export type ControlPointColumns = ControlPointMarkers;
 
-  // transparent: true puts the line in the transparent render pass alongside
-  // the (transparent) photo overlays. The opaque pass runs first, so without
-  // this the lines would render before the photos and get overpainted.
-  // renderOrder = 999 then ensures they sort after the photos within that pass.
+export function createControlPointColumns(opts: CreateControlPointMarkersOptions): ControlPointMarkers {
+  const { scene, requestRender } = opts;
+
+  const sphereGeom = new THREE.SphereGeometry(MARKER_RADIUS_M, 12, 8);
+
+  // transparent: true puts the markers in the same render pass as the
+  // (transparent) photo overlays; renderOrder=999 then sorts them on top.
   const baseMaterialProps = {
     depthTest: false,
     depthWrite: false,
     transparent: true,
     fog: false,
   } as const;
-  const material = new THREE.LineBasicMaterial({ color: COLUMN_COLOR, ...baseMaterialProps });
-  const materialSelected = new THREE.LineBasicMaterial({ color: COLUMN_COLOR_SELECTED, ...baseMaterialProps });
+  const sphereMat = new THREE.MeshBasicMaterial({ color: MARKER_COLOR, ...baseMaterialProps });
+  const sphereMatSel = new THREE.MeshBasicMaterial({ color: MARKER_COLOR_SELECTED, ...baseMaterialProps });
+  const lineMat = new THREE.LineBasicMaterial({ color: MARKER_COLOR, ...baseMaterialProps });
+  const lineMatSel = new THREE.LineBasicMaterial({ color: MARKER_COLOR_SELECTED, ...baseMaterialProps });
 
   const group = new THREE.Group();
   scene.add(group);
 
   let hoveredId: string | null = null;
-  let lastColumns: readonly ControlPointColumn[] = [];
-  function pickMaterial(c: ControlPointColumn): THREE.LineBasicMaterial {
-    return (c.selected || c.id === hoveredId) ? materialSelected : material;
+  let lastMarkers: readonly ControlPointMarker[] = [];
+  let lastCamLoc: LatLng | null = null;
+  let lastCameraHeight = 0;
+
+  function isHighlighted(m: ControlPointMarker): boolean {
+    return m.selected || m.id === hoveredId;
+  }
+
+  function clearChildren(): void {
+    for (const child of group.children) {
+      // Only line geometries are per-instance; sphere geometry is shared.
+      if (child instanceof THREE.Line) {
+        (child.geometry as THREE.BufferGeometry).dispose();
+      }
+    }
+    group.clear();
+  }
+
+  const scratch = new THREE.Vector3();
+
+  function rebuild(): void {
+    clearChildren();
+    if (lastCamLoc === null || lastMarkers.length === 0) {
+      requestRender();
+      return;
+    }
+    for (const m of lastMarkers) {
+      const { x, z } = latLngToCameraRelativeMeters(m.anchor, lastCamLoc);
+      const y = m.altitude - lastCameraHeight;
+      const high = isHighlighted(m);
+
+      const sphere = new THREE.Mesh(sphereGeom, high ? sphereMatSel : sphereMat);
+      sphere.position.set(x, y, z);
+      sphere.renderOrder = MARKER_RENDER_ORDER;
+      sphere.frustumCulled = false;
+      group.add(sphere);
+
+      for (const poi of m.observations) {
+        poi.getWorldPosition(scratch);
+        const geom = new THREE.BufferGeometry();
+        geom.setAttribute('position', new THREE.Float32BufferAttribute([
+          x, y, z,
+          scratch.x, scratch.y, scratch.z,
+        ], 3));
+        const line = new THREE.Line(geom, high ? lineMatSel : lineMat);
+        line.renderOrder = MARKER_RENDER_ORDER;
+        line.frustumCulled = false;
+        group.add(line);
+      }
+    }
+    requestRender();
   }
 
   return {
     setVisible(visible) { group.visible = visible; },
-    update(camLoc, columns) {
-      group.clear();
-      lastColumns = columns;
-      if (camLoc === null || columns.length === 0) {
-        requestRender();
-        return;
-      }
-      for (const c of columns) {
-        const { x, z } = latLngToCameraRelativeMeters(c.anchor, camLoc);
-        const line = new THREE.Line(lineGeom, pickMaterial(c));
-        line.position.set(x, 0, z);
-        line.renderOrder = COLUMN_RENDER_ORDER;
-        line.frustumCulled = false;
-        group.add(line);
-      }
-      requestRender();
+    update(camLoc, cameraHeight, markers) {
+      lastCamLoc = camLoc;
+      lastCameraHeight = cameraHeight;
+      lastMarkers = markers;
+      rebuild();
     },
-    setHoveredColumn(id) {
+    setHoveredMarker(id) {
       if (hoveredId === id) return;
       hoveredId = id;
-      // Re-apply materials in place — no need to rebuild geometry.
-      for (let i = 0; i < group.children.length; i++) {
-        const c = lastColumns[i];
-        if (!c) continue;
-        (group.children[i] as THREE.Line).material = pickMaterial(c);
-      }
-      requestRender();
+      // Hover changes are infrequent (only on pointermove transitions across
+      // a marker); a full rebuild costs O(markers + observations) which is
+      // <100 on typical scenes.
+      rebuild();
     },
   };
 }
 
-const _baseProjected = new THREE.Vector3();
-const _topProjected = new THREE.Vector3();
-function ndcSegmentDistance(p: { x: number; y: number }, a: THREE.Vector3, b: THREE.Vector3): number {
-  const abx = b.x - a.x, aby = b.y - a.y;
-  const apx = p.x - a.x, apy = p.y - a.y;
-  const lenSq = abx * abx + aby * aby;
-  const t = lenSq > 0 ? Math.max(0, Math.min(1, (apx * abx + apy * aby) / lenSq)) : 0;
-  return Math.hypot(apx - t * abx, apy - t * aby);
-}
-
-// Pick the closest control-point column to an NDC point within `hitRadius`.
-// CPs without an estimate (est_lat/est_lng = null) are excluded. Returns
-// null when nothing's in range or when both segment endpoints are behind
-// the camera (offscreen).
+// Pick the closest control-point marker to an NDC point within `hitRadius`.
+// CPs without an estimate (est_lat/est_lng = null) are excluded by the caller
+// (getStationObservedControlPoints already filters them out). Returns null
+// when nothing is in range or when the marker is behind the camera.
+const _projected = new THREE.Vector3();
 export function findHitColumn(
   ndc: { x: number; y: number },
   hitRadius: number,
   camera: THREE.Camera,
   cameraLocation: LatLng,
+  cameraHeight: number,
   controlPoints: readonly ControlPointView[],
 ): { controlPointId: string; latlng: LatLng } | null {
   let best: { controlPointId: string; latlng: LatLng } | null = null;
@@ -138,10 +165,12 @@ export function findHitColumn(
     if (cp.estLat === null || cp.estLng === null) continue;
     const latlng = { lat: cp.estLat, lng: cp.estLng };
     const { x, z } = latLngToCameraRelativeMeters(latlng, cameraLocation);
-    _baseProjected.set(x, COLUMN_Y_MIN_M, z).project(camera);
-    _topProjected.set(x, COLUMN_Y_MAX_M, z).project(camera);
-    if (_baseProjected.z > 1 && _topProjected.z > 1) continue;
-    const d = ndcSegmentDistance(ndc, _baseProjected, _topProjected);
+    const y = cp.estAlt - cameraHeight;
+    _projected.set(x, y, z).project(camera);
+    if (_projected.z > 1) continue; // behind camera
+    const dx = _projected.x - ndc.x;
+    const dy = _projected.y - ndc.y;
+    const d = Math.hypot(dx, dy);
     if (d < bestDist) { bestDist = d; best = { controlPointId: cp.id, latlng }; }
   }
   return best;

@@ -17,14 +17,12 @@ import * as api from './api.js';
 import type { ApiControlPoint, ApiHydratedStation, ApiStation } from './api.js';
 import { loadPrefs } from './prefs.js';
 import { createSyncManager } from './sync.js';
-import { createSolverLoop } from './solver-loop.js';
 import { createSettingsPanel } from './settings.js';
 import { createOrchestration } from './handlers.js';
 import { createAdminModal } from './admin-modal.js';
 import { createStartStationModal } from './start-station-modal.js';
 import { createContextMenu } from './context-menu.js';
 import { createObservationModal } from './observation-modal.js';
-import { solveControlPointLocation } from './cp-location-solver.js';
 
 // --- URL ↔ station id ---------------------------------------------------
 
@@ -65,16 +63,16 @@ const viewer = createViewer({ container: document.body });
 const overlays = createOverlayManager({
   overlaysGroup: viewer.overlaysGroup,
   getAnisotropy: () => viewer.renderer.capabilities.getMaxAnisotropy(),
-  // The closure captures sync, solver, settings — all declared below.
+  // The closure captures sync, settings — both declared below.
   // Safe because onMutate fires only after bootstrap, by which point every
-  // const is bound.
+  // const is bound. Solving is no longer triggered by mutations: the solver
+  // lives on the backend and runs only when the user clicks Solve.
   onMutate: () => {
     viewer.requestRender();
     if (currentStationId) {
       baker.markDirty();
       refreshControlPointColumns();
     }
-    solver.runSolve();
     sync.flush();
     settings.persist();
   },
@@ -141,10 +139,18 @@ function getStationObservedControlPoints(): ControlPointView[] {
 }
 
 function refreshControlPointColumns(): void {
-  const columns: ControlPointColumn[] = getStationObservedControlPoints().map(cp => ({
-    id: cp.id, anchor: { lat: cp.estLat!, lng: cp.estLng! }, selected: cp.selected,
+  const cps = getStationObservedControlPoints();
+  const ims = overlays.getImageMeasurements();
+  const markers: ControlPointColumn[] = cps.map(cp => ({
+    id: cp.id,
+    anchor: { lat: cp.estLat!, lng: cp.estLng! },
+    altitude: cp.estAlt,
+    selected: cp.selected,
+    observations: ims
+      .filter(im => im.controlPointId === cp.id)
+      .map(im => im.handle),
   }));
-  cpColumns.update(stationLocation, columns);
+  cpColumns.update(stationLocation, terrain.getCameraHeight(), markers);
 }
 
 function applyCameraLocation(loc: LatLng): void {
@@ -187,7 +193,7 @@ function syncControlPoint(cp: ApiControlPoint): void {
   });
 }
 
-// --- Sync, solver, settings, handlers, admin ---------------------------
+// --- Sync, settings, handlers, admin -----------------------------------
 
 const sync = createSyncManager({
   overlays,
@@ -195,17 +201,10 @@ const sync = createSyncManager({
   getCameraLocation: getStationLocation,
 });
 
-const solver = createSolverLoop({
-  overlays,
-  getCameraLocation: getStationLocation,
-  isSolveRollEnabled: () => settings.isSolveRollEnabled(),
-});
-
 const settings = createSettingsPanel({
   viewer, terrain, sunMarker,
   getCameraLocation: getStationLocation,
   getCurrentStationId,
-  runSolve: () => { solver.runSolve(); },
 });
 
 const handlers = createOrchestration({
@@ -273,13 +272,15 @@ attachInput({
     const next = Math.sign(s) * Math.expm1(Math.abs(s));
     if (!terrain.setCameraHeight(next)) return;
     hud.refresh();
+    refreshControlPointColumns(); // markers' world-y depends on cameraHeight
     settings.persist();
   },
   findColumnAtNDC: ndc => {
     if (!stationLocation) return null;
-    return findHitColumn(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, stationLocation, getStationObservedControlPoints());
+    return findHitColumn(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, stationLocation,
+      terrain.getCameraHeight(), getStationObservedControlPoints());
   },
-  onHoveredColumnChange: id => { cpColumns.setHoveredColumn(id); },
+  onHoveredColumnChange: id => { cpColumns.setHoveredMarker(id); },
   onPhotoBodyContextMenu: (overlay, u, v, sx, sy) => {
     contextMenu.open(sx, sy, [
       { label: 'Add observation here', onClick: () => { observationModal.open(overlay, u, v); } },
@@ -296,6 +297,104 @@ attachInput({
 
 attachDownload({ baker });
 
+// --- Solve buttons -----------------------------------------------------
+
+// After a successful solve we re-fetch the hydrated station and replay it
+// over the scene-graph. The /solve handler returns the diff in result.changes,
+// but the simplest correct way to mirror it is to re-hydrate; the cost is one
+// extra GET per solve, which is fine for a button-driven flow.
+async function applySolveResultByRefetch(label: string, run: () => Promise<api.SolveResult>): Promise<void> {
+  let result: api.SolveResult;
+  try {
+    result = await run();
+  } catch (err) {
+    sync.reportError(label, err);
+    return;
+  }
+  if (result.diverged) {
+    alert(`${label}: solver made no progress.`);
+    return;
+  }
+  if (currentStationId) {
+    try {
+      await rehydrateAfterSolve(currentStationId);
+    } catch (err) {
+      sync.reportError('reload after solve', err);
+    }
+  }
+  refreshIndexControlPoints();
+}
+
+async function rehydrateAfterSolve(id: string): Promise<void> {
+  const data = await api.getStation(id);
+  overlays.withBatch(() => {
+    const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
+    sync.registerLocation(loc);
+    applyCameraLocation(loc);
+    for (const p of data.photos) {
+      const o = overlays.getOverlayById(p.id);
+      if (!o) continue;
+      overlays.applyPose(o, {
+        photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
+        sizeRad: p.size_rad, aspect: p.aspect, camLat: data.station.lat, camLng: data.station.lng,
+      });
+      sync.registerPhoto(p.id, {
+        aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,
+        photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
+      });
+    }
+    for (const cp of data.control_points) {
+      syncControlPoint(cp);
+    }
+  });
+}
+
+const solveStationBtn = getElement<HTMLButtonElement>('solve-station-btn');
+const solveJointBtn = getElement<HTMLButtonElement>('solve-joint-btn');
+solveStationBtn.addEventListener('click', () => {
+  if (!currentStationId) return;
+  solveStationBtn.disabled = true;
+  void applySolveResultByRefetch('solve station', () => api.solveStation(currentStationId))
+    .finally(() => { solveStationBtn.disabled = false; });
+});
+solveJointBtn.addEventListener('click', () => {
+  solveJointBtn.disabled = true;
+  // Joint mode has hundreds of params and est_alt converges slowly. The
+  // default cap (30) is too tight here; 200 gets meter-scale alt moves on
+  // typical scenes without taking more than a couple seconds.
+  void applySolveResultByRefetch('joint solve', () => api.solveJoint({ max_iters: 200 }))
+    .finally(() => { solveJointBtn.disabled = false; });
+});
+
+// --- Station lock toggle ----------------------------------------------
+//
+// Joint mode requires ≥2 stations with both lat AND lng locked. We treat
+// "lock this station's position" as an atomic toggle on both lat and lng
+// (locking only one wouldn't fix gauge anyway).
+
+const lockStationPosEl = getElement<HTMLInputElement>('lock-station-pos');
+let stationLockState = false;
+function applyStationLockUI(locked: boolean): void {
+  stationLockState = locked;
+  lockStationPosEl.checked = locked;
+}
+lockStationPosEl.addEventListener('change', () => {
+  if (!currentStationId || !stationLocation) return;
+  const next = lockStationPosEl.checked;
+  lockStationPosEl.disabled = true;
+  api.updateStation(currentStationId, stationLocation, null, next, next).then(
+    updated => {
+      applyStationLockUI(updated.lock_lat && updated.lock_lng);
+      lockStationPosEl.disabled = false;
+    },
+    (err: unknown) => {
+      console.error('lock station position failed:', err);
+      lockStationPosEl.checked = stationLockState; // revert
+      lockStationPosEl.disabled = false;
+    },
+  );
+});
+
 // --- Bootstrap ---------------------------------------------------------
 
 async function hydrateFromAPI(id: string): Promise<void> {
@@ -310,6 +409,7 @@ async function hydrateFromAPI(id: string): Promise<void> {
   const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
   sync.registerLocation(loc);
   applyCameraLocation(loc);
+  applyStationLockUI(data.station.lock_lat && data.station.lock_lng);
 
   // Place each photo synchronously with a placeholder so the viewer can
   // paint terrain + rectangles before any blob arrives.
@@ -397,39 +497,21 @@ async function showIndexControlPoints(): Promise<void> {
 }
 
 async function solveAndPersistControlPointLocation(id: string): Promise<void> {
-  let cp: ApiControlPoint;
-  let obs: api.ApiControlPointObservations;
   try {
-    [cp, obs] = await Promise.all([
-      api.getControlPoint(id),
-      api.listControlPointObservations(id),
-    ]);
+    await api.solveControlPoint(id);
   } catch (err) {
-    sync.reportError('load control point observations', err);
+    sync.reportError('solve control point location', err);
     return;
   }
-
-  const result = solveControlPointLocation(cp, obs);
-  if (!result) {
-    sync.reportError('solve control point location', new Error('not enough observations'));
-    return;
-  }
-
+  // Re-fetch the CP and update local state. Backend writes the new est_*
+  // fields atomically; reading back is the simplest way to mirror them.
   let updated: ApiControlPoint;
   try {
-    updated = await api.updateControlPoint(id, {
-      description: cp.description,
-      est_lat: result.latlng.lat,
-      est_lng: result.latlng.lng,
-      est_alt: cp.est_alt,
-      started_at: cp.started_at,
-      ended_at: cp.ended_at,
-    });
+    updated = await api.getControlPoint(id);
   } catch (err) {
-    sync.reportError('save solved control point location', err);
+    sync.reportError('reload control point after solve', err);
     return;
   }
-
   syncControlPoint(updated);
   refreshIndexControlPoints();
 }

@@ -31,6 +31,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PUT /api/image-measurements/{id}", s.putImageMeasurement)
 	mux.HandleFunc("DELETE /api/image-measurements/{id}", s.deleteImageMeasurement)
 
+	mux.HandleFunc("POST /api/solve/joint", s.postSolveJoint)
+	mux.HandleFunc("POST /api/solve/stations/{id}", s.postSolveStation)
+	mux.HandleFunc("POST /api/solve/control-points/{id}", s.postSolveControlPoint)
+
 	mux.HandleFunc("POST /api/control-points", s.postControlPoint)
 	mux.HandleFunc("GET /api/control-points", s.listControlPoints)
 	mux.HandleFunc("GET /api/control-points/{id}", s.getControlPoint)

@@ -75,7 +75,11 @@
   </div>
   <div id="context-menu" hidden></div>
   <div id="settings-panel" hidden>
-    <label class="settings-check"><input type="checkbox" id="solve-roll-toggle"> Auto-solve photo rotation</label>
+    <div class="settings-row">
+      <button type="button" id="solve-station-btn" class="btn">Solve station</button>
+      <button type="button" id="solve-joint-btn" class="btn">Solve all (joint)</button>
+    </div>
+    <label class="settings-check"><input type="checkbox" id="lock-station-pos"> Lock this station's position (gauge)</label>
     <label class="settings-inline">Terrain
       <select id="terrain-mode">
         <option value="off">off</option>

@@ -5,11 +5,21 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Domain shapes (Station, Photo, ImageMeasurement, HydratedStation,
 // CreateStationRequest, PhotoPosePatch, ImageMeasurementPatch) are
 // generated from ../openapi.yaml into types.gen.go.
+
+const stationCols = `id, lat, lng, name, lock_lat, lock_lng, created_at, updated_at`
+
+func scanStation(row pgx.Row) (Station, error) {
+	var st Station
+	err := row.Scan(&st.ID, &st.Lat, &st.Lng, &st.Name, &st.LockLat, &st.LockLng, &st.CreatedAt, &st.UpdatedAt)
+	return st, err
+}
 
 func (s *Server) postStation(w http.ResponseWriter, r *http.Request) {
 	var req CreateStationRequest
@@ -21,11 +31,10 @@ func (s *Server) postStation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := newID()
-	const q = `INSERT INTO stations (id, lat, lng, name) VALUES ($1, $2, $3, $4)
-	           RETURNING id, lat, lng, name, created_at, updated_at`
-	var st Station
-	err := s.db.QueryRow(r.Context(), q, id, req.Lat, req.Lng, req.Name).Scan(
-		&st.ID, &st.Lat, &st.Lng, &st.Name, &st.CreatedAt, &st.UpdatedAt)
+	const q = `INSERT INTO stations (id, lat, lng, name, lock_lat, lock_lng)
+	           VALUES ($1, $2, $3, $4, COALESCE($5, false), COALESCE($6, false))
+	           RETURNING ` + stationCols
+	st, err := scanStation(s.db.QueryRow(r.Context(), q, id, req.Lat, req.Lng, req.Name, req.LockLat, req.LockLng))
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -52,13 +61,13 @@ func (s *Server) listStations(w http.ResponseWriter, r *http.Request) {
 			}
 			v[i] = f
 		}
-		sql = `SELECT id, lat, lng, name, created_at, updated_at FROM stations
+		sql = `SELECT ` + stationCols + ` FROM stations
 		       WHERE ST_MakeEnvelope($1, $2, $3, $4, 4326)
 		             && ST_SetSRID(ST_MakePoint(lng, lat), 4326)
 		       ORDER BY created_at DESC LIMIT 1000`
 		args = []any{v[0], v[1], v[2], v[3]}
 	} else {
-		sql = `SELECT id, lat, lng, name, created_at, updated_at FROM stations
+		sql = `SELECT ` + stationCols + ` FROM stations
 		       ORDER BY created_at DESC LIMIT 1000`
 	}
 	cur, err := s.db.Query(r.Context(), sql, args...)
@@ -69,8 +78,8 @@ func (s *Server) listStations(w http.ResponseWriter, r *http.Request) {
 	defer cur.Close()
 	out := []Station{}
 	for cur.Next() {
-		var st Station
-		if err := cur.Scan(&st.ID, &st.Lat, &st.Lng, &st.Name, &st.CreatedAt, &st.UpdatedAt); err != nil {
+		st, err := scanStation(cur)
+		if err != nil {
 			writeErrorFromDB(w, err)
 			return
 		}
@@ -89,10 +98,8 @@ func (s *Server) getStation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	var st Station
-	err := s.db.QueryRow(ctx,
-		`SELECT id, lat, lng, name, created_at, updated_at FROM stations WHERE id = $1`, id,
-	).Scan(&st.ID, &st.Lat, &st.Lng, &st.Name, &st.CreatedAt, &st.UpdatedAt)
+	st, err := scanStation(s.db.QueryRow(ctx,
+		`SELECT `+stationCols+` FROM stations WHERE id = $1`, id))
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -133,12 +140,13 @@ func (s *Server) putStation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "lat/lng out of range")
 		return
 	}
-	const q = `UPDATE stations SET lat=$2, lng=$3, name=$4, updated_at=NOW()
+	const q = `UPDATE stations SET lat=$2, lng=$3, name=$4,
+	             lock_lat = COALESCE($5, lock_lat),
+	             lock_lng = COALESCE($6, lock_lng),
+	             updated_at=NOW()
 	           WHERE id=$1
-	           RETURNING id, lat, lng, name, created_at, updated_at`
-	var st Station
-	err := s.db.QueryRow(r.Context(), q, id, req.Lat, req.Lng, req.Name).Scan(
-		&st.ID, &st.Lat, &st.Lng, &st.Name, &st.CreatedAt, &st.UpdatedAt)
+	           RETURNING ` + stationCols
+	st, err := scanStation(s.db.QueryRow(r.Context(), q, id, req.Lat, req.Lng, req.Name, req.LockLat, req.LockLng))
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -192,20 +200,15 @@ func (s *Server) deleteStation(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) photosByStation(ctx context.Context, stationID string) ([]Photo, error) {
 	out := []Photo{}
-	rows, err := s.db.Query(ctx, `
-		SELECT id, station_id, blob_path, mime_type, size_bytes, aspect,
-		       photo_az, photo_tilt, photo_roll, size_rad, opacity,
-		       created_at, updated_at
-		FROM photos WHERE station_id = $1 ORDER BY created_at`, stationID)
+	rows, err := s.db.Query(ctx,
+		`SELECT `+photoCols+` FROM photos WHERE station_id = $1 ORDER BY created_at`, stationID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var p Photo
-		if err := rows.Scan(&p.ID, &p.StationID, &p.BlobPath, &p.MimeType, &p.SizeBytes,
-			&p.Aspect, &p.PhotoAz, &p.PhotoTilt, &p.PhotoRoll, &p.SizeRad, &p.Opacity,
-			&p.CreatedAt, &p.UpdatedAt); err != nil {
+		p, err := scanPhoto(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, p)

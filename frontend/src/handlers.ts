@@ -171,7 +171,7 @@ export function createOrchestration({
   // POST a CP with the given payload, register it. Returns null on API
   // failure (the banner has already been surfaced via reportError).
   async function createControlPoint(
-    payload: { description: string; est_lat: number | null; est_lng: number | null; est_alt: number | null },
+    payload: { description: string; est_lat: number | null; est_lng: number | null; est_alt: number },
   ): Promise<api.ApiControlPoint | null> {
     try {
       const cp = await api.createControlPoint(payload);
@@ -186,7 +186,7 @@ export function createOrchestration({
   async function onCreateCPAndObserve(
     overlay: THREE.Group, u: number, v: number, description: string,
   ): Promise<void> {
-    const cp = await createControlPoint({ description, est_lat: null, est_lng: null, est_alt: null });
+    const cp = await createControlPoint({ description, est_lat: null, est_lng: null, est_alt: 0 });
     if (!cp) return;
     const measurement = await createImageMeasurement(overlay, u, v, cp.id);
     if (!measurement) {
@@ -217,7 +217,10 @@ export function createOrchestration({
       description,
       est_lat: latlng.lat,
       est_lng: latlng.lng,
-      est_alt: estAlt,
+      // est_alt is NOT NULL in the DB; default to 0 when the DEM lookup
+      // failed so the column always has a value (the user can refine via the
+      // CP page).
+      est_alt: estAlt ?? 0,
     });
   }
 

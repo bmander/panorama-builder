@@ -13,12 +13,15 @@ import (
 // Column lists for the Photo row, kept in one place so the SELECT/RETURNING
 // clauses and the matching scanPhoto helper can't drift apart.
 const photoCols = `id, station_id, blob_path, mime_type, size_bytes, aspect,
-		photo_az, photo_tilt, photo_roll, size_rad, opacity, created_at, updated_at`
+		photo_az, photo_tilt, photo_roll, size_rad, opacity,
+		lock_photo_az, lock_photo_tilt, lock_photo_roll, lock_size_rad,
+		created_at, updated_at`
 
 func scanPhoto(row pgx.Row) (Photo, error) {
 	var p Photo
 	err := row.Scan(&p.ID, &p.StationID, &p.BlobPath, &p.MimeType, &p.SizeBytes,
 		&p.Aspect, &p.PhotoAz, &p.PhotoTilt, &p.PhotoRoll, &p.SizeRad, &p.Opacity,
+		&p.LockPhotoAz, &p.LockPhotoTilt, &p.LockPhotoRoll, &p.LockSizeRad,
 		&p.CreatedAt, &p.UpdatedAt)
 	return p, err
 }
@@ -45,11 +48,14 @@ func (s *Server) postPhoto(w http.ResponseWriter, r *http.Request) {
 	if sizeRad == 0 {
 		sizeRad = 0.5236 // ~30 degrees
 	}
-	q := `INSERT INTO photos (id, station_id, aspect, photo_az, photo_tilt, photo_roll, size_rad, opacity)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	q := `INSERT INTO photos (id, station_id, aspect, photo_az, photo_tilt, photo_roll, size_rad, opacity,
+			lock_photo_az, lock_photo_tilt, lock_photo_roll, lock_size_rad)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+			COALESCE($9, false), COALESCE($10, false), COALESCE($11, false), COALESCE($12, false))
 		RETURNING ` + photoCols
 	p, err := scanPhoto(s.db.QueryRow(r.Context(), q, id, stationID, req.Aspect,
-		req.PhotoAz, req.PhotoTilt, req.PhotoRoll, sizeRad, opacity))
+		req.PhotoAz, req.PhotoTilt, req.PhotoRoll, sizeRad, opacity,
+		req.LockPhotoAz, req.LockPhotoTilt, req.LockPhotoRoll, req.LockSizeRad))
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -88,13 +94,20 @@ func (s *Server) putPhoto(w http.ResponseWriter, r *http.Request) {
 	if req.Opacity != nil {
 		opacity = *req.Opacity
 	}
+	// Lock fields use COALESCE so omitting them from the patch preserves the
+	// existing value (matches the pattern on description / notes elsewhere).
 	q := `UPDATE photos
 		SET aspect=$2, photo_az=$3, photo_tilt=$4, photo_roll=$5, size_rad=$6, opacity=$7,
+		    lock_photo_az   = COALESCE($8,  lock_photo_az),
+		    lock_photo_tilt = COALESCE($9,  lock_photo_tilt),
+		    lock_photo_roll = COALESCE($10, lock_photo_roll),
+		    lock_size_rad   = COALESCE($11, lock_size_rad),
 		    updated_at=NOW()
 		WHERE id=$1
 		RETURNING ` + photoCols
 	p, err := scanPhoto(s.db.QueryRow(r.Context(), q, id, req.Aspect,
-		req.PhotoAz, req.PhotoTilt, req.PhotoRoll, req.SizeRad, opacity))
+		req.PhotoAz, req.PhotoTilt, req.PhotoRoll, req.SizeRad, opacity,
+		req.LockPhotoAz, req.LockPhotoTilt, req.LockPhotoRoll, req.LockSizeRad))
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return

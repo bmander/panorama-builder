@@ -123,7 +123,7 @@ export interface AddControlPointPayload {
   readonly description: string;
   readonly estLat: number | null;
   readonly estLng: number | null;
-  readonly estAlt: number | null;
+  readonly estAlt: number;
 }
 
 export interface OverlayManager {
@@ -193,7 +193,7 @@ interface ControlPointEntry {
   description: string;
   estLat: number | null;
   estLng: number | null;
-  estAlt: number | null;
+  estAlt: number;
 }
 
 export function createOverlayManager(

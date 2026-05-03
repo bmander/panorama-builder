@@ -1,6 +1,5 @@
 import * as api from './api.js';
 import { formatLocalDateTime, getElement, indexCpHref, stationHref } from './types.js';
-import { solveControlPointLocation } from './cp-location-solver.js';
 
 const CP_ID_RE = /^\/cp\/([A-Z2-7]{13})$/;
 
@@ -181,17 +180,21 @@ function attachSolveButton(
   }
   btn.disabled = false;
   btn.addEventListener('click', () => {
-    const result = solveControlPointLocation(cp, obs);
-    if (!result) {
-      alert('Solver returned no result — not enough observations.');
-      return;
-    }
     btn.disabled = true;
-    api.updateControlPoint(cp.id, cpPatch(cp, {
-      est_lat: result.latlng.lat,
-      est_lng: result.latlng.lng,
-    })).then(
-      updated => { onUpdate(updated); btn.disabled = false; },
+    api.solveControlPoint(cp.id).then(
+      result => {
+        if (result.diverged) {
+          alert('Solve made no progress — check the observations.');
+          btn.disabled = false;
+          return;
+        }
+        // Re-fetch the CP to pick up the persisted est_*; the response also
+        // carries the diff but a fresh GET is the smallest amount of code.
+        return api.getControlPoint(cp.id).then(updated => {
+          onUpdate(updated);
+          btn.disabled = false;
+        });
+      },
       (err: unknown) => {
         console.error('solve save failed:', err);
         alert('Solve failed — see console.');
@@ -263,6 +266,25 @@ function renderEstimate(el: HTMLElement, text: string | null, placeholder: strin
   el.classList.toggle('empty', text === null);
 }
 
+type LockField = 'lock_est_lat' | 'lock_est_lng' | 'lock_est_alt';
+
+function attachLockToggle(cp: api.ApiControlPoint, elId: string, field: LockField): void {
+  const el = getElement<HTMLInputElement>(elId);
+  el.checked = cp[field];
+  el.addEventListener('change', () => {
+    const next = el.checked;
+    el.disabled = true;
+    api.updateControlPoint(cp.id, cpPatch(cp, { [field]: next })).then(
+      updated => { cp[field] = updated[field]; el.disabled = false; },
+      (err: unknown) => {
+        console.error('lock update failed:', err);
+        el.checked = cp[field]; // revert
+        el.disabled = false;
+      },
+    );
+  });
+}
+
 async function main(): Promise<void> {
   const m = CP_ID_RE.exec(location.pathname);
   const nameEl = getElement('name');
@@ -294,6 +316,9 @@ async function main(): Promise<void> {
   attachNotesEditor(cp, getElement('notes'));
   attachDateEditor(cp, getElement('started_at'), 'started_at');
   attachDateEditor(cp, getElement('ended_at'), 'ended_at');
+  attachLockToggle(cp, 'lock-est-lat', 'lock_est_lat');
+  attachLockToggle(cp, 'lock-est-lng', 'lock_est_lng');
+  attachLockToggle(cp, 'lock-est-alt', 'lock_est_alt');
 
   function renderLocation(): void {
     if (cp.est_lat !== null && cp.est_lng !== null) {
@@ -305,7 +330,7 @@ async function main(): Promise<void> {
     } else {
       renderEstimate(locEl, null, 'no estimate');
     }
-    renderEstimate(altEl, cp.est_alt !== null ? `${cp.est_alt.toFixed(1)} m` : null, '—');
+    renderEstimate(altEl, `${cp.est_alt.toFixed(1)} m`, '—');
   }
   renderLocation();
 

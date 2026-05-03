@@ -15,7 +15,6 @@ export interface SettingsPanel {
   persist(): void;
   apply(prefs: Partial<Prefs>): void;
   refreshSunDirection(): void;
-  isSolveRollEnabled(): boolean;
 }
 
 export interface CreateSettingsPanelOptions {
@@ -24,7 +23,6 @@ export interface CreateSettingsPanelOptions {
   sunMarker: SunMarker;
   getCameraLocation: () => LatLng | null;
   getCurrentStationId: () => string | null;
-  runSolve: () => void;
 }
 
 const HAZE_SLIDER_EXPONENT = 3;
@@ -39,7 +37,6 @@ function hazeDensityToSlider(d: number): number {
 export function createSettingsPanel({
   viewer, terrain, sunMarker,
   getCameraLocation, getCurrentStationId,
-  runSolve,
 }: CreateSettingsPanelOptions): SettingsPanel {
   const terrainModeEl = getElement<HTMLSelectElement>('terrain-mode');
   const sunDateTimeEl = getElement<HTMLInputElement>('sun-datetime');
@@ -48,7 +45,6 @@ export function createSettingsPanel({
   const hazeSliderEl = getElement<HTMLInputElement>('haze-slider');
   const curvatureToggleEl = getElement<HTMLInputElement>('curvature-toggle');
   const refractionToggleEl = getElement<HTMLInputElement>('refraction-toggle');
-  const solveRollToggleEl = getElement<HTMLInputElement>('solve-roll-toggle');
 
   sunDateTimeEl.value = formatLocalDateTime(new Date());
 
@@ -59,7 +55,6 @@ export function createSettingsPanel({
     const prefs: Prefs = {
       azimuth, altitude,
       fov: viewer.camera.fov,
-      solvePhotoRoll: solveRollToggleEl.checked,
       terrainMode: terrain.getMode(),
       sunDateTime: sunDateTimeEl.value,
       cameraHeight: terrain.getCameraHeight(),
@@ -87,7 +82,6 @@ export function createSettingsPanel({
   function apply(p: Partial<Prefs>): void {
     if (p.azimuth !== undefined && p.altitude !== undefined) viewer.setAzAlt(p.azimuth, p.altitude);
     if (p.fov !== undefined) viewer.setFov(p.fov);
-    if (p.solvePhotoRoll !== undefined) solveRollToggleEl.checked = p.solvePhotoRoll;
     if (p.cameraHeight !== undefined) terrain.setCameraHeight(p.cameraHeight);
     if (p.hazeDensity !== undefined) {
       viewer.setFogDensity(p.hazeDensity);
@@ -156,15 +150,9 @@ export function createSettingsPanel({
     persist();
   });
 
-  solveRollToggleEl.addEventListener('change', () => {
-    runSolve();
-    persist();
-  });
-
   return {
     persist,
     apply,
     refreshSunDirection,
-    isSolveRollEnabled(): boolean { return solveRollToggleEl.checked; },
   };
 }

@@ -25,6 +25,7 @@ tags:
   - name: photos
   - name: image-measurements
   - name: control-points
+  - name: solver
 
 paths:
   /healthz:
@@ -369,6 +370,95 @@ paths:
         '204': { description: Deleted }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /solve/joint:
+    post:
+      tags: [solver]
+      summary: Bundle-adjust the entire system (stations + photos + control points)
+      description: |
+        Runs Gauss-Newton over every unlocked solvable parameter across all
+        stations, photos, and control points. Requires at least two stations
+        with both lat and lng locked (translation + rotation gauge); returns
+        400 otherwise. Persists the result inside one transaction; uses
+        optimistic concurrency on each row's `updated_at` and returns 409 if
+        another writer raced the solve.
+      operationId: solveJoint
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SolveConfig' }
+      responses:
+        '200':
+          description: OK (incl. divergence; check `diverged`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SolveResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409':
+          description: Concurrent edit detected; re-fetch and retry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /solve/stations/{id}:
+    parameters:
+      - $ref: '#/components/parameters/StationId'
+    post:
+      tags: [solver]
+      summary: Refine the photo poses of a single station
+      description: |
+        Solves the joint photo-pose problem for the given station, treating
+        the station's own lat/lng and every control point's est_* as fixed.
+        No gauge requirement (the station is the implicit anchor).
+      operationId: solveStation
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SolveConfig' }
+      responses:
+        '200':
+          description: OK (incl. divergence; check `diverged`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SolveResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Concurrent edit detected; re-fetch and retry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /solve/control-points/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ControlPointId'
+    post:
+      tags: [solver]
+      summary: Refine est_lat / est_lng / est_alt for a single control point
+      description: |
+        Triangulates the CP location from its image measurements across
+        stations. Requires at least two image observations.
+      operationId: solveControlPoint
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SolveConfig' }
+      responses:
+        '200':
+          description: OK (incl. divergence; check `diverged`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SolveResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Concurrent edit detected; re-fetch and retry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /control-points/{id}/observations:
     parameters:
       - $ref: '#/components/parameters/ControlPointId'
@@ -443,12 +533,14 @@ components:
 
     Station:
       type: object
-      required: [id, lat, lng, name, created_at, updated_at]
+      required: [id, lat, lng, name, lock_lat, lock_lng, created_at, updated_at]
       properties:
         id: { $ref: '#/components/schemas/Id' }
         lat: { type: number, format: double, minimum: -90, maximum: 90 }
         lng: { type: number, format: double, minimum: -180, maximum: 180 }
         name: { type: string, nullable: true }
+        lock_lat: { type: boolean, description: when true the solver leaves lat untouched }
+        lock_lng: { type: boolean, description: when true the solver leaves lng untouched }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -466,6 +558,10 @@ components:
         - photo_roll
         - size_rad
         - opacity
+        - lock_photo_az
+        - lock_photo_tilt
+        - lock_photo_roll
+        - lock_size_rad
         - created_at
         - updated_at
       properties:
@@ -480,6 +576,10 @@ components:
         photo_roll: { type: number, format: double, description: in-plane roll radians }
         size_rad: { type: number, format: double, description: horizontal angular subtense radians }
         opacity: { type: number, format: double, minimum: 0, maximum: 1 }
+        lock_photo_az: { type: boolean }
+        lock_photo_tilt: { type: boolean }
+        lock_photo_roll: { type: boolean }
+        lock_size_rad: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -507,16 +607,32 @@ components:
         (est_lat / est_lng / est_alt) and image-measurement observations
         across photos and stations. The estimate is set when the CP is
         created and refined by the location solver as observations accumulate.
-      required: [id, description, notes, est_lat, est_lng, est_alt, started_at, ended_at, created_at, updated_at]
+      required:
+        - id
+        - description
+        - notes
+        - est_lat
+        - est_lng
+        - est_alt
+        - started_at
+        - ended_at
+        - lock_est_lat
+        - lock_est_lng
+        - lock_est_alt
+        - created_at
+        - updated_at
       properties:
         id: { $ref: '#/components/schemas/Id' }
         description: { type: string }
         notes: { type: string, description: free-form prose describing the control point in detail }
         est_lat: { type: number, format: double, nullable: true, minimum: -90, maximum: 90 }
         est_lng: { type: number, format: double, nullable: true, minimum: -180, maximum: 180 }
-        est_alt: { type: number, format: double, nullable: true, description: meters above sea level }
+        est_alt: { type: number, format: double, description: meters above sea level (defaults to 0 when unknown) }
         started_at: { type: string, format: date-time, nullable: true, description: when the landmark began existing }
         ended_at: { type: string, format: date-time, nullable: true, description: when the landmark ceased to exist }
+        lock_est_lat: { type: boolean }
+        lock_est_lng: { type: boolean }
+        lock_est_alt: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -585,6 +701,8 @@ components:
         lat: { type: number, format: double, minimum: -90, maximum: 90 }
         lng: { type: number, format: double, minimum: -180, maximum: 180 }
         name: { type: string, nullable: true }
+        lock_lat: { type: boolean, description: omit to preserve existing value (PUT) or default false (POST) }
+        lock_lng: { type: boolean }
 
     PhotoPosePatch:
       type: object
@@ -596,6 +714,10 @@ components:
         photo_roll: { type: number, format: double }
         size_rad: { type: number, format: double }
         opacity: { type: number, format: double, minimum: 0, maximum: 1 }
+        lock_photo_az: { type: boolean, description: omit to preserve existing value (PUT) or default false (POST) }
+        lock_photo_tilt: { type: boolean }
+        lock_photo_roll: { type: boolean }
+        lock_size_rad: { type: boolean }
 
     ImageMeasurementPatch:
       type: object
@@ -614,6 +736,53 @@ components:
         notes: { type: string }
         est_lat: { type: number, format: double, nullable: true, minimum: -90, maximum: 90 }
         est_lng: { type: number, format: double, nullable: true, minimum: -180, maximum: 180 }
-        est_alt: { type: number, format: double, nullable: true }
+        est_alt: { type: number, format: double }
         started_at: { type: string, format: date-time, nullable: true }
         ended_at: { type: string, format: date-time, nullable: true }
+        lock_est_lat: { type: boolean, description: omit to preserve existing value (PUT) or default false (POST) }
+        lock_est_lng: { type: boolean }
+        lock_est_alt: { type: boolean }
+
+    SolveConfig:
+      type: object
+      description: |
+        Optional knobs for the solver. Defaults are used when omitted.
+      properties:
+        max_iters: { type: integer, minimum: 1, maximum: 200, description: GN iteration cap, default 30 }
+        residual_tol_rad: { type: number, format: double, description: per-residual-RMS convergence threshold, default 1e-4 }
+
+    EntityChange:
+      type: object
+      description: One row's before/after for the keys the solver actually moved.
+      required: [kind, id, before, after]
+      properties:
+        kind:
+          type: string
+          enum: [station, photo, control_point]
+        id: { $ref: '#/components/schemas/Id' }
+        before:
+          type: object
+          additionalProperties: { type: number, format: double }
+        after:
+          type: object
+          additionalProperties: { type: number, format: double }
+
+    SolveResult:
+      type: object
+      required: [iterations, initial_residual_rms, final_residual_rms, converged, diverged, changes]
+      properties:
+        iterations: { type: integer }
+        initial_residual_rms: { type: number, format: double }
+        final_residual_rms: { type: number, format: double }
+        converged: { type: boolean, description: residual or step tolerance reached }
+        diverged: { type: boolean, description: solver could not improve the initial residual; no changes were applied }
+        auto_locked_columns:
+          type: array
+          description: |
+            Free parameters whose Jacobian column was effectively zero — usually
+            an unobservable parameter (e.g. est_alt of a CP only seen by one
+            station). The solver pinned them for this run.
+          items: { type: string }
+        changes:
+          type: array
+          items: { $ref: '#/components/schemas/EntityChange' }

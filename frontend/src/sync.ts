@@ -23,7 +23,7 @@ export interface SyncedControlPoint {
   description: string;
   est_lat: number | null;
   est_lng: number | null;
-  est_alt: number | null;
+  est_alt: number;
   started_at: string | null;
   ended_at: string | null;
 }

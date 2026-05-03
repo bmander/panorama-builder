@@ -7,6 +7,27 @@ import (
 	"time"
 )
 
+// Defines values for EntityChangeKind.
+const (
+	EntityChangeKindControlPoint EntityChangeKind = "control_point"
+	EntityChangeKindPhoto        EntityChangeKind = "photo"
+	EntityChangeKindStation      EntityChangeKind = "station"
+)
+
+// Valid indicates whether the value is a known member of the EntityChangeKind enum.
+func (e EntityChangeKind) Valid() bool {
+	switch e {
+	case EntityChangeKindControlPoint:
+		return true
+	case EntityChangeKindPhoto:
+		return true
+	case EntityChangeKindStation:
+		return true
+	default:
+		return false
+	}
+}
+
 // ControlPoint A real-world landmark with a user-seeded location estimate
 // (est_lat / est_lng / est_alt) and image-measurement observations
 // across photos and stations. The estimate is set when the CP is
@@ -18,13 +39,16 @@ type ControlPoint struct {
 	// EndedAt when the landmark ceased to exist
 	EndedAt *time.Time `json:"ended_at"`
 
-	// EstAlt meters above sea level
-	EstAlt *float64 `json:"est_alt"`
+	// EstAlt meters above sea level (defaults to 0 when unknown)
+	EstAlt float64  `json:"est_alt"`
 	EstLat *float64 `json:"est_lat"`
 	EstLng *float64 `json:"est_lng"`
 
 	// ID 13-character base32 server-assigned id
-	ID ID `json:"id"`
+	ID         ID   `json:"id"`
+	LockEstAlt bool `json:"lock_est_alt"`
+	LockEstLat bool `json:"lock_est_lat"`
+	LockEstLng bool `json:"lock_est_lng"`
 
 	// Notes free-form prose describing the control point in detail
 	Notes string `json:"notes"`
@@ -69,16 +93,38 @@ type ControlPointPatch struct {
 	EstAlt      *float64   `json:"est_alt,omitempty"`
 	EstLat      *float64   `json:"est_lat,omitempty"`
 	EstLng      *float64   `json:"est_lng,omitempty"`
-	Notes       *string    `json:"notes,omitempty"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
+	LockEstAlt  *bool      `json:"lock_est_alt,omitempty"`
+
+	// LockEstLat omit to preserve existing value (PUT) or default false (POST)
+	LockEstLat *bool      `json:"lock_est_lat,omitempty"`
+	LockEstLng *bool      `json:"lock_est_lng,omitempty"`
+	Notes      *string    `json:"notes,omitempty"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
 }
 
 // CreateStationRequest defines model for CreateStationRequest.
 type CreateStationRequest struct {
-	Lat  float64 `json:"lat"`
-	Lng  float64 `json:"lng"`
-	Name *string `json:"name,omitempty"`
+	Lat float64 `json:"lat"`
+	Lng float64 `json:"lng"`
+
+	// LockLat omit to preserve existing value (PUT) or default false (POST)
+	LockLat *bool   `json:"lock_lat,omitempty"`
+	LockLng *bool   `json:"lock_lng,omitempty"`
+	Name    *string `json:"name,omitempty"`
 }
+
+// EntityChange One row's before/after for the keys the solver actually moved.
+type EntityChange struct {
+	After  map[string]float64 `json:"after"`
+	Before map[string]float64 `json:"before"`
+
+	// ID 13-character base32 server-assigned id
+	ID   ID               `json:"id"`
+	Kind EntityChangeKind `json:"kind"`
+}
+
+// EntityChangeKind defines model for EntityChange.Kind.
+type EntityChangeKind string
 
 // Error defines model for Error.
 type Error struct {
@@ -135,9 +181,13 @@ type Photo struct {
 	CreatedAt time.Time `json:"created_at"`
 
 	// ID 13-character base32 server-assigned id
-	ID       ID      `json:"id"`
-	MimeType *string `json:"mime_type"`
-	Opacity  float64 `json:"opacity"`
+	ID            ID      `json:"id"`
+	LockPhotoAz   bool    `json:"lock_photo_az"`
+	LockPhotoRoll bool    `json:"lock_photo_roll"`
+	LockPhotoTilt bool    `json:"lock_photo_tilt"`
+	LockSizeRad   bool    `json:"lock_size_rad"`
+	MimeType      *string `json:"mime_type"`
+	Opacity       float64 `json:"opacity"`
 
 	// PhotoAz viewer-azimuth radians (CCW from -Z)
 	PhotoAz float64 `json:"photo_az"`
@@ -159,12 +209,45 @@ type Photo struct {
 
 // PhotoPosePatch defines model for PhotoPosePatch.
 type PhotoPosePatch struct {
-	Aspect    float64  `json:"aspect"`
-	Opacity   *float64 `json:"opacity,omitempty"`
-	PhotoAz   float64  `json:"photo_az"`
-	PhotoRoll float64  `json:"photo_roll"`
-	PhotoTilt float64  `json:"photo_tilt"`
-	SizeRad   float64  `json:"size_rad"`
+	Aspect float64 `json:"aspect"`
+
+	// LockPhotoAz omit to preserve existing value (PUT) or default false (POST)
+	LockPhotoAz   *bool    `json:"lock_photo_az,omitempty"`
+	LockPhotoRoll *bool    `json:"lock_photo_roll,omitempty"`
+	LockPhotoTilt *bool    `json:"lock_photo_tilt,omitempty"`
+	LockSizeRad   *bool    `json:"lock_size_rad,omitempty"`
+	Opacity       *float64 `json:"opacity,omitempty"`
+	PhotoAz       float64  `json:"photo_az"`
+	PhotoRoll     float64  `json:"photo_roll"`
+	PhotoTilt     float64  `json:"photo_tilt"`
+	SizeRad       float64  `json:"size_rad"`
+}
+
+// SolveConfig Optional knobs for the solver. Defaults are used when omitted.
+type SolveConfig struct {
+	// MaxIters GN iteration cap
+	MaxIters *int `json:"max_iters,omitempty"`
+
+	// ResidualTolRad per-residual-RMS convergence threshold
+	ResidualTolRad *float64 `json:"residual_tol_rad,omitempty"`
+}
+
+// SolveResult defines model for SolveResult.
+type SolveResult struct {
+	// AutoLockedColumns Free parameters whose Jacobian column was effectively zero — usually
+	// an unobservable parameter (e.g. est_alt of a CP only seen by one
+	// station). The solver pinned them for this run.
+	AutoLockedColumns *[]string      `json:"auto_locked_columns,omitempty"`
+	Changes           []EntityChange `json:"changes"`
+
+	// Converged residual or step tolerance reached
+	Converged bool `json:"converged"`
+
+	// Diverged solver could not improve the initial residual; no changes were applied
+	Diverged           bool    `json:"diverged"`
+	FinalResidualRms   float64 `json:"final_residual_rms"`
+	InitialResidualRms float64 `json:"initial_residual_rms"`
+	Iterations         int     `json:"iterations"`
 }
 
 // Station defines model for Station.
@@ -172,9 +255,15 @@ type Station struct {
 	CreatedAt time.Time `json:"created_at"`
 
 	// ID 13-character base32 server-assigned id
-	ID        ID        `json:"id"`
-	Lat       float64   `json:"lat"`
-	Lng       float64   `json:"lng"`
+	ID  ID      `json:"id"`
+	Lat float64 `json:"lat"`
+	Lng float64 `json:"lng"`
+
+	// LockLat when true the solver leaves lat untouched
+	LockLat bool `json:"lock_lat"`
+
+	// LockLng when true the solver leaves lng untouched
+	LockLng   bool      `json:"lock_lng"`
 	Name      *string   `json:"name"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -227,6 +316,15 @@ type UpdatePhotoJSONRequestBody = PhotoPosePatch
 
 // CreateImageMeasurementJSONRequestBody defines body for CreateImageMeasurement for application/json ContentType.
 type CreateImageMeasurementJSONRequestBody = ImageMeasurementPatch
+
+// SolveControlPointJSONRequestBody defines body for SolveControlPoint for application/json ContentType.
+type SolveControlPointJSONRequestBody = SolveConfig
+
+// SolveJointJSONRequestBody defines body for SolveJoint for application/json ContentType.
+type SolveJointJSONRequestBody = SolveConfig
+
+// SolveStationJSONRequestBody defines body for SolveStation for application/json ContentType.
+type SolveStationJSONRequestBody = SolveConfig
 
 // CreateStationJSONRequestBody defines body for CreateStation for application/json ContentType.
 type CreateStationJSONRequestBody = CreateStationRequest

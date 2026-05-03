@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -19,6 +20,10 @@ type Server struct {
 	staticDir     string
 	allowedOrigin string
 	maxBlobBytes  int64
+	// solveMu serializes /api/solve/* runs. The solver is solo-user-scale and
+	// runs at most a few seconds; a single global mutex avoids the complexity
+	// of per-station locking without measurable contention cost.
+	solveMu sync.Mutex
 }
 
 func main() {

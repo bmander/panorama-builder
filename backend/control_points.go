@@ -9,11 +9,15 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const controlPointCols = `id, description, notes, est_lat, est_lng, est_alt, started_at, ended_at, created_at, updated_at`
+const controlPointCols = `id, description, notes, est_lat, est_lng, est_alt, started_at, ended_at,
+	lock_est_lat, lock_est_lng, lock_est_alt, created_at, updated_at`
 
 func scanControlPoint(row pgx.Row) (ControlPoint, error) {
 	var cp ControlPoint
-	err := row.Scan(&cp.ID, &cp.Description, &cp.Notes, &cp.EstLat, &cp.EstLng, &cp.EstAlt, &cp.StartedAt, &cp.EndedAt, &cp.CreatedAt, &cp.UpdatedAt)
+	err := row.Scan(&cp.ID, &cp.Description, &cp.Notes, &cp.EstLat, &cp.EstLng, &cp.EstAlt,
+		&cp.StartedAt, &cp.EndedAt,
+		&cp.LockEstLat, &cp.LockEstLng, &cp.LockEstAlt,
+		&cp.CreatedAt, &cp.UpdatedAt)
 	return cp, err
 }
 
@@ -35,11 +39,14 @@ func (s *Server) postControlPoint(w http.ResponseWriter, r *http.Request) {
 		notes = *req.Notes
 	}
 	id := newID()
-	q := `INSERT INTO control_points (id, description, notes, est_lat, est_lng, est_alt, started_at, ended_at)
-	      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	q := `INSERT INTO control_points (id, description, notes, est_lat, est_lng, est_alt, started_at, ended_at,
+		lock_est_lat, lock_est_lng, lock_est_alt)
+	      VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+		COALESCE($9, false), COALESCE($10, false), COALESCE($11, false))
 	      RETURNING ` + controlPointCols
 	cp, err := scanControlPoint(s.db.QueryRow(r.Context(), q, id, desc, notes,
-		req.EstLat, req.EstLng, req.EstAlt, req.StartedAt, req.EndedAt))
+		req.EstLat, req.EstLng, req.EstAlt, req.StartedAt, req.EndedAt,
+		req.LockEstLat, req.LockEstLng, req.LockEstAlt))
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -129,18 +136,22 @@ func (s *Server) putControlPoint(w http.ResponseWriter, r *http.Request) {
 	// the other fields are unconditional `=`, so callers must always include
 	// them in the patch or they'll be cleared.
 	q := `UPDATE control_points SET
-	        description = COALESCE($2, description),
-	        notes       = COALESCE($3, notes),
-	        est_lat     = $4,
-	        est_lng     = $5,
-	        est_alt     = $6,
-	        started_at  = $7,
-	        ended_at    = $8,
-	        updated_at  = NOW()
+	        description  = COALESCE($2, description),
+	        notes        = COALESCE($3, notes),
+	        est_lat      = $4,
+	        est_lng      = $5,
+	        est_alt      = $6,
+	        started_at   = $7,
+	        ended_at     = $8,
+	        lock_est_lat = COALESCE($9, lock_est_lat),
+	        lock_est_lng = COALESCE($10, lock_est_lng),
+	        lock_est_alt = COALESCE($11, lock_est_alt),
+	        updated_at   = NOW()
 	      WHERE id = $1
 	      RETURNING ` + controlPointCols
 	cp, err := scanControlPoint(s.db.QueryRow(r.Context(), q, id, req.Description, req.Notes,
-		req.EstLat, req.EstLng, req.EstAlt, req.StartedAt, req.EndedAt))
+		req.EstLat, req.EstLng, req.EstAlt, req.StartedAt, req.EndedAt,
+		req.LockEstLat, req.LockEstLng, req.LockEstAlt))
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return

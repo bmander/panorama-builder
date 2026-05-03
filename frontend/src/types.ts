@@ -7,12 +7,13 @@ export interface LatLng {
   readonly lng: number;
 }
 
-// Photo pose, both as solver input and output.
+// Photo pose held in the scene-graph. Mirrors the API's photo_* columns plus
+// camera lat/lng (which lives on the station, not the photo, but the overlay
+// renderer needs both to place the panorama).
 //   photoAz:        viewer-azimuth (CCW from −Z) of overlay center
-//   photoTilt:      altitude of overlay center (input only; never modified)
+//   photoTilt:      altitude of overlay center
 //   photoRoll:      in-plane rotation around the overlay's center axis,
-//                   radians, CCW positive (input only; never modified —
-//                   not observable from azimuth-only POI residuals)
+//                   radians, CCW positive
 //   sizeRad:        angular width (FOV) of the overlay
 //   aspect:         photo width/height
 //   camLat, camLng: panorama camera location
@@ -25,20 +26,6 @@ export interface Pose {
   readonly camLat: number;
   readonly camLng: number;
 }
-
-// One anchored POI as seen by the solver.
-export interface POIProjection {
-  readonly u: number;
-  readonly v: number;
-  readonly controlPointId: string;
-}
-
-export interface ControlPointSeed {
-  readonly id: string;
-  readonly lat: number;
-  readonly lng: number;
-}
-
 
 // Snapshot for the HUD readout.
 export interface AzAltSnapshot {
@@ -77,30 +64,9 @@ export interface ControlPointView {
   readonly description: string;
   readonly estLat: number | null;
   readonly estLng: number | null;
-  readonly estAlt: number | null;
+  readonly estAlt: number;
   readonly selected: boolean;
 }
-
-// Pose-solver inputs and outputs. The solver works on ALL anchored photos
-// jointly — camera location is a shared parameter, per-photo orientation
-// (photoAz, sizeRad) is local. This is necessary so POIs from every photo
-// contribute evidence to the camera estimate.
-export interface JointPhoto {
-  readonly pose: Pose;
-  readonly pois: readonly POIProjection[];
-  readonly free: readonly LocalParam[];
-}
-
-export interface JointSolveResult {
-  readonly photos: readonly { readonly pose: Pose }[];
-  readonly controlPoints: readonly ControlPointSeed[];
-  readonly residualRMS: number;
-  readonly iterations: number;
-}
-
-// Per-photo free parameters the solver can adjust. Camera location is fixed
-// at the user-asserted station origin and never modified.
-export type LocalParam = 'photoAz' | 'sizeRad' | 'photoRoll';
 
 // Bake (pixel buffer + dimensions) returned by the equirect baker.
 export interface Baked {

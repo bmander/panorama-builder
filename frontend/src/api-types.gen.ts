@@ -219,6 +219,78 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/solve/joint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bundle-adjust the entire system (stations + photos + control points)
+         * @description Runs Gauss-Newton over every unlocked solvable parameter across all
+         *     stations, photos, and control points. Requires at least two stations
+         *     with both lat and lng locked (translation + rotation gauge); returns
+         *     400 otherwise. Persists the result inside one transaction; uses
+         *     optimistic concurrency on each row's `updated_at` and returns 409 if
+         *     another writer raced the solve.
+         */
+        post: operations["solveJoint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/solve/stations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["StationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refine the photo poses of a single station
+         * @description Solves the joint photo-pose problem for the given station, treating
+         *     the station's own lat/lng and every control point's est_* as fixed.
+         *     No gauge requirement (the station is the implicit anchor).
+         */
+        post: operations["solveStation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/solve/control-points/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ControlPointId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refine est_lat / est_lng / est_alt for a single control point
+         * @description Triangulates the CP location from its image measurements across
+         *     stations. Requires at least two image observations.
+         */
+        post: operations["solveControlPoint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/control-points/{id}/observations": {
         parameters: {
             query?: never;
@@ -263,6 +335,10 @@ export interface components {
             /** Format: double */
             lng: number;
             name: string | null;
+            /** @description when true the solver leaves lat untouched */
+            lock_lat: boolean;
+            /** @description when true the solver leaves lng untouched */
+            lock_lng: boolean;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -302,6 +378,10 @@ export interface components {
             size_rad: number;
             /** Format: double */
             opacity: number;
+            lock_photo_az: boolean;
+            lock_photo_tilt: boolean;
+            lock_photo_roll: boolean;
+            lock_size_rad: boolean;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -341,9 +421,9 @@ export interface components {
             est_lng: number | null;
             /**
              * Format: double
-             * @description meters above sea level
+             * @description meters above sea level (defaults to 0 when unknown)
              */
-            est_alt: number | null;
+            est_alt: number;
             /**
              * Format: date-time
              * @description when the landmark began existing
@@ -354,6 +434,9 @@ export interface components {
              * @description when the landmark ceased to exist
              */
             ended_at: string | null;
+            lock_est_lat: boolean;
+            lock_est_lng: boolean;
+            lock_est_alt: boolean;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -403,6 +486,9 @@ export interface components {
             /** Format: double */
             lng: number;
             name?: string | null;
+            /** @description omit to preserve existing value (PUT) or default false (POST) */
+            lock_lat?: boolean;
+            lock_lng?: boolean;
         };
         PhotoPosePatch: {
             /** Format: double */
@@ -417,6 +503,11 @@ export interface components {
             size_rad: number;
             /** Format: double */
             opacity?: number;
+            /** @description omit to preserve existing value (PUT) or default false (POST) */
+            lock_photo_az?: boolean;
+            lock_photo_tilt?: boolean;
+            lock_photo_roll?: boolean;
+            lock_size_rad?: boolean;
         };
         ImageMeasurementPatch: {
             /** Format: double */
@@ -433,11 +524,55 @@ export interface components {
             /** Format: double */
             est_lng?: number | null;
             /** Format: double */
-            est_alt?: number | null;
+            est_alt?: number;
             /** Format: date-time */
             started_at?: string | null;
             /** Format: date-time */
             ended_at?: string | null;
+            /** @description omit to preserve existing value (PUT) or default false (POST) */
+            lock_est_lat?: boolean;
+            lock_est_lng?: boolean;
+            lock_est_alt?: boolean;
+        };
+        /** @description Optional knobs for the solver. Defaults are used when omitted. */
+        SolveConfig: {
+            /** @description GN iteration cap */
+            max_iters?: number;
+            /**
+             * Format: double
+             * @description per-residual-RMS convergence threshold
+             */
+            residual_tol_rad?: number;
+        };
+        /** @description One row's before/after for the keys the solver actually moved. */
+        EntityChange: {
+            /** @enum {string} */
+            kind: "station" | "photo" | "control_point";
+            id: components["schemas"]["Id"];
+            before: {
+                [key: string]: number;
+            };
+            after: {
+                [key: string]: number;
+            };
+        };
+        SolveResult: {
+            iterations: number;
+            /** Format: double */
+            initial_residual_rms: number;
+            /** Format: double */
+            final_residual_rms: number;
+            /** @description residual or step tolerance reached */
+            converged: boolean;
+            /** @description solver could not improve the initial residual; no changes were applied */
+            diverged: boolean;
+            /**
+             * @description Free parameters whose Jacobian column was effectively zero — usually
+             *     an unobservable parameter (e.g. est_alt of a CP only seen by one
+             *     station). The solver pinned them for this run.
+             */
+            auto_locked_columns?: string[];
+            changes: components["schemas"]["EntityChange"][];
         };
     };
     responses: {
@@ -984,6 +1119,114 @@ export interface operations {
                 content?: never;
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    solveJoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SolveConfig"];
+            };
+        };
+        responses: {
+            /** @description OK (incl. divergence; check `diverged`) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolveResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Concurrent edit detected; re-fetch and retry */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    solveStation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["StationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SolveConfig"];
+            };
+        };
+        responses: {
+            /** @description OK (incl. divergence; check `diverged`) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolveResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            /** @description Concurrent edit detected; re-fetch and retry */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    solveControlPoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ControlPointId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["SolveConfig"];
+            };
+        };
+        responses: {
+            /** @description OK (incl. divergence; check `diverged`) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolveResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            /** @description Concurrent edit detected; re-fetch and retry */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     listControlPointObservations: {

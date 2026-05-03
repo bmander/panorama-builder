@@ -23,6 +23,9 @@ export type PhotoPosePatch = Schemas['PhotoPosePatch'];
 export type ImageMeasurementPatch = Schemas['ImageMeasurementPatch'];
 export type ControlPointPatch = Schemas['ControlPointPatch'];
 export type ApiControlPointObservations = Schemas['ControlPointObservations'];
+export type SolveConfig = Schemas['SolveConfig'];
+export type SolveResult = Schemas['SolveResult'];
+export type EntityChange = Schemas['EntityChange'];
 
 // --- Helpers ---
 
@@ -63,10 +66,14 @@ export function getStation(id: string): Promise<ApiHydratedStation> {
   return request<ApiHydratedStation>('GET', `/stations/${encodeURIComponent(id)}`);
 }
 
-export function updateStation(id: string, latlng: LatLng, name?: string | null): Promise<ApiStation> {
-  return request<ApiStation>('PUT', `/stations/${encodeURIComponent(id)}`, {
-    lat: latlng.lat, lng: latlng.lng, name: name ?? null,
-  });
+export function updateStation(
+  id: string, latlng: LatLng, name?: string | null,
+  lockLat?: boolean, lockLng?: boolean,
+): Promise<ApiStation> {
+  const body: Record<string, unknown> = { lat: latlng.lat, lng: latlng.lng, name: name ?? null };
+  if (lockLat !== undefined) body.lock_lat = lockLat;
+  if (lockLng !== undefined) body.lock_lng = lockLng;
+  return request<ApiStation>('PUT', `/stations/${encodeURIComponent(id)}`, body);
 }
 
 export function deleteStation(id: string): Promise<void> {
@@ -148,4 +155,18 @@ export function updateControlPoint(id: string, body: ControlPointPatch): Promise
 
 export function deleteControlPoint(id: string): Promise<void> {
   return requestVoid('DELETE', `/control-points/${encodeURIComponent(id)}`);
+}
+
+// --- Solver ---
+
+export function solveJoint(config?: SolveConfig): Promise<SolveResult> {
+  return request<SolveResult>('POST', '/solve/joint', config ?? {});
+}
+
+export function solveStation(id: string, config?: SolveConfig): Promise<SolveResult> {
+  return request<SolveResult>('POST', `/solve/stations/${encodeURIComponent(id)}`, config ?? {});
+}
+
+export function solveControlPoint(id: string, config?: SolveConfig): Promise<SolveResult> {
+  return request<SolveResult>('POST', `/solve/control-points/${encodeURIComponent(id)}`, config ?? {});
 }
