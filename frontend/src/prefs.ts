@@ -8,7 +8,6 @@ export interface Prefs {
   azimuth: number;
   altitude: number;
   fov: number;
-  tab: '360' | 'map';
   lockCamera: boolean;
   solvePhotoRoll: boolean;
   terrainMode: TerrainMode;

@@ -1,8 +1,7 @@
 import * as L from 'leaflet';
-import type * as THREE from 'three';
-import { R_EARTH, bearingFromLocation, viewerAzToBearing, bearingToViewerAz } from './geo.js';
+import { R_EARTH, viewerAzToBearing } from './geo.js';
 import { cpHref } from './types.js';
-import type { Cone, LatLng, MapMeasurementView, ImageMeasurementBearing } from './types.js';
+import type { Cone, LatLng } from './types.js';
 import { TILE_PX, fetchTileElevations, tileYToLat } from './dem.js';
 
 export interface StationMarker {
@@ -28,12 +27,6 @@ export interface IndexControlPoint {
 }
 
 export interface MapView {
-  getLocation(): LatLng | null;
-  setLocation(latlng: LatLng | null): void;
-  viewerAzToAnchor(latlng: LatLng): number;
-  setOverlayCones(newCones: Cone[]): void;
-  setImageMeasurementBearings(newPOIs: ImageMeasurementBearing[]): void;
-  setMapMeasurements(mapPois: readonly MapMeasurementView[]): void;
   setStationMarkers(stations: readonly StationMarker[]): void;
   setStationPreview(preview: StationPreview | null): void;
   // Index-view dots: every control point with a location estimate, drawn as
@@ -43,29 +36,15 @@ export interface MapView {
   // Pan/zoom the index map to the named CP and open its popup. No-op if the
   // CP isn't in the current `indexControlPoints` list (e.g. no estimate yet).
   focusIndexControlPoint(id: string): boolean;
-  isVisible(): boolean;
-  onShow(): void;
-  onHide(): void;
-  toggleMapPoiArm(): void;
-  // Disarms armed states. Used on tab switch so the user doesn't get
-  // surprised by stale arming when they come back to the Map tab.
-  disarmAll(): void;
 }
 
 export interface CreateMapViewOptions {
   container: HTMLElement;
-  onLocationChange?: (loc: LatLng) => void;
-  onPOIAnchorClick?: (handle: THREE.Mesh, latlng: LatLng) => void;
-  onMapPoiArmedAddClick?: (latlng: LatLng) => void;
-  onMapPoiClick?: (id: string) => void;
-  onMapPoiDragged?: (id: string, latlng: LatLng) => void;
   onStationMarkerOpen?: (id: string) => void;
   onStationMarkerPreview?: (id: string) => void;
   onStartStationHere?: (latlng: LatLng) => void;
   onAddControlPointHere?: (latlng: LatLng) => void;
   onControlPointSolveLocation?: (id: string) => void;
-  onShowRefresh?: () => void;
-  onMapPoiArmedChange?: (armed: boolean) => void;
 }
 
 const HIST_ATTR = 'Historical maps via <a href="https://bmander.com/seamap">bmander.com/seamap</a>';
@@ -153,17 +132,6 @@ function destination(loc: LatLng, bearingDeg: number, distM: number): LatLng {
   return { lat: loc.lat + dLat, lng: loc.lng + dLng };
 }
 
-function projectClickToRay(loc: LatLng, bearingDeg: number, click: L.LatLng): LatLng {
-  // Flat-earth projection of click onto the ray (loc, bearing); clamps t≥0 (no points behind apex).
-  const cosLat = Math.cos(loc.lat * Math.PI / 180);
-  const dLat = click.lat - loc.lat;
-  const dE = (click.lng - loc.lng) * cosLat;
-  const bRad = bearingDeg * Math.PI / 180;
-  const dirN = Math.cos(bRad), dirE = Math.sin(bRad);
-  const t = Math.max(0, dLat * dirN + dE * dirE);
-  return { lat: loc.lat + t * dirN, lng: loc.lng + (t * dirE) / cosLat };
-}
-
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 }
@@ -177,18 +145,11 @@ function pixelsToMeters(map: L.Map, pixels: number): number {
 
 export function createMapView({
   container,
-  onLocationChange,
-  onPOIAnchorClick,
-  onMapPoiArmedAddClick,
-  onMapPoiClick,
-  onMapPoiDragged,
   onStationMarkerOpen,
   onStationMarkerPreview,
   onStartStationHere,
   onAddControlPointHere,
   onControlPointSolveLocation,
-  onShowRefresh,
-  onMapPoiArmedChange,
 }: CreateMapViewOptions): MapView {
   const layers: Record<string, L.Layer> = {
     'Sanborn 1884': histLayer(1884),
@@ -206,62 +167,9 @@ export function createMapView({
     .setView([47.607, -122.335], 14);
   L.control.layers(layers, {}, { collapsed: false, position: 'topleft' }).addTo(map);
 
-  let location: LatLng | null = null;
-  let marker: L.Marker | null = null;
-  let cones: Cone[] = [];
-  const coneLayers: L.Polygon[] = [];
-  let pois: ImageMeasurementBearing[] = [];
-  const poiLayers: L.Polyline[] = [];
-  // Tracks the last-applied selected state per polyline, so we only call
-  // setStyle (an SVG attribute write that can trigger layout) when the
-  // color actually needs to change.
-  const poiSelectedState: boolean[] = [];
-  let mapPoiData: readonly MapMeasurementView[] = [];
-  // Track the last-applied selected state alongside the marker. Calling
-  // setIcon() rebuilds the marker's DOM element, which kills any drag in
-  // progress, so we only swap when selection actually changes.
-  const mapPoiMarkers = new Map<string, { marker: L.Marker; selected: boolean }>();
-  let visible = false;
-  let mapPoiArmed = false;
-  function setMapPoiArmed(v: boolean): void {
-    if (mapPoiArmed === v) return;
-    mapPoiArmed = v;
-    container.classList.toggle('armed', mapPoiArmed);
-    onMapPoiArmedChange?.(v);
-  }
-
   const CONE_STYLE: L.PolylineOptions = { color: '#ffd84a', weight: 1, fillColor: '#ffd84a', fillOpacity: 0.18 };
-  const POI_COLOR = '#ff5050';
-  const SELECTED_COLOR = '#ffff66';
-  const POI_STYLE: L.PolylineOptions = { color: POI_COLOR, weight: 2, opacity: 0.8 };
-  // Crosshair-inside-a-circle, matching the procedural reticle in overlay.ts.
-  // viewBox -1..1 keeps the same geometry constants as the shader (ring at
-  // r=0.7, crosshair lines from |x|=0.10 to 0.85). stroke="currentColor" lets
-  // the actual color come from the CSS `color` of the parent .poi-anchor-marker
-  // div — so toggling the .selected class on the marker swaps blue→yellow
-  // without re-rendering the SVG.
-  const RETICLE_SVG = `<svg width="36" height="36" viewBox="-1 -1 2 2" xmlns="http://www.w3.org/2000/svg">`
-    + `<circle cx="0" cy="0" r="0.7" fill="none" stroke="currentColor" stroke-width="0.12"/>`
-    + `<path d="M -0.85 0 L -0.1 0 M 0.1 0 L 0.85 0 M 0 -0.85 L 0 -0.1 M 0 0.1 L 0 0.85" `
-    + `stroke="currentColor" stroke-width="0.12" stroke-linecap="round" fill="none"/>`
-    + `</svg>`;
-  const ANCHOR_ICON = L.divIcon({
-    className: 'poi-anchor-marker',
-    html: RETICLE_SVG,
-    iconSize: [36, 36],
-    iconAnchor: [18, 18],
-  });
-  const ANCHOR_ICON_SELECTED = L.divIcon({
-    className: 'poi-anchor-marker selected',
-    html: RETICLE_SVG,
-    iconSize: [36, 36],
-    iconAnchor: [18, 18],
-  });
   const stationMarkers = new Map<string, L.Marker>();
-  // Preview overlay drawn at the index view when a station marker is clicked.
-  // Distinct from the live cone/POI layers (which are driven by the loaded
-  // station's overlay manager) since previews are fed from a separate API
-  // fetch and rendered relative to the station marker's own location.
+  // Preview overlay drawn when a station marker is clicked.
   let stationPreview: StationPreview | null = null;
   const previewConeLayers: L.Polygon[] = [];
   let indexControlPoints: readonly IndexControlPoint[] = [];
@@ -291,126 +199,7 @@ export function createMapView({
     return pixelsToMeters(map, Math.hypot(s.x, s.y));
   }
 
-  function syncLayerPool<TItem, TLayer extends L.Layer>(
-    items: TItem[],
-    layerPool: TLayer[],
-    makeLayer: () => TLayer,
-    applyLatLngs: (layer: TLayer, item: TItem, distM: number) => void,
-  ): void {
-    if (!location || items.length === 0) {
-      while (layerPool.length) map.removeLayer(layerPool.pop()!);
-      return;
-    }
-    while (layerPool.length > items.length) map.removeLayer(layerPool.pop()!);
-    while (layerPool.length < items.length) layerPool.push(makeLayer().addTo(map));
-    const distM = screenDiagonalMeters();
-    for (let i = 0; i < items.length; i++) {
-      const layer = layerPool[i]!;
-      const item = items[i]!;
-      applyLatLngs(layer, item, distM);
-    }
-  }
-
-  function redrawCones(): void {
-    if (!visible) return;
-    syncLayerPool<Cone, L.Polygon>(cones, coneLayers,
-      () => L.polygon([[0, 0], [0, 0], [0, 0]], CONE_STYLE),
-      (layer, c, distM) => {
-        const loc = location!;
-        const ptL = destination(loc, viewerAzToBearing(c.azL), distM);
-        const ptR = destination(loc, viewerAzToBearing(c.azR), distM);
-        layer.setLatLngs([
-          [loc.lat, loc.lng],
-          [ptL.lat, ptL.lng],
-          [ptR.lat, ptR.lng],
-        ]);
-      });
-  }
-
-  function redrawPOIs(): void {
-    if (!visible) return;
-    syncLayerPool<ImageMeasurementBearing, L.Polyline>(pois, poiLayers,
-      () => L.polyline([[0, 0], [0, 0]], POI_STYLE),
-      (layer, p, distM) => {
-        const loc = location!;
-        const pt = destination(loc, viewerAzToBearing(p.az), distM);
-        layer.setLatLngs([[loc.lat, loc.lng], [pt.lat, pt.lng]]);
-      });
-    // Trim the parallel selected-state array to match the (possibly shrunk) pool.
-    poiSelectedState.length = poiLayers.length;
-    // Re-bind click handlers — closures need fresh poi references.
-    for (let i = 0; i < poiLayers.length; i++) {
-      const poi = pois[i]!;
-      const layer = poiLayers[i]!;
-      const handle = poi.handle;
-      const az = poi.az;
-      if (poiSelectedState[i] !== poi.selected) {
-        layer.setStyle({ color: poi.selected ? SELECTED_COLOR : POI_COLOR });
-        poiSelectedState[i] = poi.selected;
-      }
-      layer.off('click');
-      layer.on('click', (e: L.LeafletMouseEvent) => {
-        if (!location) return;
-        const projected = projectClickToRay(location, viewerAzToBearing(az), e.latlng);
-        onPOIAnchorClick?.(handle, projected);
-        L.DomEvent.stopPropagation(e);
-      });
-    }
-  }
-
-  function redrawMapPoiAnchors(): void {
-    if (!visible) return;
-    const wanted = new Map<string, MapMeasurementView>();
-    for (const m of mapPoiData) wanted.set(m.id, m);
-    for (const [id, entry] of mapPoiMarkers) {
-      if (!wanted.has(id)) { map.removeLayer(entry.marker); mapPoiMarkers.delete(id); }
-    }
-    for (const [id, view] of wanted) {
-      const icon = view.selected ? ANCHOR_ICON_SELECTED : ANCHOR_ICON;
-      const existing = mapPoiMarkers.get(id);
-      if (!existing) {
-        const m = L.marker([view.latlng.lat, view.latlng.lng], { draggable: true, icon }).addTo(map);
-        m.on('drag', (e: L.LeafletEvent) => {
-          const ll = (e.target as L.Marker).getLatLng();
-          onMapPoiDragged?.(id, ll);
-        });
-        mapPoiMarkers.set(id, { marker: m, selected: view.selected });
-      } else {
-        existing.marker.setLatLng([view.latlng.lat, view.latlng.lng]);
-        if (existing.selected !== view.selected) {
-          existing.marker.setIcon(icon);
-          existing.selected = view.selected;
-        }
-      }
-      const entry = mapPoiMarkers.get(id)!;
-      entry.marker.off('click');
-      entry.marker.on('click', (e: L.LeafletMouseEvent) => {
-        onMapPoiClick?.(id);
-        L.DomEvent.stopPropagation(e);
-        if (!view.controlPointId) return;
-        const popupHtml = `<span class="name">cp ${escapeHtml(view.controlPointId.slice(0, 6))}</span>`
-          + `<a class="go" href="${cpHref(view.controlPointId)}">View details →</a>`
-          + solveButtonHtml();
-        const popup = L.popup(INDEX_CP_POPUP_OPTS)
-          .setLatLng([view.latlng.lat, view.latlng.lng])
-          .setContent(popupHtml)
-          .openOn(map);
-        const solveBtn = popup.getElement()?.querySelector<HTMLButtonElement>('.solve-location');
-        solveBtn?.addEventListener('click', () => {
-          map.closePopup(popup);
-          onControlPointSolveLocation?.(view.controlPointId!);
-        }, { once: true });
-      });
-      entry.marker.off('contextmenu');
-      entry.marker.on('contextmenu', (e: L.LeafletMouseEvent) => {
-        L.DomEvent.preventDefault(e.originalEvent);
-        L.DomEvent.stopPropagation(e);
-      });
-    }
-  }
-
   function redrawStationPreview(): void {
-    if (!visible) return;
     while (previewConeLayers.length) map.removeLayer(previewConeLayers.pop()!);
     if (!stationPreview) return;
     const distM = screenDiagonalMeters();
@@ -447,7 +236,6 @@ export function createMapView({
   // when the CP list itself changes; toggling preview state should call
   // restyleIndexControlPoints() to avoid tearing down per-marker handlers.
   function redrawIndexControlPoints(): void {
-    if (!visible) return;
     for (const dot of indexCpDots.values()) map.removeLayer(dot);
     indexCpDots.clear();
     for (const cp of indexControlPoints) {
@@ -475,25 +263,6 @@ export function createMapView({
     restyleIndexControlPoints();
   }
 
-  function redrawAll(): void { redrawCones(); redrawPOIs(); redrawMapPoiAnchors(); redrawStationPreview(); redrawIndexControlPoints(); }
-
-  function ensureMarker(latlng: L.LatLngExpression): void {
-    if (marker) { marker.setLatLng(latlng); return; }
-    marker = L.marker(latlng, { draggable: true }).addTo(map);
-    marker.on('drag', (e: L.LeafletEvent) => {
-      const ll = (e.target as L.Marker).getLatLng();
-      location = { lat: ll.lat, lng: ll.lng };
-      onLocationChange?.(location);
-      redrawAll();
-    });
-  }
-
-  map.on('click', (e: L.LeafletMouseEvent) => {
-    if (mapPoiArmed) {
-      setMapPoiArmed(false);
-      onMapPoiArmedAddClick?.({ lat: e.latlng.lat, lng: e.latlng.lng });
-    }
-  });
   map.on('contextmenu', (e: L.LeafletMouseEvent) => {
     // Skip when the right-click landed on a marker or popup — those have
     // their own contextmenu / popup handling and we don't want to clobber it.
@@ -511,29 +280,10 @@ export function createMapView({
     wireGoButton(popup, '.go.start-station', () => onStartStationHere?.(latlng));
     wireGoButton(popup, '.go.add-cp', () => onAddControlPointHere?.(latlng));
   });
-  map.on('zoomend', redrawAll);
-  map.on('resize', redrawAll);
+  map.on('zoomend', redrawStationPreview);
+  map.on('resize', redrawStationPreview);
 
   return {
-    getLocation: () => location,
-    // Programmatic move from the pose solver. Does NOT fire onLocationChange (which would
-    // re-trigger the solver and feedback-loop).
-    setLocation(latlng: LatLng | null): void {
-      if (!latlng) return;
-      location = { lat: latlng.lat, lng: latlng.lng };
-      ensureMarker([latlng.lat, latlng.lng]);
-      redrawAll();
-    },
-    viewerAzToAnchor(latlng: LatLng): number {
-      if (!location) return 0;
-      return bearingToViewerAz(bearingFromLocation(location, latlng));
-    },
-    setOverlayCones(newCones: Cone[]): void { cones = newCones; redrawCones(); },
-    setImageMeasurementBearings(newPOIs: ImageMeasurementBearing[]): void { pois = newPOIs; redrawPOIs(); },
-    setMapMeasurements(newMapPOIs: readonly MapMeasurementView[]): void {
-      mapPoiData = newMapPOIs;
-      redrawMapPoiAnchors();
-    },
     setStationPreview(preview: StationPreview | null): void {
       applyStationPreview(preview);
     },
@@ -585,20 +335,5 @@ export function createMapView({
         stationMarkers.set(p.id, m);
       }
     },
-    isVisible: () => visible,
-    onShow(): void {
-      // Pull fresh annotation data into our cone/POI caches first. The setters'
-      // redraws are gated on `visible`, so they're no-ops here — the redrawAll
-      // below paints once with up-to-date inputs.
-      onShowRefresh?.();
-      visible = true;
-      // Leaflet measures tile dims from container size at construction; if hidden
-      // then, we must invalidate after the container becomes visible.
-      map.invalidateSize();
-      redrawAll();
-    },
-    onHide(): void { visible = false; },
-    toggleMapPoiArm(): void { setMapPoiArmed(!mapPoiArmed); },
-    disarmAll(): void { setMapPoiArmed(false); },
   };
 }

@@ -3,8 +3,9 @@ import { createViewer } from './viewer.js';
 import { createOverlayManager, dirFromAzAlt } from './overlay.js';
 import { createBaker } from './bake.js';
 import { attachInput } from './input.js';
-import { createHud, attachViewTabs, attachDownload } from './ui.js';
+import { createHud, attachDownload } from './ui.js';
 import { createMapView } from './map.js';
+import type { MapView } from './map.js';
 import { createTerrainView } from './terrain.js';
 import { createSunMarker } from './sun-marker.js';
 import { createControlPointColumns, findHitColumn } from './map-poi-columns.js';
@@ -46,10 +47,9 @@ const focusIndexControlPointId: string | null = (() => {
 })();
 
 // Index mode (no station in URL) hides the station-scoped chrome — the
-// upper-right buttons + tabs only make sense once a station is loaded.
+// upper-right buttons only make sense once a station is loaded.
 if (currentStationId === null) {
   getElement('top-right').hidden = true;
-  getElement('map-coords').hidden = true;
 }
 
 // --- Viewer + scene singletons -----------------------------------------
@@ -59,22 +59,22 @@ const viewer = createViewer({ container: document.body });
 const overlays = createOverlayManager({
   overlaysGroup: viewer.overlaysGroup,
   getAnisotropy: () => viewer.renderer.capabilities.getMaxAnisotropy(),
-  // The closure captures sync, solver, settings, mapView — all declared below.
+  // The closure captures sync, solver, settings — all declared below.
   // Safe because onMutate fires only after bootstrap, by which point every
   // const is bound.
   onMutate: () => {
     viewer.requestRender();
-    baker.markDirty();
-    if (mapView.isVisible()) refreshMapAnnotations();
-    refreshControlPointColumns();
+    if (currentStationId) {
+      baker.markDirty();
+      refreshControlPointColumns();
+    }
     solver.runSolve();
     sync.flush();
     settings.persist();
   },
   onSelectionChange: () => {
     viewer.requestRender();
-    if (mapView.isVisible()) refreshMapAnnotations();
-    refreshControlPointColumns();
+    if (currentStationId) refreshControlPointColumns();
   },
   onLightMutate: () => {
     viewer.requestRender();
@@ -114,17 +114,14 @@ const hud = createHud(() => {
   };
 });
 
-// --- Cross-cutting refreshers (need late access to managers) -----------
+// Camera location for the station page. Not user-editable post-creation:
+// there's no map UI on the station view to drag the pin.
+let stationLocation: LatLng | null = null;
+const getStationLocation = (): LatLng | null => stationLocation;
 
-function refreshMapAnnotations(): void {
-  mapView.setOverlayCones(overlays.getCones());
-  mapView.setImageMeasurementBearings(overlays.getImageMeasurements());
-  mapView.setMapMeasurements(overlays.getMapMeasurements());
-}
+// --- Cross-cutting refreshers ------------------------------------------
 
 function refreshControlPointColumns(): void {
-  if (viewTabs.getMode() !== '360') return;
-  const camLoc = mapView.getLocation();
   // Only show columns for CPs the user is actually observing in this station.
   const observed = new Set<string>();
   for (const im of overlays.getImageMeasurements()) {
@@ -136,27 +133,16 @@ function refreshControlPointColumns(): void {
     if (!observed.has(cp.id)) continue;
     columns.push({ id: cp.id, anchor: { lat: cp.estLat, lng: cp.estLng }, selected: cp.selected });
   }
-  cpColumns.update(camLoc, columns);
+  cpColumns.update(stationLocation, columns);
 }
 
-const coordsEl = getElement('map-coords');
-
 function applyCameraLocation(loc: LatLng): void {
-  coordsEl.textContent = `lat ${loc.lat.toFixed(5)}  lng ${loc.lng.toFixed(5)}`;
+  stationLocation = loc;
   terrain.setLocation(loc);
   settings.refreshSunDirection();
   refreshControlPointColumns();
-  applyLocationGate();
   // Mark the location dirty so the next flush PUTs it.
   sync.flush();
-}
-
-const tab360El = getElement<HTMLButtonElement>('tab-360');
-function applyLocationGate(): void {
-  const hasLocation = mapView.getLocation() !== null;
-  tab360El.disabled = !hasLocation;
-  tab360El.title = hasLocation ? '' : 'Set a camera location on the Map first';
-  if (!hasLocation && viewTabs.getMode() === '360') viewTabs.setMode('map');
 }
 
 function registerControlPoint(cp: ApiControlPoint): void {
@@ -195,25 +181,20 @@ function syncControlPoint(cp: ApiControlPoint): void {
 const sync = createSyncManager({
   overlays,
   getCurrentStationId,
-  getCameraLocation: () => mapView.getLocation(),
+  getCameraLocation: getStationLocation,
 });
 
 const solver = createSolverLoop({
   overlays,
-  getCameraLocation: () => mapView.getLocation(),
+  getCameraLocation: getStationLocation,
   isSolveRollEnabled: () => settings.isSolveRollEnabled(),
-  onCameraMovedBySolver: loc => {
-    mapView.setLocation(loc);
-    applyCameraLocation(loc);
-  },
+  onCameraMovedBySolver: loc => { applyCameraLocation(loc); },
 });
 
 const settings = createSettingsPanel({
   viewer, terrain, sunMarker, hud,
-  getCameraLocation: () => mapView.getLocation(),
+  getCameraLocation: getStationLocation,
   getCurrentStationId,
-  getViewTab: () => viewTabs.getMode(),
-  refreshMapAnnotationsIfVisible: () => { if (mapView.isVisible()) refreshMapAnnotations(); },
   runSolve: () => { solver.runSolve(); },
   setCameraLocked: locked => { solver.setCameraLocked(locked); },
 });
@@ -222,8 +203,6 @@ const handlers = createOrchestration({
   getCurrentStationId,
   overlays,
   sync,
-  applyCameraLocation,
-  runSolve: () => { solver.runSolve(); },
 });
 
 const admin = createAdminModal({ getCurrentStationId });
@@ -231,27 +210,11 @@ const startStationModal = createStartStationModal({
   onSubmit: input => handlers.onStartStationHere(input),
 });
 
-// --- Map + input + tabs wiring -----------------------------------------
+// --- Map (index page only) + input wiring ------------------------------
 
 const addPoiBtnEl = getElement('add-poi');
 
-const mapView = createMapView({
-  container: getElement('map'),
-  onShowRefresh: () => { refreshMapAnnotations(); },
-  onLocationChange: loc => { handlers.onSetLocation(loc); },
-  onPOIAnchorClick: (handle, latlng) => { void handlers.onAnchorImageMeasurementByMapClick(handle, latlng); },
-  onMapPoiArmedAddClick: latlng => { void handlers.onAddMapMeasurement(latlng); },
-  onMapPoiClick: id => { overlays.setSelectedMapMeasurement(id); },
-  onMapPoiDragged: (id, latlng) => {
-    overlays.withBatch(() => { overlays.setMapMeasurementLatLng(id, latlng); });
-  },
-  onMapPoiArmedChange: armed => { addPoiBtnEl.classList.toggle('armed', armed); },
-  onStationMarkerOpen: id => { location.assign(stationHref(id)); },
-  onStationMarkerPreview: id => { void showStationPreview(id); },
-  onStartStationHere: loc => { startStationModal.open(loc); },
-  onAddControlPointHere: loc => { observationModal.openForMap(loc); },
-  onControlPointSolveLocation: id => { void solveAndPersistControlPointLocation(id); },
-});
+let mapView: MapView | null = null;
 
 const SHIFT_WHEEL_LOG_PER_PX = 0.005;
 const COLUMN_NDC_HIT_RADIUS = 0.04;
@@ -283,8 +246,7 @@ const observationModal = createObservationModal({
     handlers.onCreateCPAndObserve(overlay, u, v, description),
   onCreateMapAndObserve: async (latlng, description) => {
     await handlers.onCreateCPAndMapObserve(latlng, description);
-    // The new CP needs to appear immediately on the index map.
-    if (currentStationId === null) refreshIndexControlPoints();
+    refreshIndexControlPoints();
   },
 });
 
@@ -309,9 +271,8 @@ const input = attachInput({
   },
   onPoiArmChange: armed => { addPoiBtnEl.classList.toggle('armed', armed); },
   findColumnAtNDC: ndc => {
-    const camLoc = mapView.getLocation();
-    if (!camLoc) return null;
-    return findHitColumn(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, camLoc, overlays.getControlPoints());
+    if (!stationLocation) return null;
+    return findHitColumn(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, stationLocation, overlays.getControlPoints());
   },
   onHoveredColumnChange: id => { cpColumns.setHoveredColumn(id); },
   onPhotoBodyContextMenu: (overlay, u, v, sx, sy) => {
@@ -328,18 +289,7 @@ const input = attachInput({
   },
 });
 
-addPoiBtnEl.addEventListener('click', () => {
-  if (viewTabs.getMode() === '360') input.togglePoiArm();
-  else mapView.toggleMapPoiArm();
-});
-
-const viewTabs = attachViewTabs({ viewer, hud, mapView });
-viewTabs.onModeChange(mode => {
-  input.disarmPoi();
-  mapView.disarmAll();
-  if (mode === '360') refreshControlPointColumns();
-  settings.persist();
-});
+addPoiBtnEl.addEventListener('click', () => { input.togglePoiArm(); });
 
 attachDownload({ baker });
 
@@ -356,7 +306,6 @@ async function hydrateFromAPI(id: string): Promise<void> {
   }
   const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
   sync.registerLocation(loc);
-  mapView.setLocation(loc);
   applyCameraLocation(loc);
 
   const loader = new THREE.TextureLoader();
@@ -403,7 +352,7 @@ async function hydrateFromAPI(id: string): Promise<void> {
   }
 }
 
-async function showStationMarkers(): Promise<void> {
+async function showStationMarkers(view: MapView): Promise<void> {
   let stations: ApiStation[];
   try {
     stations = await api.listStations();
@@ -411,7 +360,7 @@ async function showStationMarkers(): Promise<void> {
     console.error('list stations failed:', err);
     return;
   }
-  mapView.setStationMarkers(stations.map(st => ({
+  view.setStationMarkers(stations.map(st => ({
     id: st.id,
     latlng: { lat: st.lat, lng: st.lng },
     label: st.name ?? `Untitled ${st.id.slice(0, 6)}`,
@@ -437,6 +386,7 @@ async function loadMapMeasurements(): Promise<void> {
 }
 
 function refreshIndexControlPoints(): void {
+  if (!mapView) return;
   const dots = [];
   for (const cp of overlays.getControlPoints()) {
     if (cp.estLat === null || cp.estLng === null) continue;
@@ -494,10 +444,10 @@ async function solveAndPersistControlPointLocation(id: string): Promise<void> {
   }
 
   syncControlPoint(updated);
-  if (!currentStationId) void showIndexControlPoints();
+  refreshIndexControlPoints();
 }
 
-async function showStationPreview(id: string): Promise<void> {
+async function showStationPreview(id: string, view: MapView): Promise<void> {
   let data: ApiHydratedStation;
   try {
     data = await api.getStation(id);
@@ -518,7 +468,7 @@ async function showStationPreview(id: string): Promise<void> {
   for (const im of data.image_measurements) {
     if (im.control_point_id !== null) observedCpIds.add(im.control_point_id);
   }
-  mapView.setStationPreview({
+  view.setStationPreview({
     origin: { lat: data.station.lat, lng: data.station.lng },
     cones,
     observedCpIds,
@@ -539,45 +489,50 @@ function focusCameraOnImageMeasurement(id: string): boolean {
 }
 
 async function bootstrap(): Promise<void> {
-  // Map measurements are global (no station ownership). Load them up-front
-  // so both the station map and the index map can render them without an
-  // additional fetch later.
+  // Map measurements are global. Load them up-front so both pages have the
+  // data available without an additional fetch later.
   const mmReady = loadMapMeasurements();
+
+  const isStation = currentStationId !== null;
+  viewer.setCanvasVisible(isStation);
+  hud.setVisible(isStation);
 
   if (currentStationId) {
     await hydrateFromAPI(currentStationId);
     await mmReady;
-    const prefs = loadPrefs(currentStationId);
-    settings.apply(prefs);
-    if (prefs.tab !== undefined) viewTabs.setMode(prefs.tab);
+    settings.apply(loadPrefs(currentStationId));
     overlays.setSelected(null);
     overlays.setSelectedImageMeasurement(null);
     overlays.setSelectedMapMeasurement(null);
     admin.setVisible(true);
-    if (focusImageMeasurementId) {
-      // Run after prefs.apply so the focus override wins, and force the 360°
-      // tab since the focus is a viewer-space bearing.
-      if (focusCameraOnImageMeasurement(focusImageMeasurementId)) {
-        viewTabs.setMode('360');
-      } else {
-        console.warn('focus image measurement not found:', focusImageMeasurementId);
-      }
+    if (focusImageMeasurementId && !focusCameraOnImageMeasurement(focusImageMeasurementId)) {
+      console.warn('focus image measurement not found:', focusImageMeasurementId);
     }
   } else {
-    void showStationMarkers();
+    // Show the map container and instantiate Leaflet (the container must be
+    // visible before L.map measures it, or tiles won't load at the right size).
+    getElement('map-wrap').classList.add('show');
+    const view = createMapView({
+      container: getElement('map'),
+      onStationMarkerOpen: id => { location.assign(stationHref(id)); },
+      onStationMarkerPreview: id => { void showStationPreview(id, view); },
+      onStartStationHere: loc => { startStationModal.open(loc); },
+      onAddControlPointHere: loc => { observationModal.openForMap(loc); },
+      onControlPointSolveLocation: id => { void solveAndPersistControlPointLocation(id); },
+    });
+    mapView = view;
+    void showStationMarkers(view);
     const cpsReady = showIndexControlPoints();
     if (focusIndexControlPointId) {
       // Wait for the CP layer to populate before panning, or the lookup misses.
-      // applyLocationGate (below) flips to the map tab so the CPs actually draw.
       void cpsReady.then(() => {
-        if (!mapView.focusIndexControlPoint(focusIndexControlPointId)) {
+        if (!view.focusIndexControlPoint(focusIndexControlPointId)) {
           console.warn('focus control point not found:', focusIndexControlPointId);
         }
       });
     }
   }
   sync.markLoaded();
-  applyLocationGate();
   hud.refresh();
   refreshSelectionUI();
   viewer.start();

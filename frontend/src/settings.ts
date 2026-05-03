@@ -26,8 +26,6 @@ export interface CreateSettingsPanelOptions {
   hud: Hud;
   getCameraLocation: () => LatLng | null;
   getCurrentStationId: () => string | null;
-  getViewTab: () => '360' | 'map';
-  refreshMapAnnotationsIfVisible: () => void;
   runSolve: () => void;
   setCameraLocked: (locked: boolean) => void;
 }
@@ -43,8 +41,8 @@ function hazeDensityToSlider(d: number): number {
 
 export function createSettingsPanel({
   viewer, terrain, sunMarker, hud,
-  getCameraLocation, getCurrentStationId, getViewTab,
-  refreshMapAnnotationsIfVisible, runSolve, setCameraLocked,
+  getCameraLocation, getCurrentStationId,
+  runSolve, setCameraLocked,
 }: CreateSettingsPanelOptions): SettingsPanel {
   const lockCameraEl = getElement<HTMLInputElement>('lock-camera');
   const terrainModeEl = getElement<HTMLSelectElement>('terrain-mode');
@@ -65,7 +63,6 @@ export function createSettingsPanel({
     const prefs: Prefs = {
       azimuth, altitude,
       fov: viewer.camera.fov,
-      tab: getViewTab(),
       lockCamera: lockCameraEl.checked,
       solvePhotoRoll: solveRollToggleEl.checked,
       terrainMode: terrain.getMode(),
@@ -142,7 +139,6 @@ export function createSettingsPanel({
     setCameraLocked(lockCameraEl.checked);
     runSolve();
     viewer.requestRender();
-    refreshMapAnnotationsIfVisible();
     hud.refresh();
     persist();
   });

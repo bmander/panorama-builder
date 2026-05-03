@@ -2,8 +2,6 @@ import * as THREE from 'three';
 import { getElement } from './types.js';
 import type { AzAltSnapshot } from './types.js';
 import type { Baker } from './bake.js';
-import type { MapView } from './map.js';
-import type { Viewer } from './viewer.js';
 
 export interface Hud {
   refresh(): void;
@@ -23,49 +21,6 @@ export function createHud(getSnapshot: () => AzAltSnapshot): Hud {
   return {
     refresh,
     setVisible(visible: boolean): void { el.style.display = visible ? 'block' : 'none'; },
-  };
-}
-
-export type ViewMode = '360' | 'map';
-
-export interface ViewTabs {
-  setMode(mode: ViewMode): void;
-  getMode(): ViewMode;
-  onModeChange(cb: (mode: ViewMode) => void): void;
-}
-
-export function attachViewTabs({ viewer, hud, mapView }: {
-  viewer: Viewer;
-  hud: Hud;
-  mapView: MapView;
-}): ViewTabs {
-  const mapWrap = getElement('map-wrap');
-  const tabs: Record<ViewMode, HTMLElement> = {
-    '360': getElement('tab-360'),
-    map: getElement('tab-map'),
-  };
-
-  let current: ViewMode = '360';
-  const modeChangeCbs: ((mode: ViewMode) => void)[] = [];
-
-  function setMode(mode: ViewMode): void {
-    current = mode;
-    mapWrap.classList.toggle('show', mode === 'map');
-    viewer.setCanvasVisible(mode === '360');
-    hud.setVisible(mode === '360');
-    for (const [key, btn] of Object.entries(tabs)) btn.classList.toggle('active', key === mode);
-    if (mode === 'map') mapView.onShow();
-    else mapView.onHide();
-    for (const cb of modeChangeCbs) cb(mode);
-  }
-
-  for (const [mode, btn] of Object.entries(tabs)) btn.addEventListener('click', () => { setMode(mode as ViewMode); });
-  setMode('360');
-
-  return {
-    setMode,
-    getMode: () => current,
-    onModeChange(cb) { modeChangeCbs.push(cb); },
   };
 }
 

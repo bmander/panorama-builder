@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import * as api from './api.js';
 import { DEFAULT_SIZE_RAD } from './overlay.js';
-import { overlayData, poiData, stationHref } from './types.js';
+import { overlayData, stationHref } from './types.js';
 import type { LatLng } from './types.js';
 import type { OverlayManager } from './overlay.js';
 import type { SyncManager } from './sync.js';
@@ -21,7 +21,6 @@ export interface StartStationInput {
 }
 
 export interface OrchestrationHandlers {
-  onSetLocation(loc: LatLng): void;
   onStartStationHere(input: StartStationInput): Promise<void>;
   onPhotoDropped(tex: THREE.Texture, blob: Blob, aspect: number, dir: THREE.Vector3, revokeUrl: () => void): Promise<void>;
   // Unmatched + POI armed click — always creates a new image measurement
@@ -40,33 +39,17 @@ export interface OrchestrationHandlers {
   // Index-map right-click → modal "Create & observe": a CP seeded at the
   // click latlng plus a global map measurement linked to it.
   onCreateCPAndMapObserve(latlng: LatLng, description: string): Promise<void>;
-  // Map "+ POI" armed click. v1 creates a CP and a map measurement linked to
-  // it; the CP carries the est_lat/est_lng (mirroring the measurement).
-  onAddMapMeasurement(latlng: LatLng): Promise<void>;
-  // Bearing-ray click on the map (or column drag) for an image measurement.
-  // If the measurement is already linked to a CP, moves the linked map
-  // measurement (and the CP estimate). If not, creates a new CP + map
-  // measurement at the click latlng and links the image measurement.
-  onAnchorImageMeasurementByMapClick(handle: THREE.Mesh, latlng: LatLng): Promise<void>;
 }
 
 export interface CreateOrchestrationOptions {
   getCurrentStationId: () => string | null;
   overlays: OverlayManager;
   sync: SyncManager;
-  applyCameraLocation: (loc: LatLng) => void;
-  runSolve: () => void;
 }
 
 export function createOrchestration({
-  getCurrentStationId, overlays, sync, applyCameraLocation, runSolve,
+  getCurrentStationId, overlays, sync,
 }: CreateOrchestrationOptions): OrchestrationHandlers {
-  function onSetLocation(loc: LatLng): void {
-    if (!getCurrentStationId()) return;
-    applyCameraLocation(loc);
-    runSolve();
-  }
-
   async function onStartStationHere(input: StartStationInput): Promise<void> {
     const { loc, name, dateEstimate, photos } = input;
     let created;
@@ -207,9 +190,6 @@ export function createOrchestration({
     }
   }
 
-  const createControlPointAt = (latlng: LatLng): Promise<api.ApiControlPoint | null> =>
-    createControlPoint({ description: '', est_lat: latlng.lat, est_lng: latlng.lng });
-
   async function onCreateCPAndObserve(
     overlay: THREE.Group, u: number, v: number, description: string,
   ): Promise<void> {
@@ -259,19 +239,6 @@ export function createOrchestration({
     if (created) overlays.setSelectedPair(created, findMapMeasurementByControlPointId(controlPointId));
   }
 
-  async function onAddMapMeasurement(latlng: LatLng): Promise<void> {
-    // Create the CP first; the map measurement attaches to it. v1 mirrors
-    // the measurement's lat/lng into the CP's est_*.
-    const cp = await createControlPointAt(latlng);
-    if (!cp) return;
-    const mm = await createLinkedMapMeasurement(latlng, cp.id);
-    if (!mm) {
-      // Roll back the CP — would otherwise be an orphan.
-      await api.deleteControlPoint(cp.id).catch((e: unknown) => { console.error('orphan CP cleanup failed:', e); });
-      overlays.removeControlPoint(cp.id);
-    }
-  }
-
   async function onCreateCPAndMapObserve(latlng: LatLng, description: string): Promise<void> {
     const cp = await createControlPoint({ description, est_lat: latlng.lat, est_lng: latlng.lng });
     if (!cp) return;
@@ -282,38 +249,6 @@ export function createOrchestration({
     }
   }
 
-  async function onAnchorImageMeasurementByMapClick(handle: THREE.Mesh, latlng: LatLng): Promise<void> {
-    const pd = poiData(handle);
-    // Already linked: find the linked map measurement (if any) and move it.
-    // The setMapMeasurementLatLng path mirrors the new lat/lng onto the CP's
-    // estimate, so the column / ray / anchor cache all follow.
-    if (pd.controlPointId) {
-      const linkedMM = findMapMeasurementByControlPointId(pd.controlPointId);
-      if (linkedMM) {
-        overlays.withBatch(() => { overlays.setMapMeasurementLatLng(linkedMM, latlng); });
-        return;
-      }
-      // Linked to a CP that has no map measurement (e.g., the user pressed
-      // anchor-by-map on an image-only CP). Create a fresh map measurement
-      // and update the CP's estimate.
-      const mm = await createLinkedMapMeasurement(latlng, pd.controlPointId);
-      if (!mm) return;
-      // Mirror to CP estimate (would otherwise stay null until next setLatLng).
-      overlays.setControlPointEst(pd.controlPointId, latlng);
-      return;
-    }
-    // Unlinked: create a fresh CP + map measurement, link the image measurement.
-    const cp = await createControlPointAt(latlng);
-    if (!cp) return;
-    const mm = await createLinkedMapMeasurement(latlng, cp.id);
-    if (!mm) {
-      await api.deleteControlPoint(cp.id).catch((e: unknown) => { console.error('orphan CP cleanup failed:', e); });
-      overlays.removeControlPoint(cp.id);
-      return;
-    }
-    overlays.setMeasurementCP(handle, cp.id);
-  }
-
   function findMapMeasurementByControlPointId(controlPointId: string): string | null {
     for (const mm of overlays.getMapMeasurements()) {
       if (mm.controlPointId === controlPointId) return mm.id;
@@ -322,14 +257,11 @@ export function createOrchestration({
   }
 
   return {
-    onSetLocation,
     onStartStationHere,
     onPhotoDropped,
     onAddImageMeasurement,
     onMatchImageMeasurement,
     onCreateCPAndObserve,
     onCreateCPAndMapObserve,
-    onAddMapMeasurement,
-    onAnchorImageMeasurementByMapClick,
   };
 }

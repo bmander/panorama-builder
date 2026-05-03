@@ -24,8 +24,8 @@ export interface CreateSolverLoopOptions {
   overlays: OverlayManager;
   getCameraLocation: () => LatLng | null;
   isSolveRollEnabled: () => boolean;
-  // Bundles mapView.setLocation + applyCameraLocation. Fired only when the
-  // joint solve actually moves the camera.
+  // Fired only when the joint solve actually moves the camera; the consumer
+  // updates the cached station location and re-applies derived state.
   onCameraMovedBySolver: (loc: LatLng) => void;
 }
 
