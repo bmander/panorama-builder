@@ -33,15 +33,6 @@ function pinchDist(a: PointerPos, b: PointerPos): number {
   return Math.max(Math.hypot(b.x - a.x, b.y - a.y), PINCH_MIN_DIST);
 }
 
-export interface InputController {
-  // Toggles the "next click adds a POI" armed state. Click → arm; click again
-  // (or click-miss) → un-arm. Fires onPoiArmChange whenever the state flips.
-  togglePoiArm(): void;
-  // Forces the armed state off; no-op if already off. Used on tab-switch to
-  // avoid stale arming carrying across views.
-  disarmPoi(): void;
-}
-
 export interface AttachInputOptions {
   viewer: Viewer;
   overlays: OverlayManager;
@@ -51,18 +42,12 @@ export interface AttachInputOptions {
   // tex's URL.createObjectURL is held until the host finishes — the host
   // revokes after addOverlay completes.
   onPhotoDropped?: (tex: THREE.Texture, blob: Blob, aspect: number, dir: THREE.Vector3, revokeUrl: () => void) => void;
-  // Fired when the user clicks on a photo body with "+ POI" armed. Host
-  // POSTs an image-poi (no map_poi_id) then calls overlays.addPOI with the
-  // server id.
-  onAddImagePOI?: (overlay: THREE.Group, u: number, v: number) => void;
   // Fired when the user matches a hovered column to a photo body. Host POSTs
   // an image-poi with map_poi_id set, then calls overlays.addPOI with both.
   onMatchImagePOI?: (overlay: THREE.Group, u: number, v: number, controlPointId: string) => void;
   // Fired on shift+wheel with the same normalized px-delta the FOV path uses.
   // Routed out so the host module decides what shift-wheel does.
   onShiftWheel?: (deltaPx: number) => void;
-  // Fired whenever the "+ POI" arming state flips. Caller updates UI.
-  onPoiArmChange?: (armed: boolean) => void;
   // Hit-test for map-POI columns at the cursor's NDC. Returns the column's
   // id and lat/lng if the cursor is within the host's screen-space radius,
   // else null. The host owns the projection math (it has the camera and
@@ -81,7 +66,7 @@ export interface AttachInputOptions {
   onImagePOIContextMenu?: (poi: THREE.Mesh, screenX: number, screenY: number) => void;
 }
 
-export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddImagePOI, onMatchImagePOI, onShiftWheel, onPoiArmChange, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu }: AttachInputOptions): InputController {
+export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatchImagePOI, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu }: AttachInputOptions): void {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -106,17 +91,10 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
   let mode: ModeState = null;
   let lastX = 0, lastY = 0;
   const pointers = new Map<number, PointerPos>();
-  let poiArmed = false;
   // The map-POI column under the cursor (if any). Set by pointermove via the
   // host's findColumnAtNDC. While non-null the next click will create a paired
   // image-POI on the underlying photo, anchored to this column's lat/lng.
   let hoveredColumn: { controlPointId: string; latlng: LatLng } | null = null;
-
-  // Crosshair cursor is on for both +POI arming and column-hover (which is
-  // implicit arming for matching).
-  function applyArmedCursor(): void {
-    canvas.classList.toggle('tool-poi', poiArmed || hoveredColumn !== null);
-  }
 
   function setHoveredColumn(next: { controlPointId: string; latlng: LatLng } | null): void {
     const prevId = hoveredColumn?.controlPointId ?? null;
@@ -124,21 +102,8 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
     hoveredColumn = next;
     if (prevId !== nextId) {
       onHoveredColumnChange?.(nextId);
-      applyArmedCursor();
+      canvas.classList.toggle('tool-poi', hoveredColumn !== null);
     }
-  }
-
-  function togglePoiArm(): void {
-    poiArmed = !poiArmed;
-    applyArmedCursor();
-    onPoiArmChange?.(poiArmed);
-  }
-
-  function disarmPoi(): void {
-    if (!poiArmed) return;
-    poiArmed = false;
-    applyArmedCursor();
-    onPoiArmChange?.(false);
   }
 
   let batchOpen = false;
@@ -175,19 +140,6 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
       overlays.setSelectedImageMeasurement(poiMesh);
       mode = { type: 'poi-drag', poi: poiMesh };
       viewer.requestRender();
-      if (poiArmed) togglePoiArm();
-    }
-    // 2. "+ POI" armed: click on body adds a POI; miss un-arms and pans.
-    // The host POSTs the image-POI then calls overlays.addPOI with the
-    // server id; we don't enter poi-drag mode because the mesh doesn't
-    // exist yet at click-time.
-    else if (poiArmed) {
-      if (bodyHit?.uv) {
-        const o = bodyHit.object.parent as THREE.Group;
-        onAddImagePOI?.(o, bodyHit.uv.x, bodyHit.uv.y);
-      }
-      mode = { type: 'pan' };
-      togglePoiArm();
     }
     // Hovered column + photo body hit → match. Host POSTs an image measurement
     // with control_point_id set then calls overlays.addImageMeasurement.
@@ -427,5 +379,4 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onAddI
     }
   });
 
-  return { togglePoiArm, disarmPoi };
 }

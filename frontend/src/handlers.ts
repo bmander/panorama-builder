@@ -23,9 +23,6 @@ export interface StartStationInput {
 export interface OrchestrationHandlers {
   onStartStationHere(input: StartStationInput): Promise<void>;
   onPhotoDropped(tex: THREE.Texture, blob: Blob, aspect: number, dir: THREE.Vector3, revokeUrl: () => void): Promise<void>;
-  // Unmatched + POI armed click — always creates a new image measurement
-  // (no control-point link).
-  onAddImageMeasurement(overlay: THREE.Group, u: number, v: number): Promise<void>;
   // Matched click (column hover → photo click). Moves the existing pin if
   // this overlay already has one linked to controlPointId; otherwise creates.
   onMatchImageMeasurement(
@@ -159,10 +156,6 @@ export function createOrchestration({
     return overlays.getImageMeasurementById(created.id);
   }
 
-  async function onAddImageMeasurement(overlay: THREE.Group, u: number, v: number): Promise<void> {
-    await createImageMeasurement(overlay, u, v, null);
-  }
-
   // Register a fetched CP both with sync (snake-case) and the overlay
   // manager (camelCase) — same payload, different naming conventions.
   function pushControlPoint(cp: api.ApiControlPoint): void {
@@ -259,7 +252,6 @@ export function createOrchestration({
   return {
     onStartStationHere,
     onPhotoDropped,
-    onAddImageMeasurement,
     onMatchImageMeasurement,
     onCreateCPAndObserve,
     onCreateCPAndMapObserve,

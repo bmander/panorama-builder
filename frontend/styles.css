@@ -22,7 +22,6 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .settings-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .settings-check input { margin: 0; }
 .tool.active { background: rgba(255,255,255,0.25); }
-#add-poi.armed { background: rgba(255,220,80,0.45); }
 .settings-inline { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .settings-inline select, .settings-inline input[type="datetime-local"] {
   background: rgba(255,255,255,0.1); color: #fff; border: 1px solid #888;

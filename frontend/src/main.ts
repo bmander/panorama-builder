@@ -212,8 +212,6 @@ const startStationModal = createStartStationModal({
 
 // --- Map (index page only) + input wiring ------------------------------
 
-const addPoiBtnEl = getElement('add-poi');
-
 let mapView: MapView | null = null;
 
 const SHIFT_WHEEL_LOG_PER_PX = 0.005;
@@ -250,14 +248,13 @@ const observationModal = createObservationModal({
   },
 });
 
-const input = attachInput({
+attachInput({
   viewer,
   overlays,
   onChange: () => { viewer.requestRender(); hud.refresh(); refreshSelectionUI(); settings.persist(); },
   onPhotoDropped: (tex, blob, aspect, dir, revokeUrl) => {
     void handlers.onPhotoDropped(tex, blob, aspect, dir, revokeUrl);
   },
-  onAddImagePOI: (overlay, u, v) => { void handlers.onAddImageMeasurement(overlay, u, v); },
   onMatchImagePOI: (overlay, u, v, controlPointId) => {
     void handlers.onMatchImageMeasurement(overlay, u, v, controlPointId);
   },
@@ -269,7 +266,6 @@ const input = attachInput({
     hud.refresh();
     settings.persist();
   },
-  onPoiArmChange: armed => { addPoiBtnEl.classList.toggle('armed', armed); },
   findColumnAtNDC: ndc => {
     if (!stationLocation) return null;
     return findHitColumn(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, stationLocation, overlays.getControlPoints());
@@ -288,8 +284,6 @@ const input = attachInput({
     ]);
   },
 });
-
-addPoiBtnEl.addEventListener('click', () => { input.togglePoiArm(); });
 
 attachDownload({ baker });
 

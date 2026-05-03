@@ -214,7 +214,7 @@ export function createOverlayManager(
 
   // Cross-station control points reachable from the loaded station. The
   // hydrate path populates this on station load; new CPs created at runtime
-  // (via the matcher / +POI flows) get pushed here too.
+  // (via the matcher) get pushed here too.
   const controlPoints: ControlPointEntry[] = [];
 
   const azScratch = new THREE.Vector3();
