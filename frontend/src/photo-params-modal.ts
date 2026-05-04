@@ -4,12 +4,12 @@
 
 import type * as THREE from 'three';
 import { getElement, overlayData } from './types.js';
-import type { PhotoLocks } from './types.js';
-import * as api from './api.js';
 import { SIZE_MAX, SIZE_MIN } from './overlay.js';
 import type { OverlayManager } from './overlay.js';
 import type { SyncManager } from './sync.js';
 import { clamp, degToRad, radToDeg } from './mathx.js';
+import { applyPhotoSnapshot, snapshotPhoto } from './undo.js';
+import type { PhotoSnapshot, UndoManager } from './undo.js';
 
 export interface PhotoParamsModal {
   open(overlay: THREE.Group): void;
@@ -18,13 +18,14 @@ export interface PhotoParamsModal {
 export interface CreatePhotoParamsModalOptions {
   overlays: OverlayManager;
   sync: SyncManager;
+  undoManager?: UndoManager;
 }
 
 const deg = radToDeg;
 const rad = degToRad;
 
 export function createPhotoParamsModal(
-  { overlays, sync }: CreatePhotoParamsModalOptions,
+  { overlays, sync, undoManager }: CreatePhotoParamsModalOptions,
 ): PhotoParamsModal {
   const modalEl = getElement('photo-params-modal');
   const closeBtn = getElement<HTMLButtonElement>('photo-params-close');
@@ -41,16 +42,19 @@ export function createPhotoParamsModal(
   const fovLockEl = getElement<HTMLInputElement>('photo-params-fov-lock');
 
   let pending: THREE.Group | null = null;
+  let beforeSnapshot: PhotoSnapshot | null = null;
 
   function close(): void {
     modalEl.hidden = true;
     pending = null;
+    beforeSnapshot = null;
   }
 
   function open(overlay: THREE.Group): void {
     pending = overlay;
     const pose = overlays.extractPose(overlay, null);
     const locks = overlays.getPhotoLocks(overlay);
+    beforeSnapshot = undoManager ? snapshotPhoto(overlays, overlayData(overlay).id) : null;
     azEl.value = deg(pose.photoAz).toFixed(2);
     tiltEl.value = deg(pose.photoTilt).toFixed(2);
     rollEl.value = deg(pose.photoRoll).toFixed(2);
@@ -90,58 +94,31 @@ export function createPhotoParamsModal(
     if (rollDeg === null) { rollEl.focus(); return; }
     if (fovDeg === null) { fovEl.focus(); return; }
 
-    const sizeRad = clamp(rad(fovDeg), SIZE_MIN, SIZE_MAX);
     const data = overlayData(overlay);
     const photoId = data.id;
-    const aspect = data.aspect;
-    const opacity = overlays.getOpacity(overlay);
-
-    const locks: PhotoLocks = {
-      lockPhotoAz: azLockEl.checked,
-      lockPhotoTilt: tiltLockEl.checked,
-      lockPhotoRoll: rollLockEl.checked,
-      lockSizeRad: fovLockEl.checked,
-    };
-
-    const payload: api.PhotoPosePatch = {
-      aspect,
-      photo_az: rad(azDeg),
-      photo_tilt: rad(tiltDeg),
-      photo_roll: rad(rollDeg),
-      size_rad: sizeRad,
-      opacity,
-      lock_photo_az: locks.lockPhotoAz,
-      lock_photo_tilt: locks.lockPhotoTilt,
-      lock_photo_roll: locks.lockPhotoRoll,
-      lock_size_rad: locks.lockSizeRad,
+    const after: PhotoSnapshot = {
+      photoAz: rad(azDeg),
+      photoTilt: rad(tiltDeg),
+      photoRoll: rad(rollDeg),
+      sizeRad: clamp(rad(fovDeg), SIZE_MIN, SIZE_MAX),
+      aspect: data.aspect,
+      opacity: overlays.getOpacity(overlay),
+      locks: {
+        lockPhotoAz: azLockEl.checked,
+        lockPhotoTilt: tiltLockEl.checked,
+        lockPhotoRoll: rollLockEl.checked,
+        lockSizeRad: fovLockEl.checked,
+      },
     };
 
     saveBtn.disabled = true;
-    api.updatePhoto(photoId, payload).then(
+    applyPhotoSnapshot(overlays, sync, photoId, after).then(
       () => {
-        // Register the new pose with the diff-cache BEFORE mutating the scene
-        // — applyPose's notify() schedules a flush whose diff would otherwise
-        // see a delta and re-PUT.
-        sync.registerPhoto(photoId, {
-          aspect: payload.aspect,
-          photo_az: payload.photo_az,
-          photo_tilt: payload.photo_tilt,
-          photo_roll: payload.photo_roll,
-          size_rad: payload.size_rad,
-          opacity,
-        });
-        overlays.withBatch(() => {
-          overlays.applyPose(overlay, {
-            photoAz: payload.photo_az,
-            photoTilt: payload.photo_tilt,
-            photoRoll: payload.photo_roll,
-            sizeRad: payload.size_rad,
-            aspect: payload.aspect,
-            camLat: 0,
-            camLng: 0,
+        if (undoManager && beforeSnapshot) {
+          undoManager.record({
+            kind: 'photo-pose', id: photoId, before: beforeSnapshot, after,
           });
-          overlays.setPhotoLocks(overlay, locks);
-        });
+        }
         close();
       },
       (err: unknown) => {

@@ -8,6 +8,8 @@ import type { OverlayManager } from './overlay.js';
 import { getRole, overlayData, poiData } from './types.js';
 import type { LatLng } from './types.js';
 import { degToRad, dist2, norm2 } from './mathx.js';
+import { snapshotPhoto, snapshotPoi } from './undo.js';
+import type { PhotoSnapshot, UndoAction, UndoManager } from './undo.js';
 
 // Discriminated state machine for the active pointer drag. `null` = no drag in
 // progress. Each variant carries exactly the state its handler needs, so
@@ -62,9 +64,13 @@ export interface AttachInputOptions {
     overlay: THREE.Group, u: number, v: number, screenX: number, screenY: number,
   ) => void;
   onImagePOIContextMenu?: (poi: THREE.Mesh, screenX: number, screenY: number) => void;
+  // Records before/after snapshots for gesture-end mutations and applies
+  // them on Cmd/Ctrl+Z. Optional for the index page where attachInput
+  // still runs but no overlays are mutated.
+  undoManager?: UndoManager;
 }
 
-export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatchImagePOI, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu }: AttachInputOptions): void {
+export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatchImagePOI, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu, undoManager }: AttachInputOptions): void {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -108,6 +114,26 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
   function openBatch(): void { if (!batchOpen) { overlays.beginBatch(); batchOpen = true; } }
   function closeBatch(): void { if (batchOpen) { batchOpen = false; overlays.endBatch(); } }
 
+  // Snapshot captured at gesture-start (pointerdown). On gesture-end (endDrag)
+  // we read the current state to form the `after` snapshot and push the pair
+  // onto the undo stack.
+  type GestureBefore =
+    | { kind: 'photo-pose'; id: string; before: PhotoSnapshot }
+    | { kind: 'poi-move'; id: string; before: { u: number; v: number } };
+  let gestureBefore: GestureBefore | null = null;
+  function capturePhoto(o: THREE.Group): void {
+    if (!undoManager) return;
+    const id = overlayData(o).id;
+    const before = snapshotPhoto(overlays, id);
+    if (before) gestureBefore = { kind: 'photo-pose', id, before };
+  }
+  function capturePoi(poi: THREE.Mesh): void {
+    if (!undoManager) return;
+    const id = poiData(poi).id;
+    const before = snapshotPoi(overlays, id);
+    if (before) gestureBefore = { kind: 'poi-move', id, before };
+  }
+
   canvas.addEventListener('pointerdown', (e: PointerEvent) => {
     // Left-click only — right-click goes to the contextmenu listener.
     if (e.button !== 0) return;
@@ -138,6 +164,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
     if (poiHit) {
       const poiMesh = poiHit.object as THREE.Mesh;
       overlays.setSelectedImageMeasurement(poiMesh);
+      capturePoi(poiMesh);
       mode = { type: 'poi-drag', poi: poiMesh };
       viewer.requestRender();
     }
@@ -155,6 +182,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
     // 3a. Rotate handle on the selected photo → roll about photo center.
     else if (rotateHandleHit && selected && rotateHandleHit.object.parent === selected) {
       const center = projectToScreen(selected.position);
+      capturePhoto(selected);
       mode = {
         type: 'rotate',
         cx: center.x,
@@ -176,6 +204,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
           hit.normalize(),
           tmpVec3.copy(selected.position).normalize(),
         );
+        capturePhoto(selected);
         mode = { type: 'move', offset };
       } else {
         mode = { type: 'pan' };
@@ -187,6 +216,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
     else if (fovHandleHit && selected && fovHandleHit.object.parent === selected) {
       const center = projectToScreen(selected.position);
       const dx = e.clientX - center.x, dy = e.clientY - center.y;
+      capturePhoto(selected);
       mode = { type: 'resize', dist: norm2(dx, dy) || 1, sizeRad: overlayData(selected).sizeRad };
     }
     // 4. Body hit selects the photo if not already selected. Move and rotate
@@ -229,6 +259,19 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
   function endDrag(): void {
     mode = null;
     closeBatch();
+    if (undoManager && gestureBefore) {
+      const g = gestureBefore;
+      gestureBefore = null;
+      let action: UndoAction | null = null;
+      if (g.kind === 'photo-pose') {
+        const after = snapshotPhoto(overlays, g.id);
+        if (after) action = { kind: 'photo-pose', id: g.id, before: g.before, after };
+      } else {
+        const after = snapshotPoi(overlays, g.id);
+        if (after) action = { kind: 'poi-move', id: g.id, before: g.before, after };
+      }
+      if (action) undoManager.record(action);
+    }
   }
   function onPointerEnd(e: PointerEvent): void {
     pointers.delete(e.pointerId);
@@ -356,6 +399,25 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
   }, { passive: false });
 
   addEventListener('keydown', (e: KeyboardEvent) => {
+    // Don't intercept while the user is typing in form fields — preserves
+    // native browser text-edit undo and the inline-edit flows on the CP page.
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+
+    if (undoManager && (e.metaKey || e.ctrlKey)) {
+      const k = e.key.toLowerCase();
+      if (k === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) undoManager.redo(); else undoManager.undo();
+        return;
+      }
+      if (k === 'y') {
+        e.preventDefault();
+        undoManager.redo();
+        return;
+      }
+    }
+
     if (e.key === 'Backspace' || e.key === 'Delete') {
       // POI selection takes priority: a selected POI (photo-attached OR
       // standalone map-POI) is the more specific target the user is acting

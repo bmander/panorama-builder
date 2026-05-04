@@ -24,6 +24,7 @@ import { createStartStationModal } from './start-station-modal.js';
 import { createContextMenu } from './context-menu.js';
 import { createObservationModal } from './observation-modal.js';
 import { createPhotoParamsModal } from './photo-params-modal.js';
+import { createUndoManager } from './undo.js';
 import { createSolveModal } from './solve-modal.js';
 
 // --- URL ↔ station id ---------------------------------------------------
@@ -243,7 +244,11 @@ opacitySliderEl.addEventListener('input', () => {
 });
 
 const contextMenu = createContextMenu();
-const photoParamsModal = createPhotoParamsModal({ overlays, sync });
+const undoManager = createUndoManager({
+  overlays, sync,
+  reportError: (label, err) => { sync.reportError(label, err); },
+});
+const photoParamsModal = createPhotoParamsModal({ overlays, sync, undoManager });
 const observationModal = createObservationModal({
   getControlPoints: () => overlays.getControlPoints(),
   onPickExisting: (overlay, u, v, controlPointId) => {
@@ -295,6 +300,7 @@ attachInput({
       { label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } },
     ]);
   },
+  undoManager,
 });
 
 attachDownload({ baker });
