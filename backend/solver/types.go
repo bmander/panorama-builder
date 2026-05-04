@@ -28,9 +28,8 @@ type Station struct {
 	ID  string
 	Lat float64
 	Lng float64
-	Alt float64 // meters above sea level. Used as a fixed input in
-	// residual bearing computations; not currently a free slot in the GN loop
-	// (lock_alt is honored as no-op). Locked here for future-readiness.
+	Alt float64 // meters above sea level. Free slot in joint mode unless
+	// Locks.Alt is set; lock_alt prevents the solver from refining it.
 	Locks     StationLocks
 	UpdatedAt time.Time // optimistic-concurrency token; opaque to the solver
 }

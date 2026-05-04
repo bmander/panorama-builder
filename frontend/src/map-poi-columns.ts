@@ -13,13 +13,29 @@
 // columns were replaced with point markers + lines.)
 
 import * as THREE from 'three';
+import { makeCanvasTexture } from './types.js';
 import type { LatLng, ControlPointView } from './types.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
 
 const MARKER_COLOR = 0x5080ff;
 const MARKER_COLOR_SELECTED = 0xffff66;
-const MARKER_RADIUS_M = 1.5;
+// Marker is a screen-space disc, not a world-space sphere — keeps distant CPs
+// visible and clickable. gl_PointSize is in pixels with sizeAttenuation off.
+const MARKER_PIXEL_SIZE = 12;
 const MARKER_RENDER_ORDER = 999;
+
+function makeMarkerTexture(): THREE.Texture {
+  return makeCanvasTexture(32, ctx => {
+    ctx.beginPath();
+    ctx.arc(16, 16, 13, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.stroke();
+  });
+}
 
 export interface ControlPointMarker {
   readonly id: string;
@@ -55,8 +71,6 @@ export type ControlPointColumns = ControlPointMarkers;
 export function createControlPointColumns(opts: CreateControlPointMarkersOptions): ControlPointMarkers {
   const { scene, requestRender } = opts;
 
-  const sphereGeom = new THREE.SphereGeometry(MARKER_RADIUS_M, 12, 8);
-
   // transparent: true puts the markers in the same render pass as the
   // (transparent) photo overlays; renderOrder=999 then sorts them on top.
   const baseMaterialProps = {
@@ -65,10 +79,19 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
     transparent: true,
     fog: false,
   } as const;
-  const sphereMat = new THREE.MeshBasicMaterial({ color: MARKER_COLOR, ...baseMaterialProps });
-  const sphereMatSel = new THREE.MeshBasicMaterial({ color: MARKER_COLOR_SELECTED, ...baseMaterialProps });
+  const markerTex = makeMarkerTexture();
+  const markerMat = new THREE.PointsMaterial({
+    size: MARKER_PIXEL_SIZE,
+    sizeAttenuation: false,
+    map: markerTex,
+    vertexColors: true,
+    alphaTest: 0.05,
+    ...baseMaterialProps,
+  });
   const lineMat = new THREE.LineBasicMaterial({ color: MARKER_COLOR, ...baseMaterialProps });
   const lineMatSel = new THREE.LineBasicMaterial({ color: MARKER_COLOR_SELECTED, ...baseMaterialProps });
+  const colorDefault = new THREE.Color(MARKER_COLOR);
+  const colorSelected = new THREE.Color(MARKER_COLOR_SELECTED);
 
   const group = new THREE.Group();
   scene.add(group);
@@ -84,8 +107,9 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
 
   function clearChildren(): void {
     for (const child of group.children) {
-      // Only line geometries are per-instance; sphere geometry is shared.
-      if (child instanceof THREE.Line) {
+      // All geometries are per-rebuild now (Points + Lines); shared material
+      // is disposed at module teardown only.
+      if (child instanceof THREE.Line || child instanceof THREE.Points) {
         (child.geometry as THREE.BufferGeometry).dispose();
       }
     }
@@ -100,17 +124,30 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
       requestRender();
       return;
     }
+
+    const N = lastMarkers.length;
+    const positions = new Float32Array(N * 3);
+    const colors = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      const m = lastMarkers[i]!;
+      const { x, z } = latLngToCameraRelativeMeters(m.anchor, lastCamLoc);
+      const y = m.altitude - lastCameraHeight;
+      positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
+      const c = isHighlighted(m) ? colorSelected : colorDefault;
+      colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+    }
+    const pointsGeom = new THREE.BufferGeometry();
+    pointsGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    pointsGeom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const points = new THREE.Points(pointsGeom, markerMat);
+    points.renderOrder = MARKER_RENDER_ORDER;
+    points.frustumCulled = false;
+    group.add(points);
+
     for (const m of lastMarkers) {
       const { x, z } = latLngToCameraRelativeMeters(m.anchor, lastCamLoc);
       const y = m.altitude - lastCameraHeight;
-      const high = isHighlighted(m);
-
-      const sphere = new THREE.Mesh(sphereGeom, high ? sphereMatSel : sphereMat);
-      sphere.position.set(x, y, z);
-      sphere.renderOrder = MARKER_RENDER_ORDER;
-      sphere.frustumCulled = false;
-      group.add(sphere);
-
+      const lineMaterial = isHighlighted(m) ? lineMatSel : lineMat;
       for (const poi of m.observations) {
         poi.getWorldPosition(scratch);
         const geom = new THREE.BufferGeometry();
@@ -118,7 +155,7 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
           x, y, z,
           scratch.x, scratch.y, scratch.z,
         ], 3));
-        const line = new THREE.Line(geom, high ? lineMatSel : lineMat);
+        const line = new THREE.Line(geom, lineMaterial);
         line.renderOrder = MARKER_RENDER_ORDER;
         line.frustumCulled = false;
         group.add(line);

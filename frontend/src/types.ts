@@ -1,6 +1,6 @@
 // Cross-cutting types and small shared helpers.
 
-import type * as THREE from 'three';
+import * as THREE from 'three';
 
 export interface LatLng {
   readonly lat: number;
@@ -95,6 +95,10 @@ export interface OverlayUserData {
   body: THREE.Mesh;
   outline?: THREE.LineSegments;
   handles?: THREE.Mesh[];
+  // HUD-style action handles that appear at the photo's upper-right when
+  // selected. Click-drag on each enters the corresponding input mode.
+  dragHandle?: THREE.Mesh;
+  rotateHandle?: THREE.Mesh;
   pois?: THREE.Mesh[];
 }
 
@@ -120,8 +124,10 @@ export interface POIUserData {
 }
 
 // Roles tagged on every interactive scene-graph object so input.ts can
-// dispatch by what the raycaster hit.
-export type Role = 'body' | 'handle' | 'outline' | 'poi';
+// dispatch by what the raycaster hit. handle-drag / handle-rotate are
+// per-photo HUD widgets that appear only on the selected photo.
+export type Role = 'body' | 'handle' | 'outline' | 'poi'
+                 | 'handle-drag' | 'handle-rotate';
 
 export interface RoleUserData {
   role: Role;
@@ -153,6 +159,22 @@ export const lineMat = (l: THREE.LineSegments): THREE.LineBasicMaterial =>
 // Read the role tag off any Object3D (returns undefined for un-tagged objects).
 export const getRole = (o: THREE.Object3D): Role | undefined =>
   (o.userData as Partial<RoleUserData>).role;
+
+// Build a square CanvasTexture from a 2D drawing callback. Sets sRGB color
+// space so the texture renders identically to other sRGB inputs in the scene
+// (photo overlays, terrain). Used for small UI icons (CP markers, photo
+// drag/rotate handles) where the canvas is the most ergonomic source.
+export function makeCanvasTexture(
+  size: number,
+  draw: (ctx: CanvasRenderingContext2D) => void,
+): THREE.Texture {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  draw(c.getContext('2d')!);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
 
 // --- DOM ---
 

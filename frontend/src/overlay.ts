@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { vecToAzAlt } from './geo.js';
 import {
   lineMat,
+  makeCanvasTexture,
   meshMat,
   overlayData,
   poiData,
@@ -25,11 +26,16 @@ export const ROLE_BODY = 'body' satisfies Role;
 export const ROLE_HANDLE = 'handle' satisfies Role;
 export const ROLE_OUTLINE = 'outline' satisfies Role;
 export const ROLE_POI = 'poi' satisfies Role;
+export const ROLE_HANDLE_DRAG = 'handle-drag' satisfies Role;
+export const ROLE_HANDLE_ROTATE = 'handle-rotate' satisfies Role;
 
 const POI_COLOR = 0xff5050;
 const POI_COLOR_SELECTED = 0xffff66;
 // POI radius = this fraction of the overlay's world width — scales with the photo.
 const POI_WIDTH_FRACTION = 0.018;
+// Action-handle radius: a chunky chunk of the photo width so the icons stay
+// touchable without overwhelming small overlays.
+const ACTION_HANDLE_FRACTION = 0.05;
 
 function makePoiMaterial(): THREE.ShaderMaterial {
   const material = new THREE.ShaderMaterial({
@@ -70,6 +76,56 @@ function setPoiColor(poi: THREE.Mesh, hex: number): void {
 }
 
 const POI_GEOM = new THREE.PlaneGeometry(2, 2);
+const ACTION_HANDLE_GEOM = new THREE.PlaneGeometry(1, 1);
+
+// Lazy-built canvas textures for the drag and rotate icons. White ink with a
+// faint dark outline so they read against any photo background.
+function strokeOutlinedPath(ctx: CanvasRenderingContext2D, draw: () => void): void {
+  draw();
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+  ctx.stroke();
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = '#fff';
+  ctx.stroke();
+}
+
+let dragIconTex: THREE.Texture | null = null;
+function getDragIconTexture(): THREE.Texture {
+  if (dragIconTex) return dragIconTex;
+  // Plus-shape with arrowheads — the standard "move" affordance.
+  dragIconTex = makeCanvasTexture(32, ctx => {
+    strokeOutlinedPath(ctx, () => {
+      ctx.beginPath();
+      ctx.moveTo(16, 4); ctx.lineTo(16, 28);
+      ctx.moveTo(4, 16); ctx.lineTo(28, 16);
+      ctx.moveTo(12, 8); ctx.lineTo(16, 4); ctx.lineTo(20, 8);
+      ctx.moveTo(12, 24); ctx.lineTo(16, 28); ctx.lineTo(20, 24);
+      ctx.moveTo(8, 12); ctx.lineTo(4, 16); ctx.lineTo(8, 20);
+      ctx.moveTo(24, 12); ctx.lineTo(28, 16); ctx.lineTo(24, 20);
+    });
+  });
+  return dragIconTex;
+}
+
+let rotateIconTex: THREE.Texture | null = null;
+function getRotateIconTexture(): THREE.Texture {
+  if (rotateIconTex) return rotateIconTex;
+  // Three-quarter circle arrow — the standard "rotate" affordance.
+  rotateIconTex = makeCanvasTexture(32, ctx => {
+    strokeOutlinedPath(ctx, () => {
+      ctx.beginPath();
+      ctx.arc(16, 16, 10, -Math.PI * 0.25, Math.PI * 1.25);
+      const tipX = 16 + 10 * Math.cos(-Math.PI * 0.25);
+      const tipY = 16 + 10 * Math.sin(-Math.PI * 0.25);
+      ctx.moveTo(tipX, tipY); ctx.lineTo(20, 4);
+      ctx.moveTo(tipX, tipY); ctx.lineTo(28, 8);
+    });
+  });
+  return rotateIconTex;
+}
 
 // Lazy so the canvas isn't created on the index page (no overlays there).
 let placeholderTex: THREE.Texture | null = null;
@@ -287,12 +343,31 @@ export function createOverlayManager(
         poi.scale.setScalar(r);
       }
     }
+    if (data.dragHandle && data.rotateHandle) {
+      const r = w * ACTION_HANDLE_FRACTION;
+      const yAbove = h / 2 + 1.5 * r;
+      const xRight = w / 2 + r;
+      data.dragHandle.position.set(xRight - 2 * r, yAbove, 0);
+      data.dragHandle.scale.setScalar(2 * r);
+      data.rotateHandle.position.set(xRight, yAbove, 0);
+      data.rotateHandle.scale.setScalar(2 * r);
+    }
   }
 
   function placeAt(o: THREE.Object3D, dir: THREE.Vector3, roll = 0): void {
     o.position.copy(dir).normalize().multiplyScalar(OVERLAY_R);
     o.lookAt(0, 0, 0);
     if (roll !== 0) o.rotateZ(roll);
+  }
+
+  function makeActionHandle(role: Role, tex: THREE.Texture): THREE.Mesh {
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, depthTest: false, side: THREE.DoubleSide,
+    });
+    const m = new THREE.Mesh(ACTION_HANDLE_GEOM, mat);
+    (m.userData as { role: Role }).role = role;
+    m.renderOrder = 2;
+    return m;
   }
 
   function addSelectionVisuals(o: THREE.Group): void {
@@ -306,7 +381,12 @@ export function createOverlayManager(
       o.add(m);
       handles.push(m);
     }
-    overlayData(o).handles = handles;
+    const data = overlayData(o);
+    data.handles = handles;
+    data.dragHandle = makeActionHandle(ROLE_HANDLE_DRAG, getDragIconTexture());
+    data.rotateHandle = makeActionHandle(ROLE_HANDLE_ROTATE, getRotateIconTexture());
+    o.add(data.dragHandle);
+    o.add(data.rotateHandle);
     applySize(o);
     applyOverlayDecoration(o);
   }
@@ -323,6 +403,16 @@ export function createOverlayManager(
         meshMat(first).dispose();
       }
       delete data.handles;
+    }
+    if (data.dragHandle) {
+      o.remove(data.dragHandle);
+      meshMat(data.dragHandle).dispose();
+      delete data.dragHandle;
+    }
+    if (data.rotateHandle) {
+      o.remove(data.rotateHandle);
+      meshMat(data.rotateHandle).dispose();
+      delete data.rotateHandle;
     }
     applyOverlayDecoration(o);
   }

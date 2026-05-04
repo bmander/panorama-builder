@@ -1,18 +1,12 @@
 import * as THREE from 'three';
 import type { Viewer } from './viewer.js';
-import { ROLE_BODY, ROLE_HANDLE, ROLE_POI, dirFromAzAlt } from './overlay.js';
+import {
+  ROLE_BODY, ROLE_HANDLE, ROLE_HANDLE_DRAG, ROLE_HANDLE_ROTATE, ROLE_POI,
+  dirFromAzAlt,
+} from './overlay.js';
 import type { OverlayManager } from './overlay.js';
 import { getRole, overlayData, poiData } from './types.js';
 import type { LatLng } from './types.js';
-
-// Hits inside this UV-distance from any edge of an overlay's body count as
-// "edge" and select the photo. The interior is treated as click-through (pans
-// the camera) for an unselected photo.
-const EDGE_THRESHOLD = 0.08;
-
-function isOnEdge(uv: THREE.Vector2): boolean {
-  return Math.min(uv.x, 1 - uv.x, uv.y, 1 - uv.y) < EDGE_THRESHOLD;
-}
 
 // Discriminated state machine for the active pointer drag. `null` = no drag in
 // progress. Each variant carries exactly the state its handler needs, so
@@ -21,7 +15,10 @@ interface PointerPos { x: number; y: number; }
 
 type ModeState =
   | { type: 'pan' }
-  | { type: 'move' }
+  // offset rotates the cursor's sphere-hit direction onto the photo center.
+  // Captured on pointerdown so a grab on a corner-of-image handle doesn't
+  // snap the photo's center to the cursor's initial position.
+  | { type: 'move'; offset: THREE.Quaternion }
   | { type: 'resize'; dist: number; sizeRad: number }
   | { type: 'rotate'; cx: number; cy: number; startAngle: number; startRoll: number }
   | { type: 'poi-drag'; poi: THREE.Mesh }
@@ -131,6 +128,8 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
 
     const poiHit = hits.find(h => getRole(h.object) === ROLE_POI);
     const handleHit = hits.find(h => getRole(h.object) === ROLE_HANDLE);
+    const dragHandleHit = hits.find(h => getRole(h.object) === ROLE_HANDLE_DRAG);
+    const rotateHandleHit = hits.find(h => getRole(h.object) === ROLE_HANDLE_ROTATE);
     const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
     const selected = overlays.getSelected();
 
@@ -152,36 +151,48 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
       setHoveredColumn(null);
       mode = { type: 'pan' };
     }
-    // 3. Corner handle on the selected photo → resize.
+    // 3a. Rotate handle on the selected photo → roll about photo center.
+    else if (rotateHandleHit && selected && rotateHandleHit.object.parent === selected) {
+      const center = projectToScreen(selected.position);
+      mode = {
+        type: 'rotate',
+        cx: center.x,
+        cy: center.y,
+        startAngle: Math.atan2(e.clientY - center.y, e.clientX - center.x),
+        startRoll: overlayData(selected).photoRoll,
+      };
+    }
+    // 3b. Drag handle on the selected photo → move. Capture the rotation
+    //     between the cursor's sphere-hit direction and the photo center so
+    //     the photo doesn't snap to the cursor on grab; subsequent moves
+    //     translate by the same angular delta.
+    else if (dragHandleHit && selected && dragHandleHit.object.parent === selected) {
+      ndcFromEvent(e);
+      raycaster.setFromCamera(ndc, camera);
+      const hit = new THREE.Vector3();
+      if (raycaster.ray.intersectSphere(overlays.overlaySphere, hit)) {
+        const offset = new THREE.Quaternion().setFromUnitVectors(
+          hit.normalize(),
+          tmpVec3.copy(selected.position).normalize(),
+        );
+        mode = { type: 'move', offset };
+      } else {
+        mode = { type: 'pan' };
+      }
+    }
+    // 3c. Corner handle on the selected photo → resize.
     else if (handleHit && selected && handleHit.object.parent === selected) {
       const center = projectToScreen(selected.position);
       const dx = e.clientX - center.x, dy = e.clientY - center.y;
       mode = { type: 'resize', dist: Math.hypot(dx, dy) || 1, sizeRad: overlayData(selected).sizeRad };
     }
-    // 4. Body hit. Edge clicks always select+drag; interior clicks only drag if
-    //    the photo is already selected (otherwise treat as click-through).
+    // 4. Body hit selects the photo if not already selected. Move and rotate
+    //    are reachable only via the explicit handles, so a body click never
+    //    starts a drag — the rest of the gesture pans the camera.
     else if (bodyHit?.uv) {
       const o = bodyHit.object.parent as THREE.Group;
-      if (isOnEdge(bodyHit.uv) || selected === o) {
-        if (selected !== o) { overlays.setSelected(o); onChange(); }
-        if (e.shiftKey) {
-          const center = projectToScreen(o.position);
-          mode = {
-            type: 'rotate',
-            cx: center.x,
-            cy: center.y,
-            startAngle: Math.atan2(e.clientY - center.y, e.clientX - center.x),
-            startRoll: overlayData(o).photoRoll,
-          };
-        } else {
-          mode = { type: 'move' };
-        }
-      } else {
-        // Body interior of an inactive photo → click-through; deselect any
-        // currently active photo (matches "click off the photo deactivates").
-        if (selected) { overlays.setSelected(null); onChange(); }
-        mode = { type: 'pan' };
-      }
+      if (selected !== o) { overlays.setSelected(o); onChange(); }
+      mode = { type: 'pan' };
     }
     // 5. Empty space → deselect + pan.
     else {
@@ -262,9 +273,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
       }
       const hits = raycastOverlays();
       const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
-      const hoverTarget = (bodyHit?.uv && isOnEdge(bodyHit.uv))
-        ? bodyHit.object.parent as THREE.Group
-        : null;
+      const hoverTarget = bodyHit ? bodyHit.object.parent as THREE.Group : null;
       if (overlays.setHovered(hoverTarget)) viewer.requestRender();
       return;
     }
@@ -283,6 +292,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
         ndcFromEvent(e);
         raycaster.setFromCamera(ndc, camera);
         if (raycaster.ray.intersectSphere(overlays.overlaySphere, movePoint)) {
+          movePoint.normalize().applyQuaternion(mode.offset);
           overlays.moveSelectedTo(movePoint);
           // Mutation is inside the drag batch, so onMutate (which would normally
           // request a render) is queued. Request the render directly instead.

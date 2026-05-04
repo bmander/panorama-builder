@@ -718,6 +718,8 @@ func updateStationFromChange(ctx context.Context, tx pgx.Tx, c solver.EntityChan
 			sets += fmt.Sprintf("lat = $%d", idx)
 		case "lng":
 			sets += fmt.Sprintf("lng = $%d", idx)
+		case "alt":
+			sets += fmt.Sprintf("alt = $%d", idx)
 		default:
 			return false, fmt.Errorf("station change: unknown key %q", k)
 		}

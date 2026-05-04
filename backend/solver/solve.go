@@ -285,6 +285,9 @@ func (c *solveContext) scopeAndSlots() error {
 			if !s.Locks.Lng {
 				c.slots = append(c.slots, slot{kind: "station", id: s.ID, name: "east", scale: fdEpsPosM})
 			}
+			if !s.Locks.Alt {
+				c.slots = append(c.slots, slot{kind: "station", id: s.ID, name: "up", scale: fdEpsPosM})
+			}
 		}
 		c.appendPhotoSlots(c.problem.Photos)
 		for _, cp := range c.problem.ControlPoints {
@@ -376,6 +379,8 @@ func (c *solveContext) writeSlot(k int, v float64) {
 			c.stationENU[idx][0] = v
 		case "north":
 			c.stationENU[idx][1] = v
+		case "up":
+			c.stationENU[idx][2] = v
 		}
 	case "photo":
 		idx := c.photoIdx[s.id]
@@ -414,6 +419,8 @@ func (c *solveContext) readSlot(k int) float64 {
 			return c.stationENU[idx][0]
 		case "north":
 			return c.stationENU[idx][1]
+		case "up":
+			return c.stationENU[idx][2]
 		}
 	case "photo":
 		idx := c.photoIdx[s.id]
@@ -650,6 +657,9 @@ func (c *solveContext) composeChanges(initial, final []float64) []EntityChange {
 			case "east":
 				a.before["lng"] = c.gaugeLng + bf/(MPerDegLat*cosLat0)
 				a.after["lng"] = c.gaugeLng + af/(MPerDegLat*cosLat0)
+			case "up":
+				a.before["alt"] = bf
+				a.after["alt"] = af
 			}
 		case "photo":
 			a := get(photos, s.id)
