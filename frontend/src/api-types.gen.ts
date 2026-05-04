@@ -334,11 +334,18 @@ export interface components {
             lat: number;
             /** Format: double */
             lng: number;
+            /**
+             * Format: double
+             * @description meters above sea level (defaults to 0 when unknown)
+             */
+            alt: number;
             name: string | null;
             /** @description when true the solver leaves lat untouched */
             lock_lat: boolean;
             /** @description when true the solver leaves lng untouched */
             lock_lng: boolean;
+            /** @description when true the solver treats alt as a fixed input */
+            lock_alt: boolean;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -485,10 +492,16 @@ export interface components {
             lat: number;
             /** Format: double */
             lng: number;
+            /**
+             * Format: double
+             * @description omit to preserve existing value (PUT) or default 0 (POST)
+             */
+            alt?: number;
             name?: string | null;
             /** @description omit to preserve existing value (PUT) or default false (POST) */
             lock_lat?: boolean;
             lock_lng?: boolean;
+            lock_alt?: boolean;
         };
         PhotoPosePatch: {
             /** Format: double */

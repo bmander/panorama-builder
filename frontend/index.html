@@ -142,7 +142,15 @@
       <button type="button" id="solve-station-btn" class="btn">Solve station</button>
       <button type="button" id="solve-joint-btn" class="btn">Solve all (joint)</button>
     </div>
-    <label class="settings-check"><input type="checkbox" id="lock-station-pos"> Lock this station's position (gauge)</label>
+    <div class="settings-row station-pos">
+      <label class="settings-inline">lat <input type="number" id="station-lat" step="0.000001"></label>
+      <label class="settings-inline">lng <input type="number" id="station-lng" step="0.000001"></label>
+      <label class="settings-check" title="When checked, the solver leaves this station's lat and lng untouched. Joint mode needs ≥2 stations locked to fix the gauge."><input type="checkbox" id="station-lock-pos"> lock location</label>
+    </div>
+    <div class="settings-row station-pos">
+      <label class="settings-inline">alt <input type="number" id="station-alt" step="0.1"> m</label>
+      <label class="settings-check" title="When checked, the solver treats this station's elevation as a fixed input."><input type="checkbox" id="station-lock-alt"> lock elevation</label>
+    </div>
     <label class="settings-inline">Terrain
       <select id="terrain-mode">
         <option value="off">off</option>

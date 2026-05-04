@@ -533,14 +533,16 @@ components:
 
     Station:
       type: object
-      required: [id, lat, lng, name, lock_lat, lock_lng, created_at, updated_at]
+      required: [id, lat, lng, alt, name, lock_lat, lock_lng, lock_alt, created_at, updated_at]
       properties:
         id: { $ref: '#/components/schemas/Id' }
         lat: { type: number, format: double, minimum: -90, maximum: 90 }
         lng: { type: number, format: double, minimum: -180, maximum: 180 }
+        alt: { type: number, format: double, description: meters above sea level (defaults to 0 when unknown) }
         name: { type: string, nullable: true }
         lock_lat: { type: boolean, description: when true the solver leaves lat untouched }
         lock_lng: { type: boolean, description: when true the solver leaves lng untouched }
+        lock_alt: { type: boolean, description: when true the solver treats alt as a fixed input }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -700,9 +702,11 @@ components:
       properties:
         lat: { type: number, format: double, minimum: -90, maximum: 90 }
         lng: { type: number, format: double, minimum: -180, maximum: 180 }
+        alt: { type: number, format: double, description: omit to preserve existing value (PUT) or default 0 (POST) }
         name: { type: string, nullable: true }
         lock_lat: { type: boolean, description: omit to preserve existing value (PUT) or default false (POST) }
         lock_lng: { type: boolean }
+        lock_alt: { type: boolean }
 
     PhotoPosePatch:
       type: object

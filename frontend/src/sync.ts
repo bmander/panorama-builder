@@ -7,7 +7,6 @@
 import * as THREE from 'three';
 import * as api from './api.js';
 import { getElement, overlayData } from './types.js';
-import type { LatLng } from './types.js';
 import type { OverlayManager } from './overlay.js';
 
 export interface SyncedPhoto {
@@ -29,7 +28,6 @@ export interface SyncedControlPoint {
 }
 
 export interface SyncManager {
-  registerLocation(loc: LatLng): void;
   registerPhoto(id: string, pose: SyncedPhoto): void;
   registerImageMeasurement(id: string, payload: SyncedImageMeasurement): void;
   registerControlPoint(id: string, payload: SyncedControlPoint): void;
@@ -41,15 +39,12 @@ export interface SyncManager {
 export interface CreateSyncManagerOptions {
   overlays: OverlayManager;
   getCurrentStationId: () => string | null;
-  getCameraLocation: () => LatLng | null;
 }
 
 export function createSyncManager({
-  overlays, getCurrentStationId, getCameraLocation,
+  overlays, getCurrentStationId,
 }: CreateSyncManagerOptions): SyncManager {
-  interface SyncedLocation { lat: number; lng: number; }
   const synced = {
-    location: null as SyncedLocation | null,
     photos: new Map<string, SyncedPhoto>(),
     imageMeasurements: new Map<string, SyncedImageMeasurement>(),
     controlPoints: new Map<string, SyncedControlPoint>(),
@@ -126,11 +121,10 @@ export function createSyncManager({
     if (!locId) return;
     const tasks: Promise<unknown>[] = [];
 
-    const camLoc = getCameraLocation();
-    if (camLoc && (synced.location?.lat !== camLoc.lat || synced.location.lng !== camLoc.lng)) {
-      const nextLoc = { lat: camLoc.lat, lng: camLoc.lng };
-      tasks.push(api.updateStation(locId, camLoc).then(() => { synced.location = nextLoc; }));
-    }
+    // Station lat/lng/alt are now PUT directly from the settings-panel inputs
+    // and the index-map marker drag, both of which round-trip the canonical
+    // name and lock state. The diff cache here is kept registered so callers
+    // can mark a fresh-from-server location, but no implicit PUT is done.
 
     const currentPhotos = new Map<string, SyncedPhoto>();
     for (const o of overlays.listOverlays() as THREE.Group[]) {
@@ -191,7 +185,6 @@ export function createSyncManager({
   }
 
   return {
-    registerLocation(loc) { synced.location = { lat: loc.lat, lng: loc.lng }; },
     registerPhoto(id, pose) { synced.photos.set(id, pose); },
     registerImageMeasurement(id, payload) { synced.imageMeasurements.set(id, payload); },
     registerControlPoint(id, payload) { synced.controlPoints.set(id, payload); },

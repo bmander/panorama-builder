@@ -18,16 +18,19 @@ type Pose struct {
 	Aspect    float64
 }
 
-type StationLocks struct{ Lat, Lng bool }
+type StationLocks struct{ Lat, Lng, Alt bool }
 
 type PhotoLocks struct{ PhotoAz, PhotoTilt, PhotoRoll, SizeRad bool }
 
 type CPLocks struct{ EstLat, EstLng, EstAlt bool }
 
 type Station struct {
-	ID        string
-	Lat       float64
-	Lng       float64
+	ID  string
+	Lat float64
+	Lng float64
+	Alt float64 // meters above sea level. Used as a fixed input in
+	// residual bearing computations; not currently a free slot in the GN loop
+	// (lock_alt is honored as no-op). Locked here for future-readiness.
 	Locks     StationLocks
 	UpdatedAt time.Time // optimistic-concurrency token; opaque to the solver
 }

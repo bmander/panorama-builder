@@ -66,13 +66,27 @@ export function getStation(id: string): Promise<ApiHydratedStation> {
   return request<ApiHydratedStation>('GET', `/stations/${encodeURIComponent(id)}`);
 }
 
-export function updateStation(
-  id: string, latlng: LatLng, name?: string | null,
-  lockLat?: boolean, lockLng?: boolean,
-): Promise<ApiStation> {
-  const body: Record<string, unknown> = { lat: latlng.lat, lng: latlng.lng, name: name ?? null };
-  if (lockLat !== undefined) body.lock_lat = lockLat;
-  if (lockLng !== undefined) body.lock_lng = lockLng;
+// `name` is written unconditionally by the backend (passing null clears it),
+// so callers must always include it. `alt` and the lock_* fields are
+// COALESCE-preserved when omitted.
+export interface UpdateStationPatch {
+  readonly lat: number;
+  readonly lng: number;
+  readonly name: string | null;
+  readonly alt?: number;
+  readonly lockLat?: boolean;
+  readonly lockLng?: boolean;
+  readonly lockAlt?: boolean;
+}
+
+export function updateStation(id: string, patch: UpdateStationPatch): Promise<ApiStation> {
+  const body: Record<string, unknown> = {
+    lat: patch.lat, lng: patch.lng, name: patch.name,
+  };
+  if (patch.alt !== undefined) body.alt = patch.alt;
+  if (patch.lockLat !== undefined) body.lock_lat = patch.lockLat;
+  if (patch.lockLng !== undefined) body.lock_lng = patch.lockLng;
+  if (patch.lockAlt !== undefined) body.lock_alt = patch.lockAlt;
   return request<ApiStation>('PUT', `/stations/${encodeURIComponent(id)}`, body);
 }
 

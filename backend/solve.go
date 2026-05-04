@@ -343,11 +343,12 @@ func (s *Server) loadSingleCPProblem(ctx context.Context, cpID string) (solver.P
 // handlers don't have to translate. updated_at is preserved as the
 // optimistic-concurrency token. ---
 
-const stationLoadCols = `id, lat, lng, lock_lat, lock_lng, updated_at`
+const stationLoadCols = `id, lat, lng, alt, lock_lat, lock_lng, lock_alt, updated_at`
 
 func scanSolverStation(row pgx.Row) (solver.Station, error) {
 	var s solver.Station
-	err := row.Scan(&s.ID, &s.Lat, &s.Lng, &s.Locks.Lat, &s.Locks.Lng, &s.UpdatedAt)
+	err := row.Scan(&s.ID, &s.Lat, &s.Lng, &s.Alt,
+		&s.Locks.Lat, &s.Locks.Lng, &s.Locks.Alt, &s.UpdatedAt)
 	return s, err
 }
 

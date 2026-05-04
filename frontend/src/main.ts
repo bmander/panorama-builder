@@ -199,7 +199,6 @@ function syncControlPoint(cp: ApiControlPoint): void {
 const sync = createSyncManager({
   overlays,
   getCurrentStationId,
-  getCameraLocation: getStationLocation,
 });
 
 const settings = createSettingsPanel({
@@ -330,9 +329,9 @@ async function applySolveResultByRefetch(label: string, run: () => Promise<api.S
 
 async function rehydrateAfterSolve(id: string): Promise<void> {
   const data = await api.getStation(id);
+  hydrateStationFields(data.station);
   overlays.withBatch(() => {
     const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
-    sync.registerLocation(loc);
     applyCameraLocation(loc);
     for (const p of data.photos) {
       const o = overlays.getOverlayById(p.id);
@@ -373,33 +372,105 @@ solveJointBtn.addEventListener('click', () => {
     .finally(() => { solveJointBtn.disabled = false; });
 });
 
-// --- Station lock toggle ----------------------------------------------
+// --- Station lat / lng / alt + locks ----------------------------------
 //
-// Joint mode requires ≥2 stations with both lat AND lng locked. We treat
-// "lock this station's position" as an atomic toggle on both lat and lng
-// (locking only one wouldn't fix gauge anyway).
+// The settings panel exposes the station's stored lat/lng/alt and per-axis
+// solver locks. Joint mode requires ≥2 stations with both lat and lng locked
+// to fix translation+rotation gauge. We treat "lock location" as an atomic
+// toggle on both lat and lng (locking only one wouldn't fix gauge anyway).
+// "lock elevation" gates lock_alt; today the solver always treats station
+// alt as a fixed input, so this lock is no-op-equivalent but kept for UI
+// symmetry and forward-compat.
 
-const lockStationPosEl = getElement<HTMLInputElement>('lock-station-pos');
-let stationLockState = false;
-function applyStationLockUI(locked: boolean): void {
-  stationLockState = locked;
-  lockStationPosEl.checked = locked;
+const stationLatEl = getElement<HTMLInputElement>('station-lat');
+const stationLngEl = getElement<HTMLInputElement>('station-lng');
+const stationAltEl = getElement<HTMLInputElement>('station-alt');
+const stationLockPosEl = getElement<HTMLInputElement>('station-lock-pos');
+const stationLockAltEl = getElement<HTMLInputElement>('station-lock-alt');
+
+// Local mirror of the canonical station fields, populated by hydrateStationFields.
+// Each PUT round-trips name + the unmoved fields so the backend (which writes
+// most columns unconditionally) preserves them.
+interface StationFields {
+  name: string | null;
+  lat: number; lng: number; alt: number;
+  lockLat: boolean; lockLng: boolean; lockAlt: boolean;
 }
-lockStationPosEl.addEventListener('change', () => {
-  if (!currentStationId || !stationLocation) return;
-  const next = lockStationPosEl.checked;
-  lockStationPosEl.disabled = true;
-  api.updateStation(currentStationId, stationLocation, null, next, next).then(
-    updated => {
-      applyStationLockUI(updated.lock_lat && updated.lock_lng);
-      lockStationPosEl.disabled = false;
-    },
-    (err: unknown) => {
-      console.error('lock station position failed:', err);
-      lockStationPosEl.checked = stationLockState; // revert
-      lockStationPosEl.disabled = false;
-    },
-  );
+let stationCache: StationFields | null = null;
+
+function hydrateStationFields(s: api.ApiStation): void {
+  stationCache = {
+    name: s.name,
+    lat: s.lat, lng: s.lng, alt: s.alt,
+    lockLat: s.lock_lat, lockLng: s.lock_lng, lockAlt: s.lock_alt,
+  };
+  // Keep the viewer's vertical reference in sync with the station's recorded
+  // altitude — otherwise CP columns (rendered at est_alt − cameraHeight) drift
+  // visually from the photo POIs (which the solver projects against the real
+  // station altitude). Shift+wheel still nudges cameraHeight locally; the next
+  // station-alt update re-syncs.
+  if (terrain.setCameraHeight(s.alt)) refreshControlPointColumns();
+  renderStationFields();
+}
+
+const stationFieldDigits = (key: 'lat' | 'lng' | 'alt'): number => key === 'alt' ? 2 : 6;
+
+function renderStationFields(): void {
+  if (!stationCache) return;
+  // Avoid clobbering an input the user is currently editing.
+  if (document.activeElement !== stationLatEl) stationLatEl.value = stationCache.lat.toFixed(stationFieldDigits('lat'));
+  if (document.activeElement !== stationLngEl) stationLngEl.value = stationCache.lng.toFixed(stationFieldDigits('lng'));
+  if (document.activeElement !== stationAltEl) stationAltEl.value = stationCache.alt.toFixed(stationFieldDigits('alt'));
+  stationLockPosEl.checked = stationCache.lockLat && stationCache.lockLng;
+  stationLockAltEl.checked = stationCache.lockAlt;
+}
+
+async function putStationPatch(patch: Partial<StationFields>): Promise<void> {
+  if (!currentStationId || !stationCache) return;
+  const merged = { ...stationCache, ...patch };
+  let updated: api.ApiStation;
+  try {
+    updated = await api.updateStation(currentStationId, {
+      lat: merged.lat, lng: merged.lng, name: merged.name, alt: merged.alt,
+      lockLat: merged.lockLat, lockLng: merged.lockLng, lockAlt: merged.lockAlt,
+    });
+  } catch (err) {
+    console.error('update station failed:', err);
+    renderStationFields(); // revert UI to the last known-good cache
+    return;
+  }
+  const locChanged = stationLocation?.lat !== updated.lat
+    || stationLocation.lng !== updated.lng;
+  hydrateStationFields(updated);
+  if (locChanged) applyCameraLocation({ lat: updated.lat, lng: updated.lng });
+}
+
+function commitNumberInput(el: HTMLInputElement, key: 'lat' | 'lng' | 'alt'): void {
+  const n = parseFloat(el.value);
+  if (!Number.isFinite(n) || !stationCache) {
+    renderStationFields();
+    return;
+  }
+  // Compare at the displayed precision — otherwise re-typing the rounded
+  // value would silently truncate the server's higher-precision number.
+  const digits = stationFieldDigits(key);
+  if (stationCache[key].toFixed(digits) === n.toFixed(digits)) {
+    renderStationFields();
+    return;
+  }
+  void putStationPatch({ [key]: n });
+}
+
+stationLatEl.addEventListener('change', () => { commitNumberInput(stationLatEl, 'lat'); });
+stationLngEl.addEventListener('change', () => { commitNumberInput(stationLngEl, 'lng'); });
+stationAltEl.addEventListener('change', () => { commitNumberInput(stationAltEl, 'alt'); });
+
+stationLockPosEl.addEventListener('change', () => {
+  const next = stationLockPosEl.checked;
+  void putStationPatch({ lockLat: next, lockLng: next });
+});
+stationLockAltEl.addEventListener('change', () => {
+  void putStationPatch({ lockAlt: stationLockAltEl.checked });
 });
 
 // --- Bootstrap ---------------------------------------------------------
@@ -414,9 +485,8 @@ async function hydrateFromAPI(id: string): Promise<void> {
     return;
   }
   const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
-  sync.registerLocation(loc);
   applyCameraLocation(loc);
-  applyStationLockUI(data.station.lock_lat && data.station.lock_lng);
+  hydrateStationFields(data.station);
 
   // Place each photo synchronously with a placeholder so the viewer can
   // paint terrain + rectangles before any blob arrives.
@@ -468,12 +538,36 @@ async function hydrateFromAPI(id: string): Promise<void> {
   }
 }
 
+async function moveControlPointTo(id: string, latlng: LatLng): Promise<void> {
+  // Backend PUT /control-points/{id} writes lat/lng/alt/started_at/ended_at
+  // unconditionally, so we round-trip the rest from the current row.
+  try {
+    const cur = await api.getControlPoint(id);
+    const updated = await api.updateControlPoint(id, {
+      description: cur.description,
+      notes: cur.notes,
+      est_lat: latlng.lat,
+      est_lng: latlng.lng,
+      est_alt: cur.est_alt,
+      started_at: cur.started_at,
+      ended_at: cur.ended_at,
+    });
+    syncControlPoint(updated);
+  } catch (err) {
+    console.error('move control point failed:', err);
+    alert('Move control point failed.');
+  }
+  // Re-render either way: success snaps to the canonical server lat/lng;
+  // failure re-renders from the unchanged in-memory CP, snapping the dot back.
+  refreshIndexControlPoints();
+}
+
 async function moveStationTo(id: string, latlng: LatLng, view: MapView): Promise<void> {
   // Backend PUT /stations/{id} writes name unconditionally, so we have to
   // round-trip the current name to avoid clearing it.
   try {
     const cur = await api.getStation(id);
-    await api.updateStation(id, latlng, cur.station.name);
+    await api.updateStation(id, { lat: latlng.lat, lng: latlng.lng, name: cur.station.name });
   } catch (err) {
     console.error('move station failed:', err);
     alert('Move station failed.');
@@ -609,6 +703,8 @@ async function bootstrap(): Promise<void> {
       onAddControlPointHere: loc => { observationModal.openForMap(loc); },
       onControlPointSolveLocation: id => { void solveAndPersistControlPointLocation(id); },
       onStationMarkerMove: (id, latlng) => { void moveStationTo(id, latlng, view); },
+      onControlPointMove: (id, latlng) => { void moveControlPointTo(id, latlng); },
+      onPhotoDroppedOnMap: (latlng, files) => { startStationModal.open(latlng, files); },
     });
     mapView = view;
     const solveModal = createSolveModal({

@@ -50,6 +50,11 @@ export interface CreateMapViewOptions {
   onControlPointSolveLocation?: (id: string) => void;
   // Fired when the user drags a station marker and releases it at a new spot.
   onStationMarkerMove?: (id: string, latlng: LatLng) => void;
+  // Same idea for index-CP dots: drag-end commits the new lat/lng.
+  onControlPointMove?: (id: string, latlng: LatLng) => void;
+  // Image file(s) dropped on the map — typically opens the start-station
+  // modal pre-populated with this location and these files.
+  onPhotoDroppedOnMap?: (latlng: LatLng, files: readonly File[]) => void;
 }
 
 const HIST_ATTR = 'Historical maps via <a href="https://bmander.com/seamap">bmander.com/seamap</a>';
@@ -156,6 +161,8 @@ export function createMapView({
   onAddControlPointHere,
   onControlPointSolveLocation,
   onStationMarkerMove,
+  onControlPointMove,
+  onPhotoDroppedOnMap,
 }: CreateMapViewOptions): MapView {
   const layers: Record<string, L.Layer> = {
     'Sanborn 1884': histLayer(1884),
@@ -179,14 +186,12 @@ export function createMapView({
   let stationPreview: StationPreview | null = null;
   const previewConeLayers: L.Polygon[] = [];
   let indexControlPoints: readonly IndexControlPoint[] = [];
-  const indexCpDots = new Map<string, L.CircleMarker>();
-  const indexCpStyle = (color: string): L.PathOptions => ({
-    radius: 3, color, weight: 1, fillColor: color, fillOpacity: 0.9,
-  } as L.CircleMarkerOptions);
-  const INDEX_CP_DOT_STYLE = indexCpStyle('#ff5050');
-  const INDEX_CP_OBSERVED_STYLE = indexCpStyle('#50d050');
-  const styleForCp = (id: string): L.PathOptions =>
-    stationPreview?.observedCpIds.has(id) ? INDEX_CP_OBSERVED_STYLE : INDEX_CP_DOT_STYLE;
+  const indexCpDots = new Map<string, L.Marker>();
+  const CP_ICON = L.divIcon({
+    className: 'cp-dot', html: '', iconSize: [10, 10], iconAnchor: [5, 5],
+  });
+  const isCpObserved = (id: string): boolean =>
+    stationPreview?.observedCpIds.has(id) ?? false;
   const INDEX_CP_POPUP_OPTS: L.PopupOptions = { className: 'index-cp-popup', closeButton: true };
   const GO_POPUP_OPTS: L.PopupOptions = { className: 'station-popup', closeButton: true };
   const goButtonHtml = (label: string, cls = ''): string =>
@@ -245,7 +250,7 @@ export function createMapView({
     for (const dot of indexCpDots.values()) map.removeLayer(dot);
     indexCpDots.clear();
     for (const cp of indexControlPoints) {
-      const dot = L.circleMarker([cp.latlng.lat, cp.latlng.lng], styleForCp(cp.id));
+      const dot = L.marker([cp.latlng.lat, cp.latlng.lng], { icon: CP_ICON, draggable: true });
       dot.on('click', (e: L.LeafletMouseEvent) => {
         L.DomEvent.stopPropagation(e);
         openIndexCpPopup(cp);
@@ -254,13 +259,21 @@ export function createMapView({
         L.DomEvent.preventDefault(e.originalEvent);
         L.DomEvent.stopPropagation(e);
       });
+      dot.on('dragend', () => {
+        const ll = dot.getLatLng();
+        onControlPointMove?.(cp.id, { lat: ll.lat, lng: ll.lng });
+      });
       dot.addTo(map);
+      // Observed-state class can only be toggled after the icon element exists.
+      dot.getElement()?.classList.toggle('observed', isCpObserved(cp.id));
       indexCpDots.set(cp.id, dot);
     }
   }
 
   function restyleIndexControlPoints(): void {
-    for (const [id, dot] of indexCpDots) dot.setStyle(styleForCp(id));
+    for (const [id, dot] of indexCpDots) {
+      dot.getElement()?.classList.toggle('observed', isCpObserved(id));
+    }
   }
 
   function applyStationPreview(next: StationPreview | null): void {
@@ -288,6 +301,32 @@ export function createMapView({
   });
   map.on('zoomend', redrawStationPreview);
   map.on('resize', redrawStationPreview);
+
+  // Drag-and-drop image files onto the map → callback gets the drop location
+  // and the files. Only photo MIME types count; non-image drops are ignored.
+  const dragHasImage = (dt: DataTransfer | null): boolean =>
+    !!dt && Array.from(dt.items).some(it => it.kind === 'file' && it.type.startsWith('image/'));
+  container.addEventListener('dragover', e => {
+    if (!dragHasImage(e.dataTransfer)) return;
+    e.preventDefault();
+    container.classList.add('photo-drop-active');
+  });
+  container.addEventListener('dragleave', e => {
+    // Only clear when the cursor actually leaves the container, not when it
+    // moves between child elements (which fires dragleave on the parent).
+    if (e.target === container) container.classList.remove('photo-drop-active');
+  });
+  container.addEventListener('drop', e => {
+    container.classList.remove('photo-drop-active');
+    const files = Array.from(e.dataTransfer?.files ?? []).filter(f => f.type.startsWith('image/'));
+    if (files.length === 0) return;
+    e.preventDefault();
+    // Stop propagation so the window-level drop listener in input.ts (which
+    // is for the 360° viewer) doesn't also try to handle this drop.
+    e.stopPropagation();
+    const ll = map.mouseEventToLatLng(e);
+    onPhotoDroppedOnMap?.({ lat: ll.lat, lng: ll.lng }, files);
+  });
 
   return {
     setStationPreview(preview: StationPreview | null): void {

@@ -104,8 +104,11 @@ type ControlPointPatch struct {
 
 // CreateStationRequest defines model for CreateStationRequest.
 type CreateStationRequest struct {
-	Lat float64 `json:"lat"`
-	Lng float64 `json:"lng"`
+	// Alt omit to preserve existing value (PUT) or default 0 (POST)
+	Alt     *float64 `json:"alt,omitempty"`
+	Lat     float64  `json:"lat"`
+	Lng     float64  `json:"lng"`
+	LockAlt *bool    `json:"lock_alt,omitempty"`
 
 	// LockLat omit to preserve existing value (PUT) or default false (POST)
 	LockLat *bool   `json:"lock_lat,omitempty"`
@@ -257,12 +260,17 @@ type SolveResult struct {
 
 // Station defines model for Station.
 type Station struct {
+	// Alt meters above sea level (defaults to 0 when unknown)
+	Alt       float64   `json:"alt"`
 	CreatedAt time.Time `json:"created_at"`
 
 	// ID 13-character base32 server-assigned id
 	ID  ID      `json:"id"`
 	Lat float64 `json:"lat"`
 	Lng float64 `json:"lng"`
+
+	// LockAlt when true the solver treats alt as a fixed input
+	LockAlt bool `json:"lock_alt"`
 
 	// LockLat when true the solver leaves lat untouched
 	LockLat bool `json:"lock_lat"`

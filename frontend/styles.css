@@ -30,6 +30,11 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   font: 12px monospace; padding: 1px 3px;
 }
 .settings-inline input[type="range"] { flex: 1; accent-color: #fff; }
+.settings-inline input[type="number"] {
+  background: rgba(255,255,255,0.1); color: #fff; border: 1px solid #888;
+  font: 12px monospace; padding: 1px 3px; width: 9em;
+}
+.settings-row.station-pos { gap: 4px 8px; flex-direction: row; flex-wrap: wrap; align-items: center; }
 #view.tool-poi { cursor: crosshair; }
 .station-popup .leaflet-popup-content { margin: 8px 10px; font: 12px monospace; }
 .station-popup .name { display: block; font-weight: bold; margin-bottom: 6px; color: #000; }
@@ -39,6 +44,11 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .station-popup .go + .go { margin-top: 4px; }
 .station-popup .go:hover { background: #155bbd; }
 .poi-anchor-marker { color: #5080ff; filter: drop-shadow(0 0 2px rgba(0,0,0,0.85)); }
+.cp-dot { background: #ff5050; border: 1px solid rgba(0,0,0,0.6); border-radius: 50%;
+          box-sizing: border-box; cursor: grab; }
+.cp-dot.observed { background: #50d050; }
+.leaflet-dragging .cp-dot { cursor: grabbing; }
+#map.photo-drop-active { box-shadow: inset 0 0 0 4px #5080ff; }
 .poi-anchor-marker.selected { color: #ffff66; }
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.6);
          display: flex; align-items: center; justify-content: center; z-index: 2000; }

@@ -13,11 +13,12 @@ import (
 // CreateStationRequest, PhotoPosePatch, ImageMeasurementPatch) are
 // generated from ../openapi.yaml into types.gen.go.
 
-const stationCols = `id, lat, lng, name, lock_lat, lock_lng, created_at, updated_at`
+const stationCols = `id, lat, lng, alt, name, lock_lat, lock_lng, lock_alt, created_at, updated_at`
 
 func scanStation(row pgx.Row) (Station, error) {
 	var st Station
-	err := row.Scan(&st.ID, &st.Lat, &st.Lng, &st.Name, &st.LockLat, &st.LockLng, &st.CreatedAt, &st.UpdatedAt)
+	err := row.Scan(&st.ID, &st.Lat, &st.Lng, &st.Alt, &st.Name,
+		&st.LockLat, &st.LockLng, &st.LockAlt, &st.CreatedAt, &st.UpdatedAt)
 	return st, err
 }
 
@@ -31,10 +32,12 @@ func (s *Server) postStation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := newID()
-	const q = `INSERT INTO stations (id, lat, lng, name, lock_lat, lock_lng)
-	           VALUES ($1, $2, $3, $4, COALESCE($5, false), COALESCE($6, false))
+	const q = `INSERT INTO stations (id, lat, lng, alt, name, lock_lat, lock_lng, lock_alt)
+	           VALUES ($1, $2, $3, COALESCE($4, 0), $5,
+	                   COALESCE($6, false), COALESCE($7, false), COALESCE($8, false))
 	           RETURNING ` + stationCols
-	st, err := scanStation(s.db.QueryRow(r.Context(), q, id, req.Lat, req.Lng, req.Name, req.LockLat, req.LockLng))
+	st, err := scanStation(s.db.QueryRow(r.Context(), q, id, req.Lat, req.Lng, req.Alt, req.Name,
+		req.LockLat, req.LockLng, req.LockAlt))
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -141,12 +144,15 @@ func (s *Server) putStation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	const q = `UPDATE stations SET lat=$2, lng=$3, name=$4,
-	             lock_lat = COALESCE($5, lock_lat),
-	             lock_lng = COALESCE($6, lock_lng),
+	             alt      = COALESCE($5, alt),
+	             lock_lat = COALESCE($6, lock_lat),
+	             lock_lng = COALESCE($7, lock_lng),
+	             lock_alt = COALESCE($8, lock_alt),
 	             updated_at=NOW()
 	           WHERE id=$1
 	           RETURNING ` + stationCols
-	st, err := scanStation(s.db.QueryRow(r.Context(), q, id, req.Lat, req.Lng, req.Name, req.LockLat, req.LockLng))
+	st, err := scanStation(s.db.QueryRow(r.Context(), q, id, req.Lat, req.Lng, req.Name,
+		req.Alt, req.LockLat, req.LockLng, req.LockAlt))
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return

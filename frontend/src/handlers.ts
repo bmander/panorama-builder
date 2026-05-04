@@ -111,8 +111,10 @@ export function createOrchestration({
   ): Promise<void> {
     const locId = getCurrentStationId();
     if (!locId) {
+      // Index page: the 360°-viewer drop has no target. The map's own drop
+      // handler creates a station from a dropped photo; this codepath is just
+      // a silent fallback for drops outside the map.
       revokeUrl();
-      alert('Set a camera location before dropping photos.');
       return;
     }
     const az = Math.atan2(-dir.x, -dir.z);

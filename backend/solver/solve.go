@@ -56,7 +56,7 @@ type solveContext struct {
 	cpIdx      map[string]int
 
 	// Mutable working state (all in ENU meters / radians).
-	stationENU [][2]float64 // (east, north); station alt fixed at 0
+	stationENU [][3]float64 // (east, north, up); up is read-only (no slot)
 	photoPose  []Pose
 	cpENU      [][3]float64 // (east, north, up)
 
@@ -235,10 +235,10 @@ func buildContext(problem Problem, cfg Config) (*solveContext, error) {
 		return nil, ErrFocusNotFound
 	}
 
-	c.stationENU = make([][2]float64, len(problem.Stations))
+	c.stationENU = make([][3]float64, len(problem.Stations))
 	for i, s := range problem.Stations {
-		e, n, _ := LatLngAltToENU(s.Lat, s.Lng, 0, c.gaugeLat, c.gaugeLng, 0)
-		c.stationENU[i] = [2]float64{e, n}
+		e, n, u := LatLngAltToENU(s.Lat, s.Lng, s.Alt, c.gaugeLat, c.gaugeLng, 0)
+		c.stationENU[i] = [3]float64{e, n, u}
 	}
 	c.photoPose = make([]Pose, len(problem.Photos))
 	for i, p := range problem.Photos {
@@ -472,7 +472,7 @@ func (c *solveContext) computeResiduals() []float64 {
 
 		dE := c.cpENU[cpIdx][0] - c.stationENU[sIdx][0]
 		dN := c.cpENU[cpIdx][1] - c.stationENU[sIdx][1]
-		dU := c.cpENU[cpIdx][2] // station alt = 0
+		dU := c.cpENU[cpIdx][2] - c.stationENU[sIdx][2]
 
 		azPred, elPred := ProjectPOI(pose, o.U, o.V)
 		azTgt, elTgt := BearingENU(dE, dN, dU)

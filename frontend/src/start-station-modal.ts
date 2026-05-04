@@ -8,7 +8,7 @@ import { formatLocalDateTime, getElement } from './types.js';
 import type { LatLng } from './types.js';
 
 export interface StartStationModal {
-  open(loc: LatLng): void;
+  open(loc: LatLng, initialPhotos?: readonly File[]): void;
 }
 
 export interface CreateStartStationModalOptions {
@@ -70,9 +70,9 @@ export function createStartStationModal({ onSubmit }: CreateStartStationModalOpt
     fileInputEl.value = '';
   }
 
-  function open(loc: LatLng): void {
+  function open(loc: LatLng, initialPhotos?: readonly File[]): void {
     pendingLoc = loc;
-    photos = [];
+    photos = initialPhotos ? [...initialPhotos] : [];
     titleEl.value = '';
     dateEl.value = formatLocalDateTime(new Date());
     fileInputEl.value = '';
