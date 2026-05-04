@@ -543,6 +543,12 @@ export interface components {
              * @description per-residual-RMS convergence threshold
              */
             residual_tol_rad?: number;
+            /**
+             * @description When true, run the solver but skip the DB writeback. The response
+             *     still carries iterations, residuals, auto_locked_columns, and the
+             *     diff that would have been applied. Useful for diagnosis.
+             */
+            dry_run?: boolean;
         };
         /** @description One row's before/after for the keys the solver actually moved. */
         EntityChange: {

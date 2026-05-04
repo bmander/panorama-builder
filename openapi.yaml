@@ -750,6 +750,12 @@ components:
       properties:
         max_iters: { type: integer, minimum: 1, maximum: 200, description: GN iteration cap, default 30 }
         residual_tol_rad: { type: number, format: double, description: per-residual-RMS convergence threshold, default 1e-4 }
+        dry_run:
+          type: boolean
+          description: |
+            When true, run the solver but skip the DB writeback. The response
+            still carries iterations, residuals, auto_locked_columns, and the
+            diff that would have been applied. Useful for diagnosis.
 
     EntityChange:
       type: object

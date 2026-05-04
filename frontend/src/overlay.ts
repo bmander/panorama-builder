@@ -160,9 +160,10 @@ export interface OverlayManager {
   addControlPoint(id: string, payload: AddControlPointPayload): void;
   getControlPoints(): ControlPointView[];
   getControlPointById(id: string): ControlPointView | null;
-  // Mutates the CP's est_lat/est_lng. Fans out anchor caches on every linked
-  // image measurement so columns/rays redraw at the new location.
-  setControlPointEst(id: string, latlng: LatLng | null): void;
+  // Mutates the CP's full estimate (lat, lng, alt). Pass alt every time —
+  // omitting it would let the cached value drift out of sync with the server
+  // after a solver writeback.
+  setControlPointEst(id: string, est: { lat: number | null; lng: number | null; alt: number }): void;
   setControlPointDescription(id: string, description: string): void;
   removeControlPoint(id: string): void;
 
@@ -577,11 +578,13 @@ export function createOverlayManager(
         selected: cp.id === sel,
       };
     },
-    setControlPointEst(id, latlng) {
+    setControlPointEst(id, est) {
       const cp = controlPoints.find(c => c.id === id);
       if (!cp) return;
-      cp.estLat = latlng?.lat ?? null;
-      cp.estLng = latlng?.lng ?? null;
+      if (cp.estLat === est.lat && cp.estLng === est.lng && cp.estAlt === est.alt) return;
+      cp.estLat = est.lat;
+      cp.estLng = est.lng;
+      cp.estAlt = est.alt;
       notify();
     },
     setControlPointDescription(id, description) {

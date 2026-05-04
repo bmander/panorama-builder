@@ -27,12 +27,12 @@ import (
 // updated_at to surface concurrent edits as 409.
 
 func (s *Server) postSolveJoint(w http.ResponseWriter, r *http.Request) {
-	cfg, ok := parseSolveConfig(w, r)
+	cfg, dryRun, ok := parseSolveConfig(w, r)
 	if !ok {
 		return
 	}
 	cfg.Mode = solver.ModeJoint
-	s.runSolve(w, r, cfg)
+	s.runSolve(w, r, cfg, dryRun)
 }
 
 func (s *Server) postSolveStation(w http.ResponseWriter, r *http.Request) {
@@ -40,13 +40,13 @@ func (s *Server) postSolveStation(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		return
 	}
-	cfg, ok := parseSolveConfig(w, r)
+	cfg, dryRun, ok := parseSolveConfig(w, r)
 	if !ok {
 		return
 	}
 	cfg.Mode = solver.ModeSingleStation
 	cfg.FocusID = id
-	s.runSolve(w, r, cfg)
+	s.runSolve(w, r, cfg, dryRun)
 }
 
 func (s *Server) postSolveControlPoint(w http.ResponseWriter, r *http.Request) {
@@ -54,23 +54,24 @@ func (s *Server) postSolveControlPoint(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		return
 	}
-	cfg, ok := parseSolveConfig(w, r)
+	cfg, dryRun, ok := parseSolveConfig(w, r)
 	if !ok {
 		return
 	}
 	cfg.Mode = solver.ModeSingleControlPoint
 	cfg.FocusID = id
-	s.runSolve(w, r, cfg)
+	s.runSolve(w, r, cfg, dryRun)
 }
 
-func parseSolveConfig(w http.ResponseWriter, r *http.Request) (solver.Config, bool) {
+func parseSolveConfig(w http.ResponseWriter, r *http.Request) (solver.Config, bool, bool) {
 	cfg := solver.Config{}
+	dryRun := false
 	if r.ContentLength == 0 {
-		return cfg, true
+		return cfg, dryRun, true
 	}
 	var req SolveConfig
 	if !parseJSON(w, r, &req) {
-		return cfg, false
+		return cfg, dryRun, false
 	}
 	if req.MaxIters != nil {
 		cfg.MaxIters = *req.MaxIters
@@ -78,10 +79,13 @@ func parseSolveConfig(w http.ResponseWriter, r *http.Request) (solver.Config, bo
 	if req.ResidualTolRad != nil {
 		cfg.ResidualTolRad = *req.ResidualTolRad
 	}
-	return cfg, true
+	if req.DryRun != nil {
+		dryRun = *req.DryRun
+	}
+	return cfg, dryRun, true
 }
 
-func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg solver.Config) {
+func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg solver.Config, dryRun bool) {
 	s.solveMu.Lock()
 	defer s.solveMu.Unlock()
 
@@ -113,7 +117,7 @@ func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg solver.Con
 		return
 	}
 
-	if !res.Diverged && len(res.Changes) > 0 {
+	if !dryRun && !res.Diverged && len(res.Changes) > 0 {
 		if err := s.writebackChanges(ctx, prob, res); err != nil {
 			if errors.Is(err, errConcurrentEdit) {
 				writeError(w, http.StatusConflict, "concurrent edit; refresh and retry")

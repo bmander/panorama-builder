@@ -225,6 +225,11 @@ type PhotoPosePatch struct {
 
 // SolveConfig Optional knobs for the solver. Defaults are used when omitted.
 type SolveConfig struct {
+	// DryRun When true, run the solver but skip the DB writeback. The response
+	// still carries iterations, residuals, auto_locked_columns, and the
+	// diff that would have been applied. Useful for diagnosis.
+	DryRun *bool `json:"dry_run,omitempty"`
+
 	// MaxIters GN iteration cap
 	MaxIters *int `json:"max_iters,omitempty"`
 

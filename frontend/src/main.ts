@@ -187,10 +187,9 @@ function syncControlPoint(cp: ApiControlPoint): void {
   }
   overlays.withBatch(() => {
     overlays.setControlPointDescription(cp.id, cp.description);
-    overlays.setControlPointEst(
-      cp.id,
-      cp.est_lat === null || cp.est_lng === null ? null : { lat: cp.est_lat, lng: cp.est_lng },
-    );
+    overlays.setControlPointEst(cp.id, {
+      lat: cp.est_lat, lng: cp.est_lng, alt: cp.est_alt,
+    });
   });
 }
 
