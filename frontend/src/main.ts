@@ -467,6 +467,21 @@ async function hydrateFromAPI(id: string): Promise<void> {
   }
 }
 
+async function moveStationTo(id: string, latlng: LatLng, view: MapView): Promise<void> {
+  // Backend PUT /stations/{id} writes name unconditionally, so we have to
+  // round-trip the current name to avoid clearing it.
+  try {
+    const cur = await api.getStation(id);
+    await api.updateStation(id, latlng, cur.station.name);
+  } catch (err) {
+    console.error('move station failed:', err);
+    alert('Move station failed.');
+  }
+  // Always re-render: success snaps to the canonical server lat/lng (in case
+  // of rounding); failure reverts the marker to the unchanged server value.
+  await showStationMarkers(view);
+}
+
 async function showStationMarkers(view: MapView): Promise<void> {
   let stations: ApiStation[];
   try {
@@ -592,6 +607,7 @@ async function bootstrap(): Promise<void> {
       onStartStationHere: loc => { startStationModal.open(loc); },
       onAddControlPointHere: loc => { observationModal.openForMap(loc); },
       onControlPointSolveLocation: id => { void solveAndPersistControlPointLocation(id); },
+      onStationMarkerMove: (id, latlng) => { void moveStationTo(id, latlng, view); },
     });
     mapView = view;
     const stationsReady = showStationMarkers(view);

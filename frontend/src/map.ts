@@ -48,6 +48,8 @@ export interface CreateMapViewOptions {
   onStartStationHere?: (latlng: LatLng) => void;
   onAddControlPointHere?: (latlng: LatLng) => void;
   onControlPointSolveLocation?: (id: string) => void;
+  // Fired when the user drags a station marker and releases it at a new spot.
+  onStationMarkerMove?: (id: string, latlng: LatLng) => void;
 }
 
 const HIST_ATTR = 'Historical maps via <a href="https://bmander.com/seamap">bmander.com/seamap</a>';
@@ -153,6 +155,7 @@ export function createMapView({
   onStartStationHere,
   onAddControlPointHere,
   onControlPointSolveLocation,
+  onStationMarkerMove,
 }: CreateMapViewOptions): MapView {
   const layers: Record<string, L.Layer> = {
     'Sanborn 1884': histLayer(1884),
@@ -315,7 +318,7 @@ export function createMapView({
           existing.view = p;
           continue;
         }
-        const m = L.marker([p.latlng.lat, p.latlng.lng]);
+        const m = L.marker([p.latlng.lat, p.latlng.lng], { draggable: true });
         m.on('click', (e: L.LeafletMouseEvent) => {
           L.DomEvent.stopPropagation(e);
           openStationPopup(p);
@@ -323,6 +326,10 @@ export function createMapView({
         m.on('contextmenu', (e: L.LeafletMouseEvent) => {
           L.DomEvent.preventDefault(e.originalEvent);
           L.DomEvent.stopPropagation(e);
+        });
+        m.on('dragend', () => {
+          const ll = m.getLatLng();
+          onStationMarkerMove?.(p.id, { lat: ll.lat, lng: ll.lng });
         });
         m.addTo(map);
         stationMarkers.set(p.id, { marker: m, view: p });
