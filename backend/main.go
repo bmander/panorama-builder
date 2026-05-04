@@ -24,6 +24,12 @@ type Server struct {
 	// runs at most a few seconds; a single global mutex avoids the complexity
 	// of per-station locking without measurable contention cost.
 	solveMu sync.Mutex
+	// activeStop is non-nil while a streaming solve is running; sending on it
+	// signals the solver loop to break gracefully (the "stop here" button).
+	// Guarded by activeStopMu (separate from solveMu so a /stop request can
+	// fire while the streaming solve still holds solveMu).
+	activeStopMu sync.Mutex
+	activeStop   chan struct{}
 }
 
 func main() {

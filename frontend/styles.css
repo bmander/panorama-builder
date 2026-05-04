@@ -76,13 +76,12 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .photo-thumb .remove { padding: 0 6px; background: transparent; border: none;
                        color: #fff; cursor: pointer; font: 14px monospace; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+#solve-modal .modal-panel { width: 480px; }
 #solve-progress { display: flex; flex-direction: column; gap: 6px; }
 #solve-progress[hidden] { display: none; }
 #solve-status { font: 12px monospace; color: #ddd; }
-#solve-progress-bar { width: 100%; height: 8px; }
-#solve-log { font: 11px monospace; color: #aaa; background: rgba(255,255,255,0.04);
-             border: 1px solid #333; padding: 6px 8px; margin: 0;
-             max-height: 180px; overflow-y: auto; white-space: pre; }
+#solve-loss-chart { width: 100%; height: 160px; background: rgba(255,255,255,0.04);
+                    border: 1px solid #333; display: block; box-sizing: border-box; }
 .photo-params-row { flex-direction: row; align-items: center; gap: 8px; }
 .photo-params-row > span { flex: 0 0 90px; }
 .photo-params-row input[type="number"],

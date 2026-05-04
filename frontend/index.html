@@ -38,9 +38,6 @@
       <label class="modal-field">Title
         <input type="text" id="start-station-title" required maxlength="120">
       </label>
-      <label class="modal-field">Date estimate
-        <input type="datetime-local" id="start-station-date" step="60">
-      </label>
       <div class="modal-field">
         <span>Photos</span>
         <div id="start-station-drop" class="drop-zone">
@@ -118,20 +115,18 @@
         <span>Solve</span>
         <button type="button" id="solve-close" class="btn">✕</button>
       </div>
-      <label class="modal-field">Max iterations
-        <input type="number" id="solve-max-iters" min="1" max="200" value="200">
-      </label>
       <label class="modal-field" title="Per-residual RMS angular error threshold, in radians. When the average per-observation residual drops below this, the solver stops as converged. Default 1e-4 ≈ 20 arcsec.">Residual tolerance (rad)
         <input type="text" id="solve-residual-tol" value="1e-4">
       </label>
       <label class="settings-check"><input type="checkbox" id="solve-dry-run"> Dry run (don't write to DB)</label>
       <div id="solve-progress" hidden>
         <div id="solve-status"></div>
-        <progress id="solve-progress-bar" max="1" value="0"></progress>
-        <pre id="solve-log"></pre>
+        <canvas id="solve-loss-chart" width="480" height="160"></canvas>
       </div>
       <div class="modal-actions">
-        <button type="button" id="solve-cancel" class="btn">Close</button>
+        <button type="button" id="solve-close-btn" class="btn">Close</button>
+        <button type="button" id="solve-cancel-btn" class="btn" hidden>Cancel</button>
+        <button type="button" id="solve-stop-btn" class="btn" hidden>Stop here</button>
         <button type="button" id="solve-run" class="btn">Run</button>
       </div>
     </div>

@@ -1,6 +1,10 @@
 // Cross-cutting types and small shared helpers.
+//
+// Keep this module type-only with respect to THREE. The CP detail page
+// (cp.html) imports this for its DOM helpers and has no THREE importmap
+// entry, so any value-level THREE reference here would break that page.
 
-import * as THREE from 'three';
+import type * as THREE from 'three';
 
 export interface LatLng {
   readonly lat: number;
@@ -159,22 +163,6 @@ export const lineMat = (l: THREE.LineSegments): THREE.LineBasicMaterial =>
 // Read the role tag off any Object3D (returns undefined for un-tagged objects).
 export const getRole = (o: THREE.Object3D): Role | undefined =>
   (o.userData as Partial<RoleUserData>).role;
-
-// Build a square CanvasTexture from a 2D drawing callback. Sets sRGB color
-// space so the texture renders identically to other sRGB inputs in the scene
-// (photo overlays, terrain). Used for small UI icons (CP markers, photo
-// drag/rotate handles) where the canvas is the most ergonomic source.
-export function makeCanvasTexture(
-  size: number,
-  draw: (ctx: CanvasRenderingContext2D) => void,
-): THREE.Texture {
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  draw(c.getContext('2d')!);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
 
 // --- DOM ---
 

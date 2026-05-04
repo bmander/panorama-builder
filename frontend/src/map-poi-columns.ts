@@ -13,8 +13,8 @@
 // columns were replaced with point markers + lines.)
 
 import * as THREE from 'three';
-import { makeCanvasTexture } from './types.js';
 import type { LatLng, ControlPointView } from './types.js';
+import { makeCanvasTexture } from './canvas-texture.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
 import { norm2 } from './mathx.js';
 

@@ -233,7 +233,7 @@ type SolveConfig struct {
 	// diff that would have been applied. Useful for diagnosis.
 	DryRun *bool `json:"dry_run,omitempty"`
 
-	// MaxIters GN iteration cap
+	// MaxIters GN iteration cap (synchronous default 30
 	MaxIters *int `json:"max_iters,omitempty"`
 
 	// ResidualTolRad per-residual-RMS convergence threshold

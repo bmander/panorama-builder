@@ -102,6 +102,13 @@ type Config struct {
 	// backtracking line search resolves. Synchronous — keep it cheap. Used by
 	// the SSE endpoint to stream live loss progress to the browser.
 	OnIteration func(iter int, residualRMS float64, accepted bool)
+	// ShouldStop, when non-nil, is polled at the top of every iteration. If
+	// it returns true the loop breaks gracefully — the solver still applies
+	// the best iterate seen, so the caller can either write that back
+	// ("stop here") or discard it ("cancel"). The caller distinguishes
+	// the two outcomes externally; the solver itself only knows "should I
+	// stop early."
+	ShouldStop func() bool
 }
 
 func (c Config) withDefaults() Config {

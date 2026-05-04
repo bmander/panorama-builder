@@ -100,6 +100,10 @@ func Solve(problem Problem, cfg Config) (Result, error) {
 	iters := 0
 
 	for ; iters < cfg.MaxIters; iters++ {
+		// External stop signal (Cancel / Stop here from the SSE handler).
+		if cfg.ShouldStop != nil && cfg.ShouldStop() {
+			break
+		}
 		// Convergence by residual.
 		if prevNorm < cfg.ResidualTolRad*math.Sqrt(float64(len(r))) {
 			converged = true

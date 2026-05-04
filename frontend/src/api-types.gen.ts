@@ -549,7 +549,7 @@ export interface components {
         };
         /** @description Optional knobs for the solver. Defaults are used when omitted. */
         SolveConfig: {
-            /** @description GN iteration cap */
+            /** @description GN iteration cap (synchronous default 30 */
             max_iters?: number;
             /**
              * Format: double

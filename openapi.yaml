@@ -752,7 +752,7 @@ components:
       description: |
         Optional knobs for the solver. Defaults are used when omitted.
       properties:
-        max_iters: { type: integer, minimum: 1, maximum: 200, description: GN iteration cap, default 30 }
+        max_iters: { type: integer, minimum: 1, maximum: 10000, description: GN iteration cap (synchronous default 30, streaming default 1000) }
         residual_tol_rad: { type: number, format: double, description: per-residual-RMS convergence threshold, default 1e-4 }
         dry_run:
           type: boolean

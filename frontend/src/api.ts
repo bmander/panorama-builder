@@ -177,23 +177,48 @@ export function solveJoint(config?: SolveConfig): Promise<SolveResult> {
   return request<SolveResult>('POST', '/solve/joint', config ?? {});
 }
 
-// Streaming variant: one event per GN iteration, then a final 'done' or
-// 'error' event. The promise resolves when the stream closes (which happens
-// after the final event). Caller is responsible for handling per-event UI.
+// Streaming variant: one event per GN iteration, then a final terminal
+// event. The promise resolves when the stream closes (which happens after
+// the final event, or when the caller aborts via signal). Pass an
+// AbortSignal to support a Cancel button — the underlying fetch is aborted,
+// the server detects the disconnect, and the in-flight solve breaks early
+// without writing anything back.
 export type SolveProgressEvent =
   | { readonly kind: 'iter'; readonly iter: number; readonly rms: number; readonly accepted: boolean }
   | { readonly kind: 'done'; readonly result: SolveResult }
+  | { readonly kind: 'stopped'; readonly result: SolveResult }
+  | { readonly kind: 'cancelled' }
   | { readonly kind: 'error'; readonly message: string };
 
 export async function solveJointStream(
   config: SolveConfig,
   onEvent: (e: SolveProgressEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(`${API}/solve/joint/stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(config),
-  });
+  // Abort can fire either during the initial fetch (TypeError from undici) or
+  // mid-stream (AbortError from the reader). In both cases the caller wants
+  // a single 'cancelled' event, not a thrown error to surface as a failure.
+  const handleAbort = (err: unknown): void => {
+    if (signal?.aborted) {
+      onEvent({ kind: 'cancelled' });
+      return;
+    }
+    throw err;
+  };
+
+  let res: Response;
+  try {
+    const init: RequestInit = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    };
+    if (signal) init.signal = signal;
+    res = await fetch(`${API}/solve/joint/stream`, init);
+  } catch (err) {
+    handleAbort(err);
+    return;
+  }
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => '');
     throw new Error(`POST /solve/joint/stream → ${res.status.toString()} ${text}`);
@@ -201,25 +226,40 @@ export async function solveJointStream(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    // Carry partial trailing event across reads — a chunk may split mid-event.
-    let sepIdx = buf.indexOf('\n\n');
-    while (sepIdx !== -1) {
-      const block = buf.slice(0, sepIdx);
-      buf = buf.slice(sepIdx + 2);
-      const dataLine = block.split('\n').find(l => l.startsWith('data:'));
-      if (dataLine) {
-        try {
-          onEvent(JSON.parse(dataLine.slice(5).trim()) as SolveProgressEvent);
-        } catch (err) {
-          console.error('solve stream parse failed:', err, dataLine);
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      // Carry partial trailing event across reads — a chunk may split mid-event.
+      let sepIdx = buf.indexOf('\n\n');
+      while (sepIdx !== -1) {
+        const block = buf.slice(0, sepIdx);
+        buf = buf.slice(sepIdx + 2);
+        const dataLine = block.split('\n').find(l => l.startsWith('data:'));
+        if (dataLine) {
+          try {
+            onEvent(JSON.parse(dataLine.slice(5).trim()) as SolveProgressEvent);
+          } catch (err) {
+            console.error('solve stream parse failed:', err, dataLine);
+          }
         }
+        sepIdx = buf.indexOf('\n\n');
       }
-      sepIdx = buf.indexOf('\n\n');
     }
+  } catch (err) {
+    handleAbort(err);
+  }
+}
+
+// Signal an in-flight streaming solve to stop gracefully — the solver
+// returns the best iterate so far and the server writes it back. 404 if no
+// solve is currently running (caller should treat as no-op).
+export async function solveJointStop(): Promise<void> {
+  const res = await fetch(`${API}/solve/joint/stop`, { method: 'POST' });
+  if (!res.ok && res.status !== 404) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`POST /solve/joint/stop → ${res.status.toString()} ${text}`);
   }
 }
 

@@ -2,11 +2,11 @@ import * as THREE from 'three';
 import { vecToAzAlt } from './geo.js';
 import {
   lineMat,
-  makeCanvasTexture,
   meshMat,
   overlayData,
   poiData,
 } from './types.js';
+import { makeCanvasTexture } from './canvas-texture.js';
 import { clamp, degToRad } from './mathx.js';
 import type {
   Cone,

@@ -15,7 +15,6 @@ import { vecToAzAlt } from './geo.js';
 import type { ControlPointView, LatLng } from './types.js';
 import * as api from './api.js';
 import type { ApiControlPoint, ApiHydratedStation, ApiStation } from './api.js';
-import { loadPrefs } from './prefs.js';
 import { createSyncManager } from './sync.js';
 import { createSettingsPanel } from './settings.js';
 import { createOrchestration } from './handlers.js';
@@ -77,7 +76,6 @@ const overlays = createOverlayManager({
       refreshControlPointColumns();
     }
     sync.flush();
-    settings.persist();
   },
   onSelectionChange: () => {
     viewer.requestRender();
@@ -205,7 +203,6 @@ const sync = createSyncManager({
 const settings = createSettingsPanel({
   viewer, terrain, sunMarker,
   getCameraLocation: getStationLocation,
-  getCurrentStationId,
 });
 
 const handlers = createOrchestration({
@@ -265,7 +262,7 @@ const observationModal = createObservationModal({
 attachInput({
   viewer,
   overlays,
-  onChange: () => { viewer.requestRender(); hud.refresh(); refreshSelectionUI(); settings.persist(); },
+  onChange: () => { viewer.requestRender(); hud.refresh(); refreshSelectionUI(); },
   onPhotoDropped: (tex, blob, aspect, dir, revokeUrl) => {
     void handlers.onPhotoDropped(tex, blob, aspect, dir, revokeUrl);
   },
@@ -279,7 +276,6 @@ attachInput({
     if (!terrain.setCameraHeight(next)) return;
     hud.refresh();
     refreshControlPointColumns(); // markers' world-y depends on cameraHeight
-    settings.persist();
   },
   findColumnAtNDC: ndc => {
     if (!stationLocation) return null;
@@ -690,7 +686,6 @@ async function bootstrap(): Promise<void> {
 
   if (currentStationId) {
     await hydrateFromAPI(currentStationId);
-    settings.apply(loadPrefs(currentStationId));
     overlays.setSelected(null);
     overlays.setSelectedImageMeasurement(null);
     admin.setVisible(true);

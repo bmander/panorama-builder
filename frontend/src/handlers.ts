@@ -11,13 +11,11 @@ import { overlayData, stationHref } from './types.js';
 import type { LatLng } from './types.js';
 import type { OverlayManager } from './overlay.js';
 import type { SyncManager } from './sync.js';
-import { mergePrefs } from './prefs.js';
 import { clamp } from './mathx.js';
 
 export interface StartStationInput {
   readonly loc: LatLng;
   readonly name: string;
-  readonly dateEstimate: string;
   readonly photos: readonly File[];
 }
 
@@ -49,7 +47,7 @@ export function createOrchestration({
   getCurrentStationId, overlays, sync,
 }: CreateOrchestrationOptions): OrchestrationHandlers {
   async function onStartStationHere(input: StartStationInput): Promise<void> {
-    const { loc, name, dateEstimate, photos } = input;
+    const { loc, name, photos } = input;
     let created;
     try {
       created = await api.createStation(loc, name || undefined);
@@ -57,7 +55,6 @@ export function createOrchestration({
       sync.reportError('start station', err);
       return;
     }
-    if (dateEstimate) mergePrefs(created.id, { sunDateTime: dateEstimate });
 
     const aspects: (number | null)[] = await Promise.all(photos.map(file =>
       readAspectRatio(file).catch((err: unknown) => {
