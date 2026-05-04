@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Viewer } from './viewer.js';
 import {
-  ROLE_BODY, ROLE_HANDLE, ROLE_HANDLE_DRAG, ROLE_HANDLE_ROTATE, ROLE_POI,
+  ROLE_BODY, ROLE_HANDLE_DRAG, ROLE_HANDLE_FOV, ROLE_HANDLE_ROTATE, ROLE_POI,
   dirFromAzAlt,
 } from './overlay.js';
 import type { OverlayManager } from './overlay.js';
@@ -128,9 +128,9 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
     openBatch();
 
     const poiHit = hits.find(h => getRole(h.object) === ROLE_POI);
-    const handleHit = hits.find(h => getRole(h.object) === ROLE_HANDLE);
     const dragHandleHit = hits.find(h => getRole(h.object) === ROLE_HANDLE_DRAG);
     const rotateHandleHit = hits.find(h => getRole(h.object) === ROLE_HANDLE_ROTATE);
+    const fovHandleHit = hits.find(h => getRole(h.object) === ROLE_HANDLE_FOV);
     const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
     const selected = overlays.getSelected();
 
@@ -181,8 +181,10 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
         mode = { type: 'pan' };
       }
     }
-    // 3c. Corner handle on the selected photo → resize.
-    else if (handleHit && selected && handleHit.object.parent === selected) {
+    // 3c. FOV handle on the selected photo → resize. The dist-from-center
+    //     ratio drives the size_rad change, same math as the old corner
+    //     handles — just sourced from a single dedicated icon.
+    else if (fovHandleHit && selected && fovHandleHit.object.parent === selected) {
       const center = projectToScreen(selected.position);
       const dx = e.clientX - center.x, dy = e.clientY - center.y;
       mode = { type: 'resize', dist: norm2(dx, dy) || 1, sizeRad: overlayData(selected).sizeRad };

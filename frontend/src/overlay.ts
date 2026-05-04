@@ -24,11 +24,11 @@ export const SIZE_MIN = degToRad(2);
 export const SIZE_MAX = Math.PI * 0.9;             // 162°
 
 export const ROLE_BODY = 'body' satisfies Role;
-export const ROLE_HANDLE = 'handle' satisfies Role;
 export const ROLE_OUTLINE = 'outline' satisfies Role;
 export const ROLE_POI = 'poi' satisfies Role;
 export const ROLE_HANDLE_DRAG = 'handle-drag' satisfies Role;
 export const ROLE_HANDLE_ROTATE = 'handle-rotate' satisfies Role;
+export const ROLE_HANDLE_FOV = 'handle-fov' satisfies Role;
 
 const POI_COLOR = 0xff5050;
 const POI_COLOR_SELECTED = 0xffff66;
@@ -128,6 +128,23 @@ function getRotateIconTexture(): THREE.Texture {
   return rotateIconTex;
 }
 
+let fovIconTex: THREE.Texture | null = null;
+function getFovIconTexture(): THREE.Texture {
+  if (fovIconTex) return fovIconTex;
+  // Diagonal double-headed arrow — the standard "scale / resize" affordance.
+  fovIconTex = makeCanvasTexture(32, ctx => {
+    strokeOutlinedPath(ctx, () => {
+      ctx.beginPath();
+      ctx.moveTo(8, 8); ctx.lineTo(24, 24);
+      ctx.moveTo(8, 8); ctx.lineTo(8, 14);
+      ctx.moveTo(8, 8); ctx.lineTo(14, 8);
+      ctx.moveTo(24, 24); ctx.lineTo(24, 18);
+      ctx.moveTo(24, 24); ctx.lineTo(18, 24);
+    });
+  });
+  return fovIconTex;
+}
+
 // Lazy so the canvas isn't created on the index page (no overlays there).
 let placeholderTex: THREE.Texture | null = null;
 function getPlaceholderTexture(): THREE.Texture {
@@ -150,10 +167,6 @@ function getPlaceholderTexture(): THREE.Texture {
 }
 
 const widthFromSizeRad = (sr: number): number => 2 * OVERLAY_R * Math.tan(sr / 2);
-
-const HANDLE_CORNERS: readonly (readonly [number, number])[] = [
-  [-0.5, -0.5], [0.5, -0.5], [-0.5, 0.5], [0.5, 0.5],
-];
 
 export function dirFromAzAlt(az: number, alt: number): THREE.Vector3 {
   const v = new THREE.Vector3(0, 0, -1);
@@ -329,13 +342,6 @@ export function createOverlayManager(
     const h = w / data.aspect;
     data.body.scale.set(w, h, 1);
     if (data.outline) data.outline.scale.set(w, h, 1);
-    if (data.handles) {
-      data.handles.forEach((m, i) => {
-        const c = HANDLE_CORNERS[i];
-        if (!c) return;
-        m.position.set(c[0] * w, c[1] * h, 0);
-      });
-    }
     if (data.pois) {
       const r = w * POI_WIDTH_FRACTION;
       for (const poi of data.pois) {
@@ -344,14 +350,20 @@ export function createOverlayManager(
         poi.scale.setScalar(r);
       }
     }
-    if (data.dragHandle && data.rotateHandle) {
+    if (data.dragHandle && data.rotateHandle && data.fovHandle) {
       const r = w * ACTION_HANDLE_FRACTION;
       const yAbove = h / 2 + 1.5 * r;
+      // Row of three at the upper-right: drag, rotate, fov, spaced 2r apart.
+      // drag sits just inside the photo's right edge so the trio reads as
+      // a single attached toolbar.
       const xRight = w / 2 + r;
-      data.dragHandle.position.set(xRight - 2 * r, yAbove, 0);
-      data.dragHandle.scale.setScalar(2 * r);
-      data.rotateHandle.position.set(xRight, yAbove, 0);
-      data.rotateHandle.scale.setScalar(2 * r);
+      const place = (m: THREE.Mesh, x: number): void => {
+        m.position.set(x, yAbove, 0);
+        m.scale.setScalar(2 * r);
+      };
+      place(data.dragHandle, xRight - 2 * r);
+      place(data.rotateHandle, xRight);
+      place(data.fovHandle, xRight + 2 * r);
     }
   }
 
@@ -372,22 +384,11 @@ export function createOverlayManager(
   }
 
   function addSelectionVisuals(o: THREE.Group): void {
-    const handleGeom = new THREE.SphereGeometry(2.5, 12, 8);
-    const handleMat = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false });
-    const handles: THREE.Mesh[] = [];
-    for (let i = 0; i < 4; i++) {
-      const m = new THREE.Mesh(handleGeom, handleMat);
-      (m.userData as { role: Role }).role = ROLE_HANDLE;
-      m.renderOrder = 2;
-      o.add(m);
-      handles.push(m);
-    }
     const data = overlayData(o);
-    data.handles = handles;
     data.dragHandle = makeActionHandle(ROLE_HANDLE_DRAG, getDragIconTexture());
     data.rotateHandle = makeActionHandle(ROLE_HANDLE_ROTATE, getRotateIconTexture());
-    o.add(data.dragHandle);
-    o.add(data.rotateHandle);
+    data.fovHandle = makeActionHandle(ROLE_HANDLE_FOV, getFovIconTexture());
+    o.add(data.dragHandle, data.rotateHandle, data.fovHandle);
     applySize(o);
     applyOverlayDecoration(o);
   }
@@ -395,16 +396,6 @@ export function createOverlayManager(
   function clearSelectionVisuals(o: THREE.Group | null): void {
     if (!o) return;
     const data = overlayData(o);
-    if (data.handles) {
-      const handles = data.handles;
-      for (const m of handles) o.remove(m);
-      const first = handles[0];
-      if (first) {
-        first.geometry.dispose();
-        meshMat(first).dispose();
-      }
-      delete data.handles;
-    }
     if (data.dragHandle) {
       o.remove(data.dragHandle);
       meshMat(data.dragHandle).dispose();
@@ -414,6 +405,11 @@ export function createOverlayManager(
       o.remove(data.rotateHandle);
       meshMat(data.rotateHandle).dispose();
       delete data.rotateHandle;
+    }
+    if (data.fovHandle) {
+      o.remove(data.fovHandle);
+      meshMat(data.fovHandle).dispose();
+      delete data.fovHandle;
     }
     applyOverlayDecoration(o);
   }
@@ -773,7 +769,9 @@ export function createOverlayManager(
       if (selected) {
         const data = overlayData(selected);
         if (data.outline) data.outline.visible = visible;
-        if (data.handles) for (const m of data.handles) m.visible = visible;
+        if (data.dragHandle) data.dragHandle.visible = visible;
+        if (data.rotateHandle) data.rotateHandle.visible = visible;
+        if (data.fovHandle) data.fovHandle.visible = visible;
       }
       for (const child of overlaysGroup.children) {
         const data = overlayData(child as THREE.Group);

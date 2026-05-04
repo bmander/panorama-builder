@@ -94,11 +94,11 @@ export interface OverlayUserData {
   lockSizeRad: boolean;
   body: THREE.Mesh;
   outline?: THREE.LineSegments;
-  handles?: THREE.Mesh[];
   // HUD-style action handles that appear at the photo's upper-right when
   // selected. Click-drag on each enters the corresponding input mode.
   dragHandle?: THREE.Mesh;
   rotateHandle?: THREE.Mesh;
+  fovHandle?: THREE.Mesh;
   pois?: THREE.Mesh[];
 }
 
@@ -124,10 +124,10 @@ export interface POIUserData {
 }
 
 // Roles tagged on every interactive scene-graph object so input.ts can
-// dispatch by what the raycaster hit. handle-drag / handle-rotate are
-// per-photo HUD widgets that appear only on the selected photo.
-export type Role = 'body' | 'handle' | 'outline' | 'poi'
-                 | 'handle-drag' | 'handle-rotate';
+// dispatch by what the raycaster hit. handle-drag / handle-rotate / handle-fov
+// are per-photo HUD widgets that appear only on the selected photo.
+export type Role = 'body' | 'outline' | 'poi'
+                 | 'handle-drag' | 'handle-rotate' | 'handle-fov';
 
 export interface RoleUserData {
   role: Role;
