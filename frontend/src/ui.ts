@@ -1,14 +1,14 @@
-import * as THREE from 'three';
 import { getElement } from './types.js';
 import type { AzAltSnapshot } from './types.js';
 import type { Baker } from './bake.js';
+import { radToDeg } from './mathx.js';
 
 export interface Hud {
   refresh(): void;
   setVisible(visible: boolean): void;
 }
 
-const deg = (r: number): string => THREE.MathUtils.radToDeg(r).toFixed(1);
+const deg = (r: number): string => radToDeg(r).toFixed(1);
 
 export function createHud(getSnapshot: () => AzAltSnapshot): Hud {
   const el = getElement('hud');

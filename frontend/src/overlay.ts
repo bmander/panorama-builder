@@ -7,6 +7,7 @@ import {
   overlayData,
   poiData,
 } from './types.js';
+import { clamp, degToRad } from './mathx.js';
 import type {
   Cone,
   ControlPointView,
@@ -19,7 +20,7 @@ import type {
 
 export const OVERLAY_R = 100;
 export const DEFAULT_SIZE_RAD = Math.PI / 6;       // 30°
-export const SIZE_MIN = (Math.PI / 180) * 2;       // 2°
+export const SIZE_MIN = degToRad(2);
 export const SIZE_MAX = Math.PI * 0.9;             // 162°
 
 export const ROLE_BODY = 'body' satisfies Role;
@@ -505,7 +506,7 @@ export function createOverlayManager(
     },
     resizeSelectedTo(sizeRad) {
       if (!selected) return;
-      overlayData(selected).sizeRad = THREE.MathUtils.clamp(sizeRad, SIZE_MIN, SIZE_MAX);
+      overlayData(selected).sizeRad = clamp(sizeRad, SIZE_MIN, SIZE_MAX);
       applySize(selected);
       notify();
     },
@@ -543,7 +544,7 @@ export function createOverlayManager(
       notify();
     },
     setOpacity(o, opacity) {
-      meshMat(overlayData(o).body).opacity = THREE.MathUtils.clamp(opacity, 0, 1);
+      meshMat(overlayData(o).body).opacity = clamp(opacity, 0, 1);
       onLightMutate?.();
     },
     getOpacity: (o) => meshMat(overlayData(o).body).opacity,
@@ -743,7 +744,7 @@ export function createOverlayManager(
     applyPose(o, pose) {
       overlayData(o).photoRoll = pose.photoRoll;
       placeAt(o, dirFromAzAlt(pose.photoAz, pose.photoTilt), pose.photoRoll);
-      overlayData(o).sizeRad = THREE.MathUtils.clamp(pose.sizeRad, SIZE_MIN, SIZE_MAX);
+      overlayData(o).sizeRad = clamp(pose.sizeRad, SIZE_MIN, SIZE_MAX);
       applySize(o);
       notify();
     },

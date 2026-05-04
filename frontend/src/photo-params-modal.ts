@@ -2,13 +2,14 @@
 // type exact pose values (in degrees) and toggle per-parameter solver locks
 // that map to the API's lock_photo_* / lock_size_rad fields.
 
-import * as THREE from 'three';
+import type * as THREE from 'three';
 import { getElement, overlayData } from './types.js';
 import type { PhotoLocks } from './types.js';
 import * as api from './api.js';
 import { SIZE_MAX, SIZE_MIN } from './overlay.js';
 import type { OverlayManager } from './overlay.js';
 import type { SyncManager } from './sync.js';
+import { clamp, degToRad, radToDeg } from './mathx.js';
 
 export interface PhotoParamsModal {
   open(overlay: THREE.Group): void;
@@ -19,8 +20,8 @@ export interface CreatePhotoParamsModalOptions {
   sync: SyncManager;
 }
 
-const deg = THREE.MathUtils.radToDeg;
-const rad = THREE.MathUtils.degToRad;
+const deg = radToDeg;
+const rad = degToRad;
 
 export function createPhotoParamsModal(
   { overlays, sync }: CreatePhotoParamsModalOptions,
@@ -89,7 +90,7 @@ export function createPhotoParamsModal(
     if (rollDeg === null) { rollEl.focus(); return; }
     if (fovDeg === null) { fovEl.focus(); return; }
 
-    const sizeRad = THREE.MathUtils.clamp(rad(fovDeg), SIZE_MIN, SIZE_MAX);
+    const sizeRad = clamp(rad(fovDeg), SIZE_MIN, SIZE_MAX);
     const data = overlayData(overlay);
     const photoId = data.id;
     const aspect = data.aspect;

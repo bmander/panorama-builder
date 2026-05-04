@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { clamp } from './mathx.js';
 
 export const PITCH_LIMIT = Math.PI / 2 - 0.01;
 export const FOV_MIN = 2;
@@ -155,11 +156,11 @@ export function createViewer({ container }: { container: HTMLElement }): Viewer 
     },
     setAzAlt(az: number, alt: number) {
       azimuth = az;
-      altitude = THREE.MathUtils.clamp(alt, -PITCH_LIMIT, PITCH_LIMIT);
+      altitude = clamp(alt, -PITCH_LIMIT, PITCH_LIMIT);
       dirty = true;
     },
     setFov(fov: number) {
-      const clamped = THREE.MathUtils.clamp(fov, FOV_MIN, FOV_MAX);
+      const clamped = clamp(fov, FOV_MIN, FOV_MAX);
       if (camera.fov === clamped) return;
       camera.fov = clamped;
       camera.updateProjectionMatrix();

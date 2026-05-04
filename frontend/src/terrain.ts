@@ -26,7 +26,7 @@ import {
 import { fetchImageryTile } from './imagery.js';
 import { sunDirection } from './solar.js';
 import { M_PER_DEG_LAT, latLngToCameraRelativeMeters } from './geo.js';
-import { degToRad } from './mathx.js';
+import { clamp, degToRad } from './mathx.js';
 
 // Outer-edge angular-pitch target driving the ring layout below: ~5 mrad
 // (~0.29°). At 75° FOV / ~1920 px viewport one screen pixel subtends ~0.7
@@ -85,8 +85,8 @@ export type TerrainMode = 'off' | 'wireframe' | 'shaded';
 
 // Sample elevation at fractional pixel coords within a tile (nearest-neighbor).
 function sampleTile(elev: Float32Array, px: number, py: number): number {
-  const ix = Math.max(0, Math.min(TILE_PX - 1, Math.floor(px)));
-  const iy = Math.max(0, Math.min(TILE_PX - 1, Math.floor(py)));
+  const ix = clamp(Math.floor(px), 0, TILE_PX - 1);
+  const iy = clamp(Math.floor(py), 0, TILE_PX - 1);
   return elev[iy * TILE_PX + ix]!;
 }
 

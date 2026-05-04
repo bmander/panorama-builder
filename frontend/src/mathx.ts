@@ -20,8 +20,9 @@ export const dot3 = (
   bx: number, by: number, bz: number,
 ): number => ax * bx + ay * by + az * bz;
 
-// Clamp v into [lo, hi]. Provided here so non-THREE files (geo.ts, solar.ts,
-// handlers.ts) don't have to reach for THREE.MathUtils.clamp just for this.
+// Clamp v into [lo, hi]. The single source for the project — THREE.MathUtils
+// has the same function, but using one helper everywhere keeps the convention
+// uniform across files that don't otherwise need THREE.
 export const clamp = (v: number, lo: number, hi: number): number =>
   v < lo ? lo : v > hi ? hi : v;
 

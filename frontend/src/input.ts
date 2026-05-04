@@ -7,7 +7,7 @@ import {
 import type { OverlayManager } from './overlay.js';
 import { getRole, overlayData, poiData } from './types.js';
 import type { LatLng } from './types.js';
-import { dist2, norm2 } from './mathx.js';
+import { degToRad, dist2, norm2 } from './mathx.js';
 
 // Discriminated state machine for the active pointer drag. `null` = no drag in
 // progress. Each variant carries exactly the state its handler needs, so
@@ -283,7 +283,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
         const dx = e.clientX - lastX, dy = e.clientY - lastY;
         lastX = e.clientX; lastY = e.clientY;
         // Drag distance scaled so one screen-height ≈ one vertical FOV.
-        const radPerPx = THREE.MathUtils.degToRad(camera.fov) / innerHeight;
+        const radPerPx = degToRad(camera.fov) / innerHeight;
         const { azimuth, altitude } = viewer.getAzAlt();
         viewer.setAzAlt(azimuth + dx * radPerPx, altitude + dy * radPerPx);
         onChange();
