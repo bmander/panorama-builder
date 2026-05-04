@@ -6,7 +6,7 @@
 // elements are linear in days-since-J2000 with small periodic corrections;
 // good enough for terrain shading and ~century-range datetimes.
 
-const DEG = Math.PI / 180;
+import { degToRad, wrap2Pi } from './mathx.js';
 
 // J2000.0 epoch is 2000-01-01 12:00 UTC = JD 2451545.0. Unix epoch is JD
 // 2440587.5, so the offset is exactly 10957.5 days.
@@ -18,20 +18,20 @@ export interface SunPosition {
 }
 
 export function solarAzAlt(date: Date, latDeg: number, lngDeg: number): SunPosition {
-  const lat = latDeg * DEG;
-  const lng = lngDeg * DEG;
+  const lat = degToRad(latDeg);
+  const lng = degToRad(lngDeg);
   const days = date.getTime() / 86400000 - J2000_UNIX_DAYS;
 
-  const meanLong = (280.460 + 0.9856474 * days) * DEG;
-  const meanAnom = (357.528 + 0.9856003 * days) * DEG;
-  const eclLong = meanLong + (1.915 * Math.sin(meanAnom) + 0.020 * Math.sin(2 * meanAnom)) * DEG;
-  const oblique = (23.439 - 0.0000004 * days) * DEG;
+  const meanLong = degToRad(280.460 + 0.9856474 * days);
+  const meanAnom = degToRad(357.528 + 0.9856003 * days);
+  const eclLong = meanLong + degToRad(1.915 * Math.sin(meanAnom) + 0.020 * Math.sin(2 * meanAnom));
+  const oblique = degToRad(23.439 - 0.0000004 * days);
 
   const ra = Math.atan2(Math.cos(oblique) * Math.sin(eclLong), Math.cos(eclLong));
   const dec = Math.asin(Math.sin(oblique) * Math.sin(eclLong));
 
   // Greenwich mean sidereal time, converted to radians via 15°/hour.
-  const gmst = (18.697374558 + 24.06570982441908 * days) * 15 * DEG;
+  const gmst = degToRad((18.697374558 + 24.06570982441908 * days) * 15);
   const ha = gmst + lng - ra;
 
   const sinLat = Math.sin(lat), cosLat = Math.cos(lat);
@@ -40,7 +40,7 @@ export function solarAzAlt(date: Date, latDeg: number, lngDeg: number): SunPosit
 
   const alt = Math.asin(sinLat * sinDec + cosLat * cosDec * cosHa);
   const azRaw = Math.atan2(-sinHa * cosDec, cosLat * sinDec - sinLat * cosDec * cosHa);
-  const az = (azRaw + 2 * Math.PI) % (2 * Math.PI);
+  const az = wrap2Pi(azRaw);
 
   return { az, alt };
 }

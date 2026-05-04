@@ -16,6 +16,7 @@ import * as THREE from 'three';
 import { makeCanvasTexture } from './types.js';
 import type { LatLng, ControlPointView } from './types.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
+import { norm2 } from './mathx.js';
 
 const MARKER_COLOR = 0x5080ff;
 const MARKER_COLOR_SELECTED = 0xffff66;
@@ -205,9 +206,7 @@ export function findHitColumn(
     const y = cp.estAlt - cameraHeight;
     _projected.set(x, y, z).project(camera);
     if (_projected.z > 1) continue; // behind camera
-    const dx = _projected.x - ndc.x;
-    const dy = _projected.y - ndc.y;
-    const d = Math.hypot(dx, dy);
+    const d = norm2(_projected.x - ndc.x, _projected.y - ndc.y);
     if (d < bestDist) { bestDist = d; best = { controlPointId: cp.id, latlng }; }
   }
   return best;

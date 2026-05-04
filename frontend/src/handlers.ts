@@ -12,6 +12,7 @@ import type { LatLng } from './types.js';
 import type { OverlayManager } from './overlay.js';
 import type { SyncManager } from './sync.js';
 import { mergePrefs } from './prefs.js';
+import { clamp } from './mathx.js';
 
 export interface StartStationInput {
   readonly loc: LatLng;
@@ -118,7 +119,7 @@ export function createOrchestration({
       return;
     }
     const az = Math.atan2(-dir.x, -dir.z);
-    const alt = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+    const alt = Math.asin(clamp(dir.y, -1, 1));
     const pose = { aspect, photo_az: az, photo_tilt: alt, photo_roll: 0, size_rad: DEFAULT_SIZE_RAD, opacity: 1 };
 
     let photo;

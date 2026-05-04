@@ -7,6 +7,7 @@
 // Encoding:    elevation_meters = R * 256 + G + B / 256 - 32768
 
 import { createTileCache } from './tile-cache.js';
+import { degToRad, radToDeg } from './mathx.js';
 
 export const TILE_PX = 256;
 
@@ -64,7 +65,7 @@ export function lngToTileX(lng: number, z: number): number {
 }
 
 export function latToTileY(lat: number, z: number): number {
-  const sinLat = Math.sin(lat * Math.PI / 180);
+  const sinLat = Math.sin(degToRad(lat));
   return (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * 2 ** z;
 }
 
@@ -74,7 +75,7 @@ export function tileXToLng(tileX: number, z: number): number {
 
 export function tileYToLat(tileY: number, z: number): number {
   const n = Math.PI - 2 * Math.PI * tileY / 2 ** z;
-  return (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)));
+  return radToDeg(Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))));
 }
 
 // Single-point elevation lookup. Uses the same zoom as terrain.ts's

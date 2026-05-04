@@ -3,6 +3,7 @@
 // bearing because we want to handle anchors anywhere on Earth, not just near apex.
 
 import type { LatLng } from './types.js';
+import { clamp, degToRad, norm3, radToDeg } from './mathx.js';
 
 export const R_EARTH = 6371000;
 
@@ -14,7 +15,7 @@ export const M_PER_DEG_LAT = 111320;
 // centered on `camLoc`: +x east, +z south, +y unused (caller pairs with an
 // elevation/height of its own). Accurate to <1 % within ~50 km of camLoc.
 export function latLngToCameraRelativeMeters(pt: LatLng, camLoc: LatLng): { x: number; z: number } {
-  const cosLat = Math.cos(camLoc.lat * Math.PI / 180);
+  const cosLat = Math.cos(degToRad(camLoc.lat));
   return {
     x: (pt.lng - camLoc.lng) * M_PER_DEG_LAT * cosLat,
     z: -(pt.lat - camLoc.lat) * M_PER_DEG_LAT,
@@ -22,33 +23,33 @@ export function latLngToCameraRelativeMeters(pt: LatLng, camLoc: LatLng): { x: n
 }
 
 export function bearingFromLocation(loc: LatLng, latlng: LatLng): number {
-  const φ1 = loc.lat * Math.PI / 180, φ2 = latlng.lat * Math.PI / 180;
-  const Δλ = (latlng.lng - loc.lng) * Math.PI / 180;
+  const φ1 = degToRad(loc.lat), φ2 = degToRad(latlng.lat);
+  const Δλ = degToRad(latlng.lng - loc.lng);
   const y = Math.sin(Δλ) * Math.cos(φ2);
   const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
-  return Math.atan2(y, x) * 180 / Math.PI;
+  return radToDeg(Math.atan2(y, x));
 }
 
 // Great-circle distance between two lat/lng points, in meters.
 export function groundDistance(a: LatLng, b: LatLng): number {
-  const φ1 = a.lat * Math.PI / 180, φ2 = b.lat * Math.PI / 180;
+  const φ1 = degToRad(a.lat), φ2 = degToRad(b.lat);
   const dφ = φ2 - φ1;
-  const dλ = (b.lng - a.lng) * Math.PI / 180;
+  const dλ = degToRad(b.lng - a.lng);
   const s = Math.sin(dφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(dλ / 2) ** 2;
   return 2 * R_EARTH * Math.asin(Math.sqrt(s));
 }
 
 // Viewer-azimuth (CCW from −Z) ↔ compass bearing (CW from N) conversions.
-export const viewerAzToBearing: (az: number) => number = az => -az * 180 / Math.PI;
-export const bearingToViewerAz: (bDeg: number) => number = bDeg => -bDeg * Math.PI / 180;
+export const viewerAzToBearing: (az: number) => number = az => -radToDeg(az);
+export const bearingToViewerAz: (bDeg: number) => number = bDeg => -degToRad(bDeg);
 
 // Direction from origin to (x, y, z) in viewer frame (CCW from −Z, +Y up)
 // → { az, alt }. Zero-length input returns {0, 0}; the y/len ratio is clamped
 // so float drift doesn't NaN through asin.
 export function vecToAzAlt(x: number, y: number, z: number): { az: number; alt: number } {
-  const len = Math.hypot(x, y, z);
+  const len = norm3(x, y, z);
   return {
     az: Math.atan2(-x, -z),
-    alt: len === 0 ? 0 : Math.asin(Math.max(-1, Math.min(1, y / len))),
+    alt: len === 0 ? 0 : Math.asin(clamp(y / len, -1, 1)),
   };
 }

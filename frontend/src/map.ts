@@ -1,5 +1,6 @@
 import * as L from 'leaflet';
 import { R_EARTH, viewerAzToBearing } from './geo.js';
+import { degToRad, dot3, norm2, norm3, radToDeg } from './mathx.js';
 import { cpHref } from './types.js';
 import type { Cone, LatLng } from './types.js';
 import { TILE_PX, fetchTileElevations, tileYToLat } from './dem.js';
@@ -66,14 +67,14 @@ const histLayer = (year: number, opts: L.TileLayerOptions = {}): L.TileLayer => 
 // Client-side hillshade rendered from the same Terrarium PNG tiles the 3D
 // terrain mesh uses. Sun NW (azimuth 315°) at 45° elevation — the standard
 // cartographic convention.
-const SUN_AZ_RAD = 315 * Math.PI / 180;
-const SUN_ALT_RAD = 45 * Math.PI / 180;
+const SUN_AZ_RAD = degToRad(315);
+const SUN_ALT_RAD = degToRad(45);
 const SUN_E = Math.sin(SUN_AZ_RAD) * Math.cos(SUN_ALT_RAD);
 const SUN_N = Math.cos(SUN_AZ_RAD) * Math.cos(SUN_ALT_RAD);
 const SUN_U = Math.sin(SUN_ALT_RAD);
 
 function metersPerWebMercatorPixel(lat: number, z: number): number {
-  return 156543.03 * Math.cos(lat * Math.PI / 180) / 2 ** z;
+  return 156543.03 * Math.cos(degToRad(lat)) / 2 ** z;
 }
 
 function renderHillshade(elev: Float32Array, cellSize: number): ImageData {
@@ -89,8 +90,8 @@ function renderHillshade(elev: Float32Array, cellSize: number): ImageData {
       const dzdN = -(elev[yp * TILE_PX + x]! - elev[ym * TILE_PX + x]!) / (2 * cellSize);
       const nE = -dzdE;
       const nN = -dzdN;
-      const dot = nE * SUN_E + nN * SUN_N + SUN_U;
-      const norm = Math.sqrt(nE * nE + nN * nN + 1);
+      const dot = dot3(nE, nN, 1, SUN_E, SUN_N, SUN_U);
+      const norm = norm3(nE, nN, 1);
       const shade = Math.max(0, dot / norm);
       const gray = Math.min(255, Math.round(255 * shade));
       const o = (y * TILE_PX + x) * 4;
@@ -136,9 +137,10 @@ function createHillshadeLayer(): L.GridLayer {
 }
 
 function destination(loc: LatLng, bearingDeg: number, distM: number): LatLng {
-  const bRad = bearingDeg * Math.PI / 180;
-  const dLat = (distM / R_EARTH) * Math.cos(bRad) * 180 / Math.PI;
-  const dLng = (distM / R_EARTH) * Math.sin(bRad) * 180 / Math.PI / Math.cos(loc.lat * Math.PI / 180);
+  const bRad = degToRad(bearingDeg);
+  const angDist = distM / R_EARTH;
+  const dLat = radToDeg(angDist * Math.cos(bRad));
+  const dLng = radToDeg(angDist * Math.sin(bRad)) / Math.cos(degToRad(loc.lat));
   return { lat: loc.lat + dLat, lng: loc.lng + dLng };
 }
 
@@ -207,7 +209,7 @@ export function createMapView({
 
   function screenDiagonalMeters(): number {
     const s = map.getSize();
-    return pixelsToMeters(map, Math.hypot(s.x, s.y));
+    return pixelsToMeters(map, norm2(s.x, s.y));
   }
 
   function redrawStationPreview(): void {

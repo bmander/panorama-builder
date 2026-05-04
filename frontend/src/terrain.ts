@@ -26,6 +26,7 @@ import {
 import { fetchImageryTile } from './imagery.js';
 import { sunDirection } from './solar.js';
 import { M_PER_DEG_LAT, latLngToCameraRelativeMeters } from './geo.js';
+import { degToRad } from './mathx.js';
 
 // Outer-edge angular-pitch target driving the ring layout below: ~5 mrad
 // (~0.29°). At 75° FOV / ~1920 px viewport one screen pixel subtends ~0.7
@@ -233,7 +234,7 @@ async function buildRing(
 
   const positions = new Float32Array(nx * ny * 3);
   const uvs = new Float32Array(nx * ny * 2);
-  const cosLat = Math.cos(camLoc.lat * Math.PI / 180);
+  const cosLat = Math.cos(degToRad(camLoc.lat));
 
   // Precompute per-row and per-column geometry once. Each row's tile + sub-pixel
   // depends only on j; each column's depends only on i; and the world-meters

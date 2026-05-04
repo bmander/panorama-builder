@@ -7,6 +7,7 @@ import {
 import type { OverlayManager } from './overlay.js';
 import { getRole, overlayData, poiData } from './types.js';
 import type { LatLng } from './types.js';
+import { dist2, norm2 } from './mathx.js';
 
 // Discriminated state machine for the active pointer drag. `null` = no drag in
 // progress. Each variant carries exactly the state its handler needs, so
@@ -27,7 +28,7 @@ type ModeState =
 
 const PINCH_MIN_DIST = 20;
 function pinchDist(a: PointerPos, b: PointerPos): number {
-  return Math.max(Math.hypot(b.x - a.x, b.y - a.y), PINCH_MIN_DIST);
+  return Math.max(dist2(a.x, a.y, b.x, b.y), PINCH_MIN_DIST);
 }
 
 export interface AttachInputOptions {
@@ -184,7 +185,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
     else if (handleHit && selected && handleHit.object.parent === selected) {
       const center = projectToScreen(selected.position);
       const dx = e.clientX - center.x, dy = e.clientY - center.y;
-      mode = { type: 'resize', dist: Math.hypot(dx, dy) || 1, sizeRad: overlayData(selected).sizeRad };
+      mode = { type: 'resize', dist: norm2(dx, dy) || 1, sizeRad: overlayData(selected).sizeRad };
     }
     // 4. Body hit selects the photo if not already selected. Move and rotate
     //    are reachable only via the explicit handles, so a body click never
@@ -305,7 +306,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
         if (!selected) return;
         const center = projectToScreen(selected.position);
         const dx = e.clientX - center.x, dy = e.clientY - center.y;
-        const dist = Math.hypot(dx, dy);
+        const dist = norm2(dx, dy);
         overlays.resizeSelectedTo(mode.sizeRad * (dist / mode.dist));
         onChange();
         break;
