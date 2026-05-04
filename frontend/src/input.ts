@@ -4,6 +4,7 @@ import { ROLE_BODY, ROLE_HANDLE, ROLE_POI, dirFromAzAlt } from './overlay.js';
 import type { OverlayManager } from './overlay.js';
 import { getRole, overlayData, poiData } from './types.js';
 import type { LatLng } from './types.js';
+import { dist2, norm2 } from './mathx.js';
 
 // Hits inside this UV-distance from any edge of an overlay's body count as
 // "edge" and select the photo. The interior is treated as click-through (pans
@@ -30,7 +31,7 @@ type ModeState =
 
 const PINCH_MIN_DIST = 20;
 function pinchDist(a: PointerPos, b: PointerPos): number {
-  return Math.max(Math.hypot(b.x - a.x, b.y - a.y), PINCH_MIN_DIST);
+  return Math.max(dist2(a.x, a.y, b.x, b.y), PINCH_MIN_DIST);
 }
 
 export interface AttachInputOptions {
@@ -156,7 +157,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
     else if (handleHit && selected && handleHit.object.parent === selected) {
       const center = projectToScreen(selected.position);
       const dx = e.clientX - center.x, dy = e.clientY - center.y;
-      mode = { type: 'resize', dist: Math.hypot(dx, dy) || 1, sizeRad: overlayData(selected).sizeRad };
+      mode = { type: 'resize', dist: norm2(dx, dy) || 1, sizeRad: overlayData(selected).sizeRad };
     }
     // 4. Body hit. Edge clicks always select+drag; interior clicks only drag if
     //    the photo is already selected (otherwise treat as click-through).
@@ -295,7 +296,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
         if (!selected) return;
         const center = projectToScreen(selected.position);
         const dx = e.clientX - center.x, dy = e.clientY - center.y;
-        const dist = Math.hypot(dx, dy);
+        const dist = norm2(dx, dy);
         overlays.resizeSelectedTo(mode.sizeRad * (dist / mode.dist));
         onChange();
         break;
