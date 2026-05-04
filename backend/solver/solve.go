@@ -147,6 +147,10 @@ func Solve(problem Problem, cfg Config) (Result, error) {
 			alpha *= 0.5
 		}
 
+		if cfg.OnIteration != nil {
+			cfg.OnIteration(iters, rms(prevNorm, len(r)), accepted)
+		}
+
 		if !accepted {
 			// Restore best-known good state and count a non-improvement.
 			c.applyState(state)

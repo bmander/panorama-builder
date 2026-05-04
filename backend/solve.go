@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -130,6 +131,85 @@ func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg solver.Con
 	}
 
 	writeJSON(w, http.StatusOK, toAPISolveResult(res))
+}
+
+// postSolveJointStream is the SSE counterpart to postSolveJoint. The client
+// receives one event per Gauss-Newton iteration as it happens, then a final
+// "done" or "error" event. Each event is one line of the form
+//
+//	data: {"kind":"iter","iter":N,"rms":R,"accepted":bool}\n\n
+//	data: {"kind":"done","result":{...SolveResult JSON...}}\n\n
+//	data: {"kind":"error","message":"..."}\n\n
+//
+// Joint mode only — single-station / single-CP keep their synchronous endpoints.
+func (s *Server) postSolveJointStream(w http.ResponseWriter, r *http.Request) {
+	cfg, dryRun, ok := parseSolveConfig(w, r)
+	if !ok {
+		return
+	}
+	cfg.Mode = solver.ModeJoint
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+
+	s.solveMu.Lock()
+	defer s.solveMu.Unlock()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	sendEvent := func(payload any) {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			log.Printf("solve stream marshal: %v", err)
+			return
+		}
+		fmt.Fprintf(w, "data: %s\n\n", body)
+		flusher.Flush()
+	}
+	sendError := func(msg string) {
+		sendEvent(map[string]string{"kind": "error", "message": msg})
+	}
+
+	ctx := r.Context()
+	prob, err := s.loadJointProblem(ctx)
+	if err != nil {
+		log.Printf("solver load: %v", err)
+		sendError("load failed")
+		return
+	}
+
+	cfg.OnIteration = func(iter int, rms float64, accepted bool) {
+		sendEvent(map[string]any{
+			"kind": "iter", "iter": iter, "rms": rms, "accepted": accepted,
+		})
+	}
+
+	res, err := solver.Solve(prob, cfg)
+	if err != nil {
+		sendError(err.Error())
+		return
+	}
+
+	if !dryRun && !res.Diverged && len(res.Changes) > 0 {
+		if err := s.writebackChanges(ctx, prob, res); err != nil {
+			if errors.Is(err, errConcurrentEdit) {
+				sendError("concurrent edit; refresh and retry")
+				return
+			}
+			log.Printf("solver writeback: %v", err)
+			sendError("writeback failed")
+			return
+		}
+	}
+
+	sendEvent(map[string]any{"kind": "done", "result": toAPISolveResult(res)})
 }
 
 func toAPISolveResult(r solver.Result) SolveResult {

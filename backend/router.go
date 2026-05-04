@@ -32,6 +32,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/image-measurements/{id}", s.deleteImageMeasurement)
 
 	mux.HandleFunc("POST /api/solve/joint", s.postSolveJoint)
+	mux.HandleFunc("POST /api/solve/joint/stream", s.postSolveJointStream)
 	mux.HandleFunc("POST /api/solve/stations/{id}", s.postSolveStation)
 	mux.HandleFunc("POST /api/solve/control-points/{id}", s.postSolveControlPoint)
 

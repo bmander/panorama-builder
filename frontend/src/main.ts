@@ -24,6 +24,7 @@ import { createStartStationModal } from './start-station-modal.js';
 import { createContextMenu } from './context-menu.js';
 import { createObservationModal } from './observation-modal.js';
 import { createPhotoParamsModal } from './photo-params-modal.js';
+import { createSolveModal } from './solve-modal.js';
 
 // --- URL ↔ station id ---------------------------------------------------
 
@@ -610,6 +611,17 @@ async function bootstrap(): Promise<void> {
       onStationMarkerMove: (id, latlng) => { void moveStationTo(id, latlng, view); },
     });
     mapView = view;
+    const solveModal = createSolveModal({
+      onComplete: (result, dryRun) => {
+        if (dryRun || result.diverged) return;
+        void showStationMarkers(view);
+        void showIndexControlPoints();
+      },
+    });
+    getElement('index-top-right').hidden = false;
+    getElement<HTMLButtonElement>('index-solve-btn').addEventListener('click', () => {
+      solveModal.open();
+    });
     const stationsReady = showStationMarkers(view);
     const cpsReady = showIndexControlPoints();
     if (focusIndexControlPointId) {

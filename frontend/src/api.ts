@@ -163,6 +163,52 @@ export function solveJoint(config?: SolveConfig): Promise<SolveResult> {
   return request<SolveResult>('POST', '/solve/joint', config ?? {});
 }
 
+// Streaming variant: one event per GN iteration, then a final 'done' or
+// 'error' event. The promise resolves when the stream closes (which happens
+// after the final event). Caller is responsible for handling per-event UI.
+export type SolveProgressEvent =
+  | { readonly kind: 'iter'; readonly iter: number; readonly rms: number; readonly accepted: boolean }
+  | { readonly kind: 'done'; readonly result: SolveResult }
+  | { readonly kind: 'error'; readonly message: string };
+
+export async function solveJointStream(
+  config: SolveConfig,
+  onEvent: (e: SolveProgressEvent) => void,
+): Promise<void> {
+  const res = await fetch(`${API}/solve/joint/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`POST /solve/joint/stream → ${res.status.toString()} ${text}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    // Carry partial trailing event across reads — a chunk may split mid-event.
+    let sepIdx = buf.indexOf('\n\n');
+    while (sepIdx !== -1) {
+      const block = buf.slice(0, sepIdx);
+      buf = buf.slice(sepIdx + 2);
+      const dataLine = block.split('\n').find(l => l.startsWith('data:'));
+      if (dataLine) {
+        try {
+          onEvent(JSON.parse(dataLine.slice(5).trim()) as SolveProgressEvent);
+        } catch (err) {
+          console.error('solve stream parse failed:', err, dataLine);
+        }
+      }
+      sepIdx = buf.indexOf('\n\n');
+    }
+  }
+}
+
 export function solveStation(id: string, config?: SolveConfig): Promise<SolveResult> {
   return request<SolveResult>('POST', `/solve/stations/${encodeURIComponent(id)}`, config ?? {});
 }
