@@ -207,58 +207,66 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
       mode = { type: 'poi-drag', poi: poiMesh };
       viewer.requestRender();
     }
-    // 3a. Rotate handle on the selected photo → roll about photo center.
-    else if (rotateHandleHit && selected && rotateHandleHit.object.parent === selected) {
-      const center = projectToScreen(selected.position);
-      capturePhoto(selected);
-      mode = {
-        type: 'rotate',
-        cx: center.x,
-        cy: center.y,
-        startAngle: Math.atan2(e.clientY - center.y, e.clientX - center.x),
-        startRoll: overlayData(selected).photoRoll,
-      };
-    }
-    // 3b. Drag handle on the selected photo → move. Capture the rotation
-    //     between the cursor's sphere-hit direction and the photo center so
-    //     the photo doesn't snap to the cursor on grab; subsequent moves
-    //     translate by the same angular delta.
-    else if (dragHandleHit && selected && dragHandleHit.object.parent === selected) {
-      ndcFromEvent(e);
-      raycaster.setFromCamera(ndc, camera);
-      const hit = new THREE.Vector3();
-      if (raycaster.ray.intersectSphere(overlays.photos.overlaySphere, hit)) {
-        const offset = new THREE.Quaternion().setFromUnitVectors(
-          hit.normalize(),
-          tmpVec3.copy(selected.position).normalize(),
-        );
+    else {
+      // Any non-POI click drops the reticule/CP highlight. The notifySelection
+      // hook fans out to viewer.requestRender + refreshControlPointColumns, so
+      // the marker repaints blue and the HUD label hides.
+      if (overlays.measurements.getSelected()) {
+        overlays.measurements.setSelected(null);
+      }
+      // 3a. Rotate handle on the selected photo → roll about photo center.
+      if (rotateHandleHit && selected && rotateHandleHit.object.parent === selected) {
+        const center = projectToScreen(selected.position);
         capturePhoto(selected);
-        mode = { type: 'move', offset };
-      } else {
+        mode = {
+          type: 'rotate',
+          cx: center.x,
+          cy: center.y,
+          startAngle: Math.atan2(e.clientY - center.y, e.clientX - center.x),
+          startRoll: overlayData(selected).photoRoll,
+        };
+      }
+      // 3b. Drag handle on the selected photo → move. Capture the rotation
+      //     between the cursor's sphere-hit direction and the photo center so
+      //     the photo doesn't snap to the cursor on grab; subsequent moves
+      //     translate by the same angular delta.
+      else if (dragHandleHit && selected && dragHandleHit.object.parent === selected) {
+        ndcFromEvent(e);
+        raycaster.setFromCamera(ndc, camera);
+        const hit = new THREE.Vector3();
+        if (raycaster.ray.intersectSphere(overlays.photos.overlaySphere, hit)) {
+          const offset = new THREE.Quaternion().setFromUnitVectors(
+            hit.normalize(),
+            tmpVec3.copy(selected.position).normalize(),
+          );
+          capturePhoto(selected);
+          mode = { type: 'move', offset };
+        } else {
+          mode = { type: 'pan' };
+        }
+      }
+      // 3c. FOV handle on the selected photo → resize. The dist-from-center
+      //     ratio drives the size_rad change, same math as the old corner
+      //     handles — just sourced from a single dedicated icon.
+      else if (fovHandleHit && selected && fovHandleHit.object.parent === selected) {
+        const center = projectToScreen(selected.position);
+        const dx = e.clientX - center.x, dy = e.clientY - center.y;
+        capturePhoto(selected);
+        mode = { type: 'resize', dist: norm2(dx, dy) || 1, sizeRad: overlayData(selected).sizeRad };
+      }
+      // 4. Body hit selects the photo if not already selected. Move and rotate
+      //    are reachable only via the explicit handles, so a body click never
+      //    starts a drag — the rest of the gesture pans the camera.
+      else if (bodyHit?.uv) {
+        const o = bodyHit.object.parent as THREE.Group;
+        if (selected !== o) { overlays.photos.setSelected(o); onChange(); }
         mode = { type: 'pan' };
       }
-    }
-    // 3c. FOV handle on the selected photo → resize. The dist-from-center
-    //     ratio drives the size_rad change, same math as the old corner
-    //     handles — just sourced from a single dedicated icon.
-    else if (fovHandleHit && selected && fovHandleHit.object.parent === selected) {
-      const center = projectToScreen(selected.position);
-      const dx = e.clientX - center.x, dy = e.clientY - center.y;
-      capturePhoto(selected);
-      mode = { type: 'resize', dist: norm2(dx, dy) || 1, sizeRad: overlayData(selected).sizeRad };
-    }
-    // 4. Body hit selects the photo if not already selected. Move and rotate
-    //    are reachable only via the explicit handles, so a body click never
-    //    starts a drag — the rest of the gesture pans the camera.
-    else if (bodyHit?.uv) {
-      const o = bodyHit.object.parent as THREE.Group;
-      if (selected !== o) { overlays.photos.setSelected(o); onChange(); }
-      mode = { type: 'pan' };
-    }
-    // 5. Empty space → deselect + pan.
-    else {
-      if (selected) { overlays.photos.setSelected(null); onChange(); }
-      mode = { type: 'pan' };
+      // 5. Empty space → deselect the photo too + pan.
+      else {
+        if (selected) { overlays.photos.setSelected(null); onChange(); }
+        mode = { type: 'pan' };
+      }
     }
     lastX = e.clientX; lastY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
@@ -318,7 +326,9 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
   canvas.addEventListener('lostpointercapture', onPointerEnd);
   canvas.addEventListener('pointerleave', () => {
     if (mode) return;
-    if (overlays.photos.setHovered(null)) viewer.requestRender();
+    let dirty = overlays.photos.setHovered(null);
+    if (overlays.measurements.setHovered(null)) dirty = true;
+    if (dirty) viewer.requestRender();
     setHoveredColumn(null);
   });
 
@@ -332,23 +342,29 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
       return;
     }
     if (!mode) {
-      // No drag in progress — update both hover affordances:
-      // 1. Map-POI column under cursor → highlights "click here to match."
-      // 2. Photo edge under cursor → outlines the photo for editing.
-      // Column hover takes precedence: if the cursor is over a column, we
-      // suppress the edge-hover so the user gets one clear affordance.
+      // No drag in progress — update hover affordances. Order of precedence
+      // (most specific first) so the cursor targets one thing at a time:
+      //   1. CP column / marker → "click here to match."
+      //   2. POI reticule       → light up the reticule (and any siblings
+      //                           sharing the same CP).
+      //   3. Photo edge         → outline the photo for editing.
       ndcFromEvent(e);
       raycaster.setFromCamera(ndc, camera);
       const colHit = findColumnAtNDC?.({ x: ndc.x, y: ndc.y }) ?? null;
       setHoveredColumn(colHit);
       if (colHit) {
-        if (overlays.photos.setHovered(null)) viewer.requestRender();
+        let dirty = overlays.photos.setHovered(null);
+        if (overlays.measurements.setHovered(null)) dirty = true;
+        if (dirty) viewer.requestRender();
         return;
       }
       const hits = raycastOverlays();
-      const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
+      const poiHit = hits.find(h => getRole(h.object) === ROLE_POI);
+      let dirty = overlays.measurements.setHovered(poiHit ? poiHit.object as THREE.Mesh : null);
+      const bodyHit = !poiHit ? hits.find(h => getRole(h.object) === ROLE_BODY) : undefined;
       const hoverTarget = bodyHit ? bodyHit.object.parent as THREE.Group : null;
-      if (overlays.photos.setHovered(hoverTarget)) viewer.requestRender();
+      if (overlays.photos.setHovered(hoverTarget)) dirty = true;
+      if (dirty) viewer.requestRender();
       return;
     }
     switch (mode.type) {

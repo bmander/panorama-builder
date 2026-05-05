@@ -67,6 +67,7 @@ export interface MeasurementStore {
   findOnOverlayByCpId(overlay: THREE.Group, controlPointId: string): THREE.Mesh | null;
   getSelected(): THREE.Mesh | null;
   setSelected(measurement: THREE.Mesh | null): void;
+  setHovered(measurement: THREE.Mesh | null): boolean;
   setFovScale(scale: number): void;
   setVisualsVisible(visible: boolean): void;
 }
@@ -91,6 +92,7 @@ export function createMeasurementStore(
   { overlaysGroup, notify, notifySelection }: CreateMeasurementStoreOptions,
 ): MeasurementStore & MeasurementStoreHooks {
   let selected: THREE.Mesh | null = null;
+  let hovered: THREE.Mesh | null = null;
   // Multiplier on POI world-size so on-screen pixel size stays roughly
   // constant as FOV changes. 1.0 = default FOV; the host updates this on
   // every camera FOV change.
@@ -101,9 +103,15 @@ export function createMeasurementStore(
   const selectedControlPointId = (): string | null =>
     selected ? poiData(selected).controlPointId : null;
 
-  const isSelected = (poi: THREE.Mesh, controlPointId: string | null): boolean => {
-    if (poi === selected) return true;
-    return controlPointId !== null && controlPointId === selectedControlPointId();
+  const hoveredControlPointId = (): string | null =>
+    hovered ? poiData(hovered).controlPointId : null;
+
+  // Highlight = selected, hovered, or sharing a CP with either.
+  const isHighlighted = (poi: THREE.Mesh, controlPointId: string | null): boolean => {
+    if (poi === selected || poi === hovered) return true;
+    if (controlPointId === null) return false;
+    return controlPointId === selectedControlPointId()
+      || controlPointId === hoveredControlPointId();
   };
 
   const currentPoiRadius = (): number =>
@@ -120,7 +128,7 @@ export function createMeasurementStore(
       if (!data.pois) continue;
       for (const poi of data.pois) {
         const pData = poiData(poi);
-        setPoiColor(poi, isSelected(poi, pData.controlPointId) ? POI_COLOR_SELECTED : POI_COLOR);
+        setPoiColor(poi, isHighlighted(poi, pData.controlPointId) ? POI_COLOR_SELECTED : POI_COLOR);
       }
     }
   }
@@ -160,6 +168,7 @@ export function createMeasurementStore(
       if (!selected) return;
       const measurement = selected;
       store.setSelected(null);
+      if (hovered === measurement) hovered = null;
       const parent = poiData(measurement).parentOverlay;
       parent.remove(measurement);
       const arr = overlayData(parent).pois;
@@ -184,7 +193,9 @@ export function createMeasurementStore(
             az: azFromLocal(o, poi.position.x, poi.position.y, poi.position.z),
             uv: { ...pData.uv },
             controlPointId: pData.controlPointId,
-            selected: isSelected(poi, pData.controlPointId),
+            selected: poi === selected
+              || (pData.controlPointId !== null
+                && pData.controlPointId === selectedControlPointId()),
           });
         }
       }
@@ -214,6 +225,12 @@ export function createMeasurementStore(
       selected = measurement;
       applyPOIColors();
       notifySelection();
+    },
+    setHovered(measurement) {
+      if (hovered === measurement) return false;
+      hovered = measurement;
+      applyPOIColors();
+      return true;
     },
     setFovScale(scale) {
       if (poiFovScale === scale) return;
@@ -260,6 +277,9 @@ export function createMeasurementStore(
     clearSelectionForOverlay(o) {
       if (selected && poiData(selected).parentOverlay === o) {
         selected = null;
+      }
+      if (hovered && poiData(hovered).parentOverlay === o) {
+        hovered = null;
       }
     },
     getSelectedControlPointId: selectedControlPointId,

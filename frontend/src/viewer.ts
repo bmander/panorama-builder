@@ -98,9 +98,14 @@ export interface CreateViewerOptions {
   // Fired after every accepted setFov; the host re-scales any view-size-
   // sensitive overlays (e.g. POIs that should keep a constant pixel size).
   onFovChange?: (fov: number) => void;
+  // Fired immediately before each render. Use for screen-space DOM overlays
+  // that project a 3D world position onto the viewport (e.g. labels that
+  // anchor to a marker) — by the time this fires, camera.rotation has been
+  // updated to the latest azimuth/altitude.
+  onBeforeRender?: () => void;
 }
 
-export function createViewer({ container, onFovChange }: CreateViewerOptions): Viewer {
+export function createViewer({ container, onFovChange, onBeforeRender }: CreateViewerOptions): Viewer {
   // Touch-class GPUs choke on MSAA at retina pixel ratios; downgrade both.
   const isCoarse = matchMedia('(pointer: coarse)').matches;
   const dprCap = isCoarse ? 1.5 : 2;
@@ -146,6 +151,7 @@ export function createViewer({ container, onFovChange }: CreateViewerOptions): V
       if (dirty && canvasVisible) {
         camera.rotation.y = azimuth;
         camera.rotation.x = altitude;
+        onBeforeRender?.();
         renderer.render(scene, camera);
         dirty = false;
       }
