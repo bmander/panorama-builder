@@ -98,6 +98,14 @@ type Config struct {
 	ResidualTolRad   float64 // default 1e-4 rad RMS (~20 arcsec)
 	StepTol          float64 // default 1e-7 (state-vector L2 step)
 	DivergenceWindow int     // default 3 consecutive non-improving iters → revert to best
+	// Relative-improvement convergence: when the per-iteration fractional
+	// reduction in the residual norm stays below RelImproveTol for
+	// RelImproveWindow consecutive accepted steps, the solver declares
+	// convergence and stops. This catches the common "plateau at the noise
+	// floor" case where ResidualTolRad's absolute floor will never be
+	// reached. Defaults: 1e-4 (0.01% per iter) and 3 iters.
+	RelImproveTol    float64
+	RelImproveWindow int
 	// OnIteration, when non-nil, is called once per GN iteration after the
 	// backtracking line search resolves. Synchronous — keep it cheap. Used by
 	// the SSE endpoint to stream live loss progress to the browser.
@@ -123,6 +131,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.DivergenceWindow == 0 {
 		c.DivergenceWindow = 3
+	}
+	if c.RelImproveTol == 0 {
+		c.RelImproveTol = 1e-4
+	}
+	if c.RelImproveWindow == 0 {
+		c.RelImproveWindow = 3
 	}
 	return c
 }

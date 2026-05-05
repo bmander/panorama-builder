@@ -4,6 +4,7 @@ import { clamp } from './mathx.js';
 export const PITCH_LIMIT = Math.PI / 2 - 0.01;
 export const FOV_MIN = 2;
 export const FOV_MAX = 100;
+export const DEFAULT_FOV = 75;
 
 // Atmospheric perspective. We override Three.js's default FogExp2 falloff
 // (`exp(-σ² · d²)`, stylistic) with Beer-Lambert (`exp(-σ · d)`, the actual
@@ -105,7 +106,7 @@ export function createViewer({ container }: { container: HTMLElement }): Viewer 
   // far is bumped beyond the natural overlay-sphere radius so the outermost
   // terrain LOD ring (which reaches ~525 km at lat 47.6, larger nearer the
   // equator) renders unclipped.
-  const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.1, 1000000);
+  const camera = new THREE.PerspectiveCamera(DEFAULT_FOV, innerWidth / innerHeight, 0.1, 1000000);
   camera.rotation.order = 'YXZ';
 
   const baseTex = new THREE.CanvasTexture(makeGridTexture());

@@ -14,29 +14,12 @@
 
 import * as THREE from 'three';
 import type { LatLng, ControlPointView } from './types.js';
-import { makeCanvasTexture } from './canvas-texture.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
-import { norm2 } from './mathx.js';
+import { createDotLayer, findHitDot, OVERLAY_RENDER_ORDER } from './dot-layer.js';
+import type { Dot } from './dot-layer.js';
 
 const MARKER_COLOR = 0x5080ff;
 const MARKER_COLOR_SELECTED = 0xffff66;
-// Marker is a screen-space disc, not a world-space sphere — keeps distant CPs
-// visible and clickable. gl_PointSize is in pixels with sizeAttenuation off.
-const MARKER_PIXEL_SIZE = 12;
-const MARKER_RENDER_ORDER = 999;
-
-function makeMarkerTexture(): THREE.Texture {
-  return makeCanvasTexture(32, ctx => {
-    ctx.beginPath();
-    ctx.arc(16, 16, 13, 0, Math.PI * 2);
-    ctx.closePath();
-    ctx.fillStyle = '#fff';
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-    ctx.stroke();
-  });
-}
 
 export interface ControlPointMarker {
   readonly id: string;
@@ -72,30 +55,20 @@ export type ControlPointColumns = ControlPointMarkers;
 export function createControlPointColumns(opts: CreateControlPointMarkersOptions): ControlPointMarkers {
   const { scene, requestRender } = opts;
 
-  // transparent: true puts the markers in the same render pass as the
-  // (transparent) photo overlays; renderOrder=999 then sorts them on top.
-  const baseMaterialProps = {
-    depthTest: false,
-    depthWrite: false,
-    transparent: true,
-    fog: false,
+  const dots = createDotLayer({ scene, requestRender });
+
+  // transparent: true puts the lines in the same render pass as the
+  // (transparent) photo overlays; renderOrder sorts them on top.
+  const baseLineProps = {
+    depthTest: false, depthWrite: false, transparent: true, fog: false,
   } as const;
-  const markerTex = makeMarkerTexture();
-  const markerMat = new THREE.PointsMaterial({
-    size: MARKER_PIXEL_SIZE,
-    sizeAttenuation: false,
-    map: markerTex,
-    vertexColors: true,
-    alphaTest: 0.05,
-    ...baseMaterialProps,
-  });
-  const lineMat = new THREE.LineBasicMaterial({ color: MARKER_COLOR, ...baseMaterialProps });
-  const lineMatSel = new THREE.LineBasicMaterial({ color: MARKER_COLOR_SELECTED, ...baseMaterialProps });
+  const lineMat = new THREE.LineBasicMaterial({ color: MARKER_COLOR, ...baseLineProps });
+  const lineMatSel = new THREE.LineBasicMaterial({ color: MARKER_COLOR_SELECTED, ...baseLineProps });
   const colorDefault = new THREE.Color(MARKER_COLOR);
   const colorSelected = new THREE.Color(MARKER_COLOR_SELECTED);
 
-  const group = new THREE.Group();
-  scene.add(group);
+  const lineGroup = new THREE.Group();
+  scene.add(lineGroup);
 
   let hoveredId: string | null = null;
   let lastMarkers: readonly ControlPointMarker[] = [];
@@ -106,44 +79,31 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
     return m.selected || m.id === hoveredId;
   }
 
-  function clearChildren(): void {
-    for (const child of group.children) {
-      // All geometries are per-rebuild now (Points + Lines); shared material
-      // is disposed at module teardown only.
-      if (child instanceof THREE.Line || child instanceof THREE.Points) {
+  function clearLines(): void {
+    for (const child of lineGroup.children) {
+      if (child instanceof THREE.Line) {
         (child.geometry as THREE.BufferGeometry).dispose();
       }
     }
-    group.clear();
+    lineGroup.clear();
   }
 
   const scratch = new THREE.Vector3();
 
   function rebuild(): void {
-    clearChildren();
+    clearLines();
     if (lastCamLoc === null || lastMarkers.length === 0) {
+      dots.update(null, 0, []);
       requestRender();
       return;
     }
 
-    const N = lastMarkers.length;
-    const positions = new Float32Array(N * 3);
-    const colors = new Float32Array(N * 3);
-    for (let i = 0; i < N; i++) {
-      const m = lastMarkers[i]!;
-      const { x, z } = latLngToCameraRelativeMeters(m.anchor, lastCamLoc);
-      const y = m.altitude - lastCameraHeight;
-      positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
-      const c = isHighlighted(m) ? colorSelected : colorDefault;
-      colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
-    }
-    const pointsGeom = new THREE.BufferGeometry();
-    pointsGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    pointsGeom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    const points = new THREE.Points(pointsGeom, markerMat);
-    points.renderOrder = MARKER_RENDER_ORDER;
-    points.frustumCulled = false;
-    group.add(points);
+    const dotList: Dot[] = lastMarkers.map(m => ({
+      anchor: m.anchor,
+      altitude: m.altitude,
+      color: isHighlighted(m) ? colorSelected : colorDefault,
+    }));
+    dots.update(lastCamLoc, lastCameraHeight, dotList);
 
     for (const m of lastMarkers) {
       const { x, z } = latLngToCameraRelativeMeters(m.anchor, lastCamLoc);
@@ -157,16 +117,16 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
           scratch.x, scratch.y, scratch.z,
         ], 3));
         const line = new THREE.Line(geom, lineMaterial);
-        line.renderOrder = MARKER_RENDER_ORDER;
+        line.renderOrder = OVERLAY_RENDER_ORDER;
         line.frustumCulled = false;
-        group.add(line);
+        lineGroup.add(line);
       }
     }
     requestRender();
   }
 
   return {
-    setVisible(visible) { group.visible = visible; },
+    setVisible(visible) { dots.setVisible(visible); lineGroup.visible = visible; },
     update(camLoc, cameraHeight, markers) {
       lastCamLoc = camLoc;
       lastCameraHeight = cameraHeight;
@@ -188,7 +148,6 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
 // CPs without an estimate (est_lat/est_lng = null) are excluded by the caller
 // (getStationObservedControlPoints already filters them out). Returns null
 // when nothing is in range or when the marker is behind the camera.
-const _projected = new THREE.Vector3();
 export function findHitColumn(
   ndc: { x: number; y: number },
   hitRadius: number,
@@ -197,17 +156,10 @@ export function findHitColumn(
   cameraHeight: number,
   controlPoints: readonly ControlPointView[],
 ): { controlPointId: string; latlng: LatLng } | null {
-  let best: { controlPointId: string; latlng: LatLng } | null = null;
-  let bestDist = hitRadius;
-  for (const cp of controlPoints) {
-    if (cp.estLat === null || cp.estLng === null) continue;
-    const latlng = { lat: cp.estLat, lng: cp.estLng };
-    const { x, z } = latLngToCameraRelativeMeters(latlng, cameraLocation);
-    const y = cp.estAlt - cameraHeight;
-    _projected.set(x, y, z).project(camera);
-    if (_projected.z > 1) continue; // behind camera
-    const d = norm2(_projected.x - ndc.x, _projected.y - ndc.y);
-    if (d < bestDist) { bestDist = d; best = { controlPointId: cp.id, latlng }; }
-  }
-  return best;
+  const dots = controlPoints
+    .filter((cp): cp is ControlPointView & { estLat: number; estLng: number } =>
+      cp.estLat !== null && cp.estLng !== null)
+    .map(cp => ({ id: cp.id, anchor: { lat: cp.estLat, lng: cp.estLng }, altitude: cp.estAlt }));
+  const hit = findHitDot(ndc, hitRadius, camera, cameraLocation, cameraHeight, dots);
+  return hit ? { controlPointId: hit.id, latlng: hit.anchor } : null;
 }

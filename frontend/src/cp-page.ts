@@ -1,5 +1,5 @@
 import * as api from './api.js';
-import { formatLocalDateTime, getElement, stationHref } from './types.js';
+import { formatLocalDateTime, getElement, indexCpHref, stationHref } from './types.js';
 
 const CP_ID_RE = /^\/cp\/([A-Z2-7]{13})$/;
 
@@ -141,6 +141,7 @@ type LatLngField = 'est_lat' | 'est_lng';
 
 function attachLatLngEditor(
   cp: api.ApiControlPoint, host: HTMLElement, field: LatLngField,
+  onAfterSave?: () => void,
 ): () => void {
   const max = field === 'est_lat' ? 90 : 180;
   host.title = 'Click to edit';
@@ -171,6 +172,7 @@ function attachLatLngEditor(
       const updated = await api.updateControlPoint(cp.id, cpPatch(cp, { [field]: next }));
       cp.est_lat = updated.est_lat;
       cp.est_lng = updated.est_lng;
+      onAfterSave?.();
     },
     afterAttach: (el) => { host.classList.remove('empty'); el.select(); },
   });
@@ -283,7 +285,7 @@ function attachDeleteButton(cp: api.ApiControlPoint, obsCount: number): void {
   btn.addEventListener('click', () => {
     const obsNote = obsCount === 0
       ? ''
-      : `\n\nIts ${obsCount} observation${obsCount === 1 ? '' : 's'} will be unlinked but kept.`;
+      : `\n\nIts ${obsCount} observation${obsCount === 1 ? '' : 's'} will also be deleted.`;
     const label = cp.description || '(unnamed)';
     if (!confirm(`Delete ${label}?${obsNote}`)) return;
     btn.disabled = true;
@@ -381,10 +383,17 @@ async function main(): Promise<void> {
   }
   const cp = cpResult.value;
 
+  const mapLinkEl = getElement<HTMLAnchorElement>('map-link');
+  mapLinkEl.href = indexCpHref(cp.id);
+  const refreshMapLink = (): void => {
+    mapLinkEl.hidden = cp.est_lat === null || cp.est_lng === null;
+  };
+  refreshMapLink();
+
   attachNameEditor(cp, nameEl);
   attachNotesEditor(cp, getElement('notes'));
-  const refreshLat = attachLatLngEditor(cp, latEl, 'est_lat');
-  const refreshLng = attachLatLngEditor(cp, lngEl, 'est_lng');
+  const refreshLat = attachLatLngEditor(cp, latEl, 'est_lat', refreshMapLink);
+  const refreshLng = attachLatLngEditor(cp, lngEl, 'est_lng', refreshMapLink);
   const refreshAlt = attachAltEditor(cp, altEl);
   attachDateEditor(cp, getElement('started_at'), 'started_at');
   attachDateEditor(cp, getElement('ended_at'), 'ended_at');
@@ -404,6 +413,7 @@ async function main(): Promise<void> {
       refreshLat();
       refreshLng();
       refreshAlt();
+      refreshMapLink();
     });
   } else {
     console.error('observations fetch failed:', obsResult.reason);

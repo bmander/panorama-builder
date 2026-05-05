@@ -91,6 +91,12 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .photo-params-row .lock-check input { margin: 0; }
 .btn.danger { color: #ff8080; border-color: #ff8080; }
 .btn.danger:hover { background: rgba(255,80,80,0.2); }
+.btn.loading { color: transparent; position: relative; cursor: wait; }
+.btn.loading::after { content: ''; position: absolute; inset: 0; margin: auto;
+                      width: 12px; height: 12px;
+                      border: 2px solid rgba(255,255,255,0.25); border-top-color: #fff;
+                      border-radius: 50%; animation: btn-spin 0.7s linear infinite; }
+@keyframes btn-spin { to { transform: rotate(360deg); } }
 .index-cp-popup .leaflet-popup-content { margin: 8px 10px; font: 12px monospace; }
 .index-cp-popup .name { display: block; font-weight: bold; margin-bottom: 6px; color: #000; }
 .index-cp-popup .go { display: inline-block; padding: 4px 8px; background: #1a73e8;

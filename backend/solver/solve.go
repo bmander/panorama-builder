@@ -97,6 +97,7 @@ func Solve(problem Problem, cfg Config) (Result, error) {
 
 	converged := false
 	nonImprove := 0
+	smallImprove := 0
 	iters := 0
 
 	for ; iters < cfg.MaxIters; iters++ {
@@ -124,6 +125,7 @@ func Solve(problem Problem, cfg Config) (Result, error) {
 		}
 
 		// Backtracking line search.
+		oldNorm := prevNorm
 		alpha := 1.0
 		accepted := false
 		var stepNorm float64
@@ -174,6 +176,24 @@ func Solve(problem Problem, cfg Config) (Result, error) {
 		if stepNorm < cfg.StepTol {
 			converged = true
 			break
+		}
+
+		// Relative-improvement plateau: if the residual norm shrunk by less
+		// than RelImproveTol for the last RelImproveWindow accepted iters,
+		// declare convergence. Catches the noise-floor plateau where the
+		// absolute ResidualTolRad will never be reached.
+		var relImprove float64
+		if oldNorm > 0 {
+			relImprove = (oldNorm - prevNorm) / oldNorm
+		}
+		if relImprove < cfg.RelImproveTol {
+			smallImprove++
+			if smallImprove >= cfg.RelImproveWindow {
+				converged = true
+				break
+			}
+		} else {
+			smallImprove = 0
 		}
 	}
 

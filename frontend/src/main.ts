@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { createViewer } from './viewer.js';
+import { createViewer, DEFAULT_FOV } from './viewer.js';
 import { createOverlayManager, dirFromAzAlt } from './overlay.js';
 import { createBaker } from './bake.js';
 import { attachInput } from './input.js';
@@ -10,8 +10,12 @@ import { createTerrainView } from './terrain.js';
 import { createSunMarker } from './sun-marker.js';
 import { createControlPointColumns, findHitColumn } from './map-poi-columns.js';
 import type { ControlPointColumn } from './map-poi-columns.js';
+import { createStationMarkers } from './station-markers.js';
+import type { StationMarker } from './station-markers.js';
+import { findHitDot } from './dot-layer.js';
 import { cpHref, FOCUS_QUERY_PARAM, getElement, INDEX_CP_QUERY_PARAM, INDEX_STATION_QUERY_PARAM, indexStationHref, overlayData, poiData, stationHref } from './types.js';
-import { vecToAzAlt } from './geo.js';
+import { groundDistance, vecToAzAlt } from './geo.js';
+import { wrapPi } from './mathx.js';
 import type { ControlPointView, LatLng } from './types.js';
 import * as api from './api.js';
 import type { ApiControlPoint, ApiHydratedStation, ApiStation } from './api.js';
@@ -100,12 +104,18 @@ const cpColumns = createControlPointColumns({
   scene: viewer.scene,
   requestRender: () => { viewer.requestRender(); },
 });
+const stationDots = createStationMarkers({
+  scene: viewer.scene,
+  requestRender: () => { viewer.requestRender(); },
+});
+let otherStations: StationMarker[] = [];
 const baker = createBaker({
   renderer: viewer.renderer,
   scene: viewer.scene,
   setVisualsVisible: visible => {
     overlays.setVisualsVisible(visible);
     cpColumns.setVisible(visible);
+    stationDots.setVisible(visible);
   },
 });
 const hud = createHud(() => {
@@ -152,6 +162,7 @@ function refreshControlPointColumns(): void {
       .map(im => im.handle),
   }));
   cpColumns.update(stationLocation, terrain.getCameraHeight(), markers);
+  stationDots.update(stationLocation, terrain.getCameraHeight(), otherStations);
 }
 
 function applyCameraLocation(loc: LatLng): void {
@@ -294,6 +305,16 @@ attachInput({
     if (!cpId) return;
     contextMenu.open(sx, sy, [
       { label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } },
+    ]);
+  },
+  findStationAtNDC: ndc => {
+    if (!stationLocation || otherStations.length === 0) return null;
+    return findHitDot(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, stationLocation,
+      terrain.getCameraHeight(), otherStations);
+  },
+  onStationContextMenu: (id, sx, sy) => {
+    contextMenu.open(sx, sy, [
+      { label: 'Go to camera →', onClick: () => { void flyToStation(id); } },
     ]);
   },
   undoManager,
@@ -490,6 +511,13 @@ async function hydrateFromAPI(id: string): Promise<void> {
   applyCameraLocation(loc);
   hydrateStationFields(data.station);
 
+  // Center the viewport on the mean of the station's photo directions.
+  // Matches the orientation the fly-between animation lands at, so a fly
+  // followed by the post-fly reload doesn't snap-rotate. A URL-supplied
+  // ?focus=<im> deep-link overrides this below.
+  const meanOrient = meanPhotoAzAlt(data.photos);
+  if (meanOrient) viewer.setAzAlt(meanOrient.az, meanOrient.alt);
+
   // Place each photo synchronously with a placeholder so the viewer can
   // paint terrain + rectangles before any blob arrives.
   const loader = new THREE.TextureLoader();
@@ -522,11 +550,25 @@ async function hydrateFromAPI(id: string): Promise<void> {
     registerControlPoint(cp);
   }
 
-  try {
-    const cps = await api.listControlPoints();
-    for (const cp of cps) registerControlPoint(cp);
-  } catch (err) {
-    console.error('list control points failed:', err);
+  // Independent fetches — kick off in parallel so hydrate latency isn't
+  // gated on the slower of the two.
+  const [cpsRes, stationsRes] = await Promise.allSettled([
+    api.listControlPoints(),
+    api.listStations(),
+  ]);
+  if (cpsRes.status === 'fulfilled') {
+    for (const cp of cpsRes.value) registerControlPoint(cp);
+  } else {
+    console.error('list control points failed:', cpsRes.reason);
+  }
+  if (stationsRes.status === 'fulfilled') {
+    // Skip the current station: a dot at (0,0,0) just sits on top of the camera.
+    otherStations = stationsRes.value
+      .filter(st => st.id !== id)
+      .map(st => ({ id: st.id, anchor: { lat: st.lat, lng: st.lng }, altitude: st.alt }));
+    refreshControlPointColumns();
+  } else {
+    console.error('list stations failed:', stationsRes.reason);
   }
 
   for (const im of data.image_measurements) {
@@ -537,6 +579,110 @@ async function hydrateFromAPI(id: string): Promise<void> {
       controlPointId: im.control_point_id,
     });
     sync.registerImageMeasurement(im.id, { u: im.u, v: im.v, control_point_id: im.control_point_id });
+  }
+}
+
+// Animated transition between two stations on the photo viewer page. Tweens
+// the camera location, altitude (with a parabolic hop at the apex), and
+// orientation (toward the mean direction of the destination's photos) so
+// the world flies past in real time, then performs a page reload at the
+// destination URL — the reload does the heavy hydrate (photos, image
+// measurements) when the world is already in roughly the right place.
+let flyInProgress = false;
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+function meanPhotoAzAlt(photos: readonly api.ApiPhoto[]): { az: number; alt: number } | null {
+  let sx = 0, sy = 0, sz = 0;
+  for (const p of photos) {
+    const d = dirFromAzAlt(p.photo_az, p.photo_tilt);
+    sx += d.x; sy += d.y; sz += d.z;
+  }
+  if (sx * sx + sy * sy + sz * sz < 1e-6) return null;
+  return vecToAzAlt(sx, sy, sz);
+}
+async function flyToStation(destId: string): Promise<void> {
+  if (flyInProgress) return;
+  if (!stationLocation || !stationCache || !currentStationId || destId === currentStationId) {
+    location.assign(stationHref(destId));
+    return;
+  }
+  flyInProgress = true;
+  const savedOtherStations = otherStations;
+  try {
+    let dest: api.ApiHydratedStation;
+    try {
+      dest = await api.getStation(destId);
+    } catch (err) {
+      console.error('fly: dest fetch failed:', err);
+      location.assign(stationHref(destId));
+      return;
+    }
+
+    const src = { lat: stationLocation.lat, lng: stationLocation.lng, alt: stationCache.alt };
+    const dst = { lat: dest.station.lat, lng: dest.station.lng, alt: dest.station.alt };
+
+    otherStations = [...savedOtherStations, {
+      id: currentStationId,
+      anchor: { lat: src.lat, lng: src.lng },
+      altitude: src.alt,
+    }];
+
+    // Photos are anchored to the source camera frame and would shear as the
+    // world translates underneath them. Same shear hits CP markers and their
+    // observation lines (lines connect world-space CPs to source-anchored
+    // POIs); hide the whole CP layer until the post-fly reload rebuilds it.
+    viewer.overlaysGroup.visible = false;
+    cpColumns.setVisible(false);
+
+    const { azimuth: srcAz, altitude: srcAlt } = viewer.getAzAlt();
+    const dstOrient = meanPhotoAzAlt(dest.photos);
+    const dstAz = dstOrient?.az ?? srcAz;
+    const dstAlt = dstOrient?.alt ?? srcAlt;
+    const azDelta = wrapPi(dstAz - srcAz);
+    // FOV: tween toward DEFAULT_FOV — the post-fly reload re-creates the
+    // viewer at that value, so landing there avoids a snap-zoom on reload.
+    const srcFov = viewer.camera.fov;
+    const dstFov = DEFAULT_FOV;
+
+    const distM = groundDistance(src, dst);
+    const durationMs = Math.min(4000, Math.max(1000, distM * 3));
+    // Parabolic hop: clear cap keeps very long flights from going suborbital.
+    const hopHeightM = Math.max(5, Math.min(distM * 0.15, 200));
+
+    await new Promise<void>(resolve => {
+      const startTime = performance.now();
+      function step(now: number): void {
+        const tau = Math.min(1, (now - startTime) / durationMs);
+        const k = easeInOutCubic(tau);
+        const lat = src.lat + (dst.lat - src.lat) * k;
+        const lng = src.lng + (dst.lng - src.lng) * k;
+        const alt = src.alt + (dst.alt - src.alt) * k + hopHeightM * Math.sin(Math.PI * k);
+        stationLocation = { lat, lng };
+        terrain.setLocation({ lat, lng });
+        terrain.setCameraHeight(alt);
+        viewer.setAzAlt(srcAz + azDelta * k, srcAlt + (dstAlt - srcAlt) * k);
+        viewer.setFov(srcFov + (dstFov - srcFov) * k);
+        // Only the green station dots track the moving camera. CP markers
+        // are hidden above; building their per-frame markers list is wasted
+        // work (and would also rebuild the line geometry).
+        stationDots.update(stationLocation, alt, otherStations);
+        viewer.requestRender();
+        if (tau < 1) requestAnimationFrame(step);
+        else resolve();
+      }
+      requestAnimationFrame(step);
+    });
+
+    location.assign(stationHref(destId));
+  } finally {
+    flyInProgress = false;
+    // If location.assign was queued the browser tears the page down before
+    // these run visually; if the navigation is somehow intercepted, the
+    // restoration leaves the viewer in a usable state.
+    otherStations = savedOtherStations;
+    viewer.overlaysGroup.visible = true;
+    cpColumns.setVisible(true);
   }
 }
 
@@ -611,7 +757,10 @@ function refreshIndexControlPoints(): void {
 async function showIndexControlPoints(): Promise<void> {
   try {
     const cps = await api.listControlPoints();
-    for (const cp of cps) registerControlPoint(cp);
+    // syncControlPoint updates est_lat/est_lng on already-known CPs, which is
+    // what we need on post-solve refresh — registerControlPoint short-circuits
+    // on existing entries and would leave the map stuck at pre-solve coords.
+    for (const cp of cps) syncControlPoint(cp);
   } catch (err) {
     console.error('list control points failed:', err);
   }

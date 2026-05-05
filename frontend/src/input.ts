@@ -64,13 +64,18 @@ export interface AttachInputOptions {
     overlay: THREE.Group, u: number, v: number, screenX: number, screenY: number,
   ) => void;
   onImagePOIContextMenu?: (poi: THREE.Mesh, screenX: number, screenY: number) => void;
+  // Right-click on an other-station green dot. Hit-test is owned by the host
+  // (it has the camera + dot list in scope); the host hands back the station
+  // id so the menu callback can navigate to that station's page.
+  findStationAtNDC?: (ndc: { x: number; y: number }) => { id: string } | null;
+  onStationContextMenu?: (id: string, screenX: number, screenY: number) => void;
   // Records before/after snapshots for gesture-end mutations and applies
   // them on Cmd/Ctrl+Z. Optional for the index page where attachInput
   // still runs but no overlays are mutated.
   undoManager?: UndoManager;
 }
 
-export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatchImagePOI, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu, undoManager }: AttachInputOptions): void {
+export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatchImagePOI, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu, findStationAtNDC, onStationContextMenu, undoManager }: AttachInputOptions): void {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -239,6 +244,14 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
   canvas.addEventListener('contextmenu', (e: MouseEvent) => {
     if (mode) return;
     ndcFromEvent(e);
+    // Station dots are screen-space and rendered always-on-top, so hit-test
+    // them before raycasting world-space overlays.
+    const stationHit = findStationAtNDC?.({ x: ndc.x, y: ndc.y }) ?? null;
+    if (stationHit && onStationContextMenu) {
+      e.preventDefault();
+      onStationContextMenu(stationHit.id, e.clientX, e.clientY);
+      return;
+    }
     raycaster.setFromCamera(ndc, camera);
     const hits = raycastOverlays();
     // POI sits visually on top of body, so a hit on both means the user

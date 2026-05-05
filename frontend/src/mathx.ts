@@ -34,3 +34,6 @@ export const wrap2Pi = (a: number): number => {
   const r = a % (2 * Math.PI);
   return r < 0 ? r + 2 * Math.PI : r;
 };
+
+// Wrap radians into (-π, π]. Useful for shortest-arc angle deltas.
+export const wrapPi = (a: number): number => wrap2Pi(a + Math.PI) - Math.PI;

@@ -3,6 +3,7 @@ html, body { margin: 0; min-height: 100%; background: #111; color: #fff;
 main { max-width: 640px; margin: 0 auto; padding: 32px; }
 .back { color: #5080ff; text-decoration: none; font-size: 12px; }
 .back:hover { text-decoration: underline; }
+.nav { display: flex; gap: 16px; align-items: baseline; }
 h1 { font-size: 22px; margin: 16px 0 24px; word-break: break-word; }
 h1.editable { cursor: text; border-radius: 3px;
               padding: 2px 6px; margin-left: -6px; margin-right: -6px; }
@@ -47,6 +48,18 @@ h2 { font-size: 14px; color: #aaa; margin: 32px 0 8px; font-weight: normal;
 .observations a:hover { text-decoration: underline; }
 .observations .meta { color: #888; }
 .observations .empty { color: #888; font-style: italic; padding: 6px 8px; }
+.cp-list { list-style: none; margin: 0; padding: 0;
+           display: flex; flex-direction: column; gap: 4px; }
+.cp-list li { display: flex; gap: 12px; align-items: baseline;
+              padding: 6px 8px; background: rgba(255,255,255,0.04);
+              font-size: 12px; }
+.cp-list a.desc { color: #5080ff; text-decoration: none; flex: 1;
+                  word-break: break-word; }
+.cp-list a.desc:hover { text-decoration: underline; }
+.cp-list .meta { color: #888; }
+.cp-list .meta.unlocated { font-style: italic; }
+.cp-list .empty { color: #888; font-style: italic; padding: 6px 8px;
+                  background: rgba(255,255,255,0.04); }
 .actions { margin-top: 32px; }
 button.danger { font: inherit; color: #ff8080; background: transparent;
                 border: 1px solid #ff8080; border-radius: 3px;
@@ -62,6 +75,7 @@ button.danger:disabled { opacity: 0.5; cursor: default; }
   h1 { font-size: 32px; }
   dl { font-size: 18px; gap: 10px 20px; }
   .observations li { font-size: 18px; padding: 10px 12px; }
+  .cp-list li { font-size: 18px; padding: 10px 12px; }
   .actions { margin-top: 40px; }
   button.danger { padding: 12px 20px; }
 }

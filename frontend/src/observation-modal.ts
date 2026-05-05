@@ -6,7 +6,7 @@
 // ground elevation at the click to seed the CP's est_alt.
 
 import * as THREE from 'three';
-import { getElement } from './types.js';
+import { fmtCpLatLng, getElement } from './types.js';
 import type { ControlPointView, LatLng } from './types.js';
 import { getElevationAt } from './dem.js';
 
@@ -68,12 +68,8 @@ export function createObservationModal({
       desc.textContent = cp.description || '(unnamed)';
       const meta = document.createElement('span');
       meta.className = 'meta';
-      if (cp.estLat == null || cp.estLng == null) {
-        meta.textContent = 'no location';
-        meta.classList.add('unlocated');
-      } else {
-        meta.textContent = `${cp.estLat.toFixed(5)}, ${cp.estLng.toFixed(5)}`;
-      }
+      if (cp.estLat === null || cp.estLng === null) meta.classList.add('unlocated');
+      meta.textContent = fmtCpLatLng(cp.estLat, cp.estLng);
       row.append(desc, meta);
       row.addEventListener('click', () => {
         if (pending?.kind !== 'image') return;
@@ -143,11 +139,13 @@ export function createObservationModal({
       promise = submitMap(ctx.latlng, description, aboveGrade);
     }
     createBtn.disabled = true;
+    createBtn.classList.add('loading');
     promise.then(() => { close(); })
       .catch((err: unknown) => {
         console.error('create CP + observe failed:', err);
         createBtn.disabled = false;
-      });
+      })
+      .finally(() => { createBtn.classList.remove('loading'); });
   });
 
   return { open, openForMap };
