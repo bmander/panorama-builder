@@ -360,6 +360,11 @@ export interface components {
             lock_lng: boolean;
             /** @description when true the solver treats alt as a fixed input */
             lock_alt: boolean;
+            /**
+             * Format: date-time
+             * @description when the photographer's camera was set up at this site (null when unknown)
+             */
+            captured_at: string | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -517,11 +522,14 @@ export interface components {
             lock_lat?: boolean;
             lock_lng?: boolean;
             lock_alt?: boolean;
+            /** Format: date-time */
+            captured_at?: string | null;
         };
         /**
          * @description Partial-update body for PUT /stations/{id}. Every field is
          *     optional; only keys present in the body are written. Sending
-         *     `name: null` clears the name.
+         *     `name: null` clears the name; sending `captured_at: null`
+         *     clears the recorded capture time.
          */
         StationUpdate: {
             /** Format: double */
@@ -534,6 +542,8 @@ export interface components {
             lock_lat?: boolean;
             lock_lng?: boolean;
             lock_alt?: boolean;
+            /** Format: date-time */
+            captured_at?: string | null;
         };
         /**
          * @description POST body for `POST /stations/{id}/photos`. Pose fields are

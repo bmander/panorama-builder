@@ -13,12 +13,12 @@ import (
 // CreateStationRequest, PhotoPosePatch, ImageMeasurementPatch) are
 // generated from ../openapi.yaml into types.gen.go.
 
-const stationCols = `id, lat, lng, alt, name, lock_lat, lock_lng, lock_alt, created_at, updated_at`
+const stationCols = `id, lat, lng, alt, name, lock_lat, lock_lng, lock_alt, captured_at, created_at, updated_at`
 
 func scanStation(row pgx.Row) (Station, error) {
 	var st Station
 	err := row.Scan(&st.ID, &st.Lat, &st.Lng, &st.Alt, &st.Name,
-		&st.LockLat, &st.LockLng, &st.LockAlt, &st.CreatedAt, &st.UpdatedAt)
+		&st.LockLat, &st.LockLng, &st.LockAlt, &st.CapturedAt, &st.CreatedAt, &st.UpdatedAt)
 	return st, err
 }
 
@@ -32,12 +32,12 @@ func (s *Server) postStation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := newID()
-	const q = `INSERT INTO stations (id, lat, lng, alt, name, lock_lat, lock_lng, lock_alt)
+	const q = `INSERT INTO stations (id, lat, lng, alt, name, lock_lat, lock_lng, lock_alt, captured_at)
 	           VALUES ($1, $2, $3, COALESCE($4, 0), $5,
-	                   COALESCE($6, false), COALESCE($7, false), COALESCE($8, false))
+	                   COALESCE($6, false), COALESCE($7, false), COALESCE($8, false), $9)
 	           RETURNING ` + stationCols
 	st, err := scanStation(s.db.QueryRow(r.Context(), q, id, req.Lat, req.Lng, req.Alt, req.Name,
-		req.LockLat, req.LockLng, req.LockAlt))
+		req.LockLat, req.LockLng, req.LockAlt, req.CapturedAt))
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -176,6 +176,13 @@ func (s *Server) putStation(w http.ResponseWriter, r *http.Request) {
 			}
 			b.Set(key, v)
 		}
+	}
+	if v, present, err := patch.NullableTime("captured_at"); present {
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		b.Set("captured_at", v)
 	}
 	if b.Empty() {
 		writeError(w, http.StatusBadRequest, "no updatable fields")

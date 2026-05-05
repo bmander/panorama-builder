@@ -9,13 +9,17 @@
 // symmetry and forward-compat.
 
 import * as api from './api.js';
-import { getElement } from './types.js';
+import { formatLocalDateTime, getElement } from './types.js';
 import type { LatLng } from './types.js';
 
 export interface StationFields {
   name: string | null;
   lat: number; lng: number; alt: number;
   lockLat: boolean; lockLng: boolean; lockAlt: boolean;
+  // ISO timestamp for when the photographer set up the camera at this
+  // station. Null = unknown. Round-trips as `string | null` because the
+  // backend stores TIMESTAMPTZ; the UI converts to/from datetime-local.
+  capturedAt: string | null;
 }
 
 export interface StationFieldsHandle {
@@ -45,6 +49,8 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
   const altEl = getElement<HTMLInputElement>('station-alt');
   const lockPosEl = getElement<HTMLInputElement>('station-lock-pos');
   const lockAltEl = getElement<HTMLInputElement>('station-lock-alt');
+  const capturedAtEl = getElement<HTMLInputElement>('station-captured-at');
+  const capturedAtClearEl = getElement<HTMLButtonElement>('station-captured-at-clear');
 
   // Local mirror of the canonical station fields, populated by hydrate().
   // Used for rendering inputs and detecting no-op edits; the PUT itself only
@@ -58,6 +64,9 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
     if (document.activeElement !== latEl) latEl.value = cache.lat.toFixed(fieldDigits('lat'));
     if (document.activeElement !== lngEl) lngEl.value = cache.lng.toFixed(fieldDigits('lng'));
     if (document.activeElement !== altEl) altEl.value = cache.alt.toFixed(fieldDigits('alt'));
+    if (document.activeElement !== capturedAtEl) {
+      capturedAtEl.value = cache.capturedAt ? formatLocalDateTime(new Date(cache.capturedAt)) : '';
+    }
     lockPosEl.checked = cache.lockLat && cache.lockLng;
     lockAltEl.checked = cache.lockAlt;
   }
@@ -67,6 +76,7 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
       name: s.name,
       lat: s.lat, lng: s.lng, alt: s.alt,
       lockLat: s.lock_lat, lockLng: s.lock_lng, lockAlt: s.lock_alt,
+      capturedAt: s.captured_at,
     };
     onAltitudeChanged(s.alt);
     render();
@@ -82,6 +92,7 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
     if (patch.lockLat !== undefined) body.lock_lat = patch.lockLat;
     if (patch.lockLng !== undefined) body.lock_lng = patch.lockLng;
     if (patch.lockAlt !== undefined) body.lock_alt = patch.lockAlt;
+    if (patch.capturedAt !== undefined) body.captured_at = patch.capturedAt;
     let updated: api.ApiStation;
     try {
       updated = await api.updateStation(stationId, body);
@@ -120,6 +131,19 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
   });
   lockAltEl.addEventListener('change', () => {
     void putPatch({ lockAlt: lockAltEl.checked });
+  });
+  capturedAtEl.addEventListener('change', () => {
+    if (!cache) return;
+    // datetime-local emits 'YYYY-MM-DDTHH:mm' in local time. new Date() of
+    // that same string interprets it as local — round-tripping through
+    // toISOString sends UTC to the server. Empty value = clear (null).
+    const next = capturedAtEl.value ? new Date(capturedAtEl.value).toISOString() : null;
+    if (cache.capturedAt === next) return;
+    void putPatch({ capturedAt: next });
+  });
+  capturedAtClearEl.addEventListener('click', () => {
+    if (cache?.capturedAt == null) return;
+    void putPatch({ capturedAt: null });
   });
 
   return {

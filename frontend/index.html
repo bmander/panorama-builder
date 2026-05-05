@@ -157,6 +157,10 @@
       <label class="settings-inline">alt <input type="number" id="station-alt" step="0.1"> m</label>
       <label class="settings-check" title="When checked, the solver treats this station's elevation as a fixed input."><input type="checkbox" id="station-lock-alt"> lock elevation</label>
     </div>
+    <div class="settings-row station-pos">
+      <label class="settings-inline" title="When the photographer's camera was set up at this site. Used by the index-map time filter to decide which CPs were extant at the time of capture.">captured at <input type="datetime-local" id="station-captured-at" step="60"></label>
+      <button type="button" id="station-captured-at-clear" class="btn" title="Clear the recorded capture time">clear</button>
+    </div>
     <label class="settings-inline">Terrain
       <select id="terrain-mode">
         <option value="off">off</option>

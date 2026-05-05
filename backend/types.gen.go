@@ -106,10 +106,11 @@ type ControlPointPatch struct {
 // CreateStationRequest POST body. lat/lng are required; other fields default if omitted.
 type CreateStationRequest struct {
 	// Alt defaults to 0 when omitted
-	Alt     *float64 `json:"alt,omitempty"`
-	Lat     float64  `json:"lat"`
-	Lng     float64  `json:"lng"`
-	LockAlt *bool    `json:"lock_alt,omitempty"`
+	Alt        *float64   `json:"alt,omitempty"`
+	CapturedAt *time.Time `json:"captured_at,omitempty"`
+	Lat        float64    `json:"lat"`
+	Lng        float64    `json:"lng"`
+	LockAlt    *bool      `json:"lock_alt,omitempty"`
 
 	// LockLat defaults to false when omitted
 	LockLat *bool   `json:"lock_lat,omitempty"`
@@ -290,8 +291,11 @@ type SolveResult struct {
 // Station defines model for Station.
 type Station struct {
 	// Alt meters above sea level (defaults to 0 when unknown)
-	Alt       float64   `json:"alt"`
-	CreatedAt time.Time `json:"created_at"`
+	Alt float64 `json:"alt"`
+
+	// CapturedAt when the photographer's camera was set up at this site (null when unknown)
+	CapturedAt *time.Time `json:"captured_at"`
+	CreatedAt  time.Time  `json:"created_at"`
 
 	// ID 13-character base32 server-assigned id
 	ID  ID      `json:"id"`
@@ -312,15 +316,17 @@ type Station struct {
 
 // StationUpdate Partial-update body for PUT /stations/{id}. Every field is
 // optional; only keys present in the body are written. Sending
-// `name: null` clears the name.
+// `name: null` clears the name; sending `captured_at: null`
+// clears the recorded capture time.
 type StationUpdate struct {
-	Alt     *float64 `json:"alt,omitempty"`
-	Lat     *float64 `json:"lat,omitempty"`
-	Lng     *float64 `json:"lng,omitempty"`
-	LockAlt *bool    `json:"lock_alt,omitempty"`
-	LockLat *bool    `json:"lock_lat,omitempty"`
-	LockLng *bool    `json:"lock_lng,omitempty"`
-	Name    *string  `json:"name,omitempty"`
+	Alt        *float64   `json:"alt,omitempty"`
+	CapturedAt *time.Time `json:"captured_at,omitempty"`
+	Lat        *float64   `json:"lat,omitempty"`
+	Lng        *float64   `json:"lng,omitempty"`
+	LockAlt    *bool      `json:"lock_alt,omitempty"`
+	LockLat    *bool      `json:"lock_lat,omitempty"`
+	LockLng    *bool      `json:"lock_lng,omitempty"`
+	Name       *string    `json:"name,omitempty"`
 }
 
 // ControlPointID 13-character base32 server-assigned id
