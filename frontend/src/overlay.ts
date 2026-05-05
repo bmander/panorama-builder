@@ -263,15 +263,23 @@ export interface OverlayManager {
   // with a different-aspect file). POI u/v stay in [0,1] so observations
   // ride the photo and end up at the same relative point.
   setAspect(o: THREE.Group, aspect: number): void;
+  // Late-bind the mutation/selection/light callbacks. Lets the host build
+  // the manager before its dependencies (sync, baker, scene refreshers)
+  // exist, then attach hooks once they do — no load-bearing closures over
+  // later-declared lets.
+  setCallbacks(cbs: OverlayManagerCallbacks): void;
 }
 
-export interface CreateOverlayManagerOptions {
-  overlaysGroup: THREE.Group;
-  getAnisotropy: () => number;
+export interface OverlayManagerCallbacks {
   onMutate?: () => void;
   onSelectionChange?: () => void;
   onLightMutate?: () => void;
 }
+
+export type CreateOverlayManagerOptions = {
+  overlaysGroup: THREE.Group;
+  getAnisotropy: () => number;
+} & OverlayManagerCallbacks;
 
 interface ControlPointEntry {
   id: string;
@@ -285,11 +293,16 @@ export function createOverlayManager(
   { overlaysGroup, getAnisotropy, onMutate, onSelectionChange, onLightMutate }: CreateOverlayManagerOptions,
 ): OverlayManager {
   const overlaySphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), OVERLAY_R);
+  const cbs: {
+    onMutate: (() => void) | undefined;
+    onSelectionChange: (() => void) | undefined;
+    onLightMutate: (() => void) | undefined;
+  } = { onMutate, onSelectionChange, onLightMutate };
   let batching = 0;
   let batchedNotify = false;
   const notify = (): void => {
     if (batching > 0) { batchedNotify = true; return; }
-    onMutate?.();
+    cbs.onMutate?.();
   };
   let selected: THREE.Group | null = null;
   let selectedImageMeasurement: THREE.Mesh | null = null;
@@ -559,7 +572,7 @@ export function createOverlayManager(
     },
     setOpacity(o, opacity) {
       meshMat(overlayData(o).body).opacity = clamp(opacity, 0, 1);
-      onLightMutate?.();
+      cbs.onLightMutate?.();
     },
     getOpacity: (o) => meshMat(overlayData(o).body).opacity,
     setSelectedOpacity(opacity) {
@@ -632,7 +645,7 @@ export function createOverlayManager(
       if (selectedImageMeasurement === measurement) return;
       selectedImageMeasurement = measurement;
       applyPOIColors();
-      onSelectionChange?.();
+      cbs.onSelectionChange?.();
     },
     getImageMeasurements() {
       const result: ImageMeasurementBearing[] = [];
@@ -765,7 +778,7 @@ export function createOverlayManager(
     beginBatch() { batching++; },
     endBatch() {
       batching--;
-      if (batching === 0 && batchedNotify) { batchedNotify = false; onMutate?.(); }
+      if (batching === 0 && batchedNotify) { batchedNotify = false; cbs.onMutate?.(); }
     },
     withBatch(fn) {
       manager.beginBatch();
@@ -814,6 +827,11 @@ export function createOverlayManager(
         if (!data.pois || data.pois.length === 0) continue;
         for (const poi of data.pois) poi.scale.setScalar(r);
       }
+    },
+    setCallbacks(next) {
+      cbs.onMutate = next.onMutate;
+      cbs.onSelectionChange = next.onSelectionChange;
+      cbs.onLightMutate = next.onLightMutate;
     },
   };
   return manager;

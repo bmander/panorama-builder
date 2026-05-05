@@ -17,9 +17,11 @@ export interface ObservationModal {
 
 export interface CreateObservationModalOptions {
   getControlPoints: () => readonly ControlPointView[];
-  onPickExisting: (overlay: THREE.Group, u: number, v: number, controlPointId: string) => void;
-  onCreateAndObserve: (overlay: THREE.Group, u: number, v: number, description: string) => Promise<void>;
-  onCreateMapAndObserve: (latlng: LatLng, description: string, estAlt: number | null) => Promise<void>;
+  // Image-mode callbacks — only the station route opens with `open(...)`.
+  onPickExisting?: (overlay: THREE.Group, u: number, v: number, controlPointId: string) => void;
+  onCreateAndObserve?: (overlay: THREE.Group, u: number, v: number, description: string) => Promise<void>;
+  // Map-mode callback — only the index route opens with `openForMap(...)`.
+  onCreateMapAndObserve?: (latlng: LatLng, description: string, estAlt: number | null) => Promise<void>;
 }
 
 type Pending =
@@ -72,7 +74,7 @@ export function createObservationModal({
       meta.textContent = fmtCpLatLng(cp.estLat, cp.estLng);
       row.append(desc, meta);
       row.addEventListener('click', () => {
-        if (pending?.kind !== 'image') return;
+        if (pending?.kind !== 'image' || !onPickExisting) return;
         const ctx = pending;
         close();
         onPickExisting(ctx.overlay, ctx.u, ctx.v, cp.id);
@@ -117,6 +119,7 @@ export function createObservationModal({
   cancelBtn.addEventListener('click', close);
 
   async function submitMap(latlng: LatLng, description: string, aboveGrade: number): Promise<void> {
+    if (!onCreateMapAndObserve) return;
     const ground = await getElevationAt(latlng.lat, latlng.lng);
     const estAlt = ground === null ? null : ground + aboveGrade;
     await onCreateMapAndObserve(latlng, description, estAlt);
@@ -132,6 +135,7 @@ export function createObservationModal({
     }
     let promise: Promise<void>;
     if (ctx.kind === 'image') {
+      if (!onCreateAndObserve) return;
       promise = onCreateAndObserve(ctx.overlay, ctx.u, ctx.v, description);
     } else {
       const aboveGrade = parseFloat(elevInput.value);
