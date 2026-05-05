@@ -33,7 +33,7 @@ export const ROLE_HANDLE_FOV = 'handle-fov' satisfies Role;
 const POI_COLOR = 0xff5050;
 const POI_COLOR_SELECTED = 0xffff66;
 // POI radius = this fraction of the overlay's world width — scales with the photo.
-const POI_WIDTH_FRACTION = 0.018;
+const POI_WIDTH_FRACTION = 0.09;
 // Action-handle radius: a chunky chunk of the photo width so the icons stay
 // touchable without overwhelming small overlays.
 const ACTION_HANDLE_FRACTION = 0.05;
@@ -252,6 +252,10 @@ export interface OverlayManager {
   withBatch(fn: () => void): void;
   getCones(): Cone[];
   setVisualsVisible(visible: boolean): void;
+  // Multiplier applied to POI world-size to keep on-screen pixel size
+  // roughly constant across camera FOV changes. Pass tan(fov/2)/tan(default/2)
+  // (so 1 at the default FOV).
+  setPoiFovScale(scale: number): void;
 }
 
 export interface CreateOverlayManagerOptions {
@@ -283,6 +287,10 @@ export function createOverlayManager(
   let selected: THREE.Group | null = null;
   let selectedImageMeasurement: THREE.Mesh | null = null;
   let hoveredOverlay: THREE.Group | null = null;
+  // Multiplier on POI world-size so on-screen pixel size stays roughly
+  // constant as FOV (camera zoom) changes. 1.0 = default FOV; the host
+  // updates this via setPoiFovScale on every camera FOV change.
+  let poiFovScale = 1;
 
   // Cross-station control points reachable from the loaded station. The
   // hydrate path populates this on station load; new CPs created at runtime
@@ -343,7 +351,7 @@ export function createOverlayManager(
     data.body.scale.set(w, h, 1);
     if (data.outline) data.outline.scale.set(w, h, 1);
     if (data.pois) {
-      const r = w * POI_WIDTH_FRACTION;
+      const r = w * POI_WIDTH_FRACTION * poiFovScale;
       for (const poi of data.pois) {
         const { u, v } = poiData(poi).uv;
         poi.position.set((u - 0.5) * w, (v - 0.5) * h, 0);
@@ -777,6 +785,17 @@ export function createOverlayManager(
         const data = overlayData(child as THREE.Group);
         if (!data.pois) continue;
         for (const poi of data.pois) poi.visible = visible;
+      }
+    },
+    setPoiFovScale(scale) {
+      if (poiFovScale === scale) return;
+      poiFovScale = scale;
+      // Only POIs depend on fov scale; skip body / outline / handle layout.
+      for (const child of overlaysGroup.children) {
+        const data = overlayData(child as THREE.Group);
+        if (!data.pois || data.pois.length === 0) continue;
+        const r = widthFromSizeRad(data.sizeRad) * POI_WIDTH_FRACTION * poiFovScale;
+        for (const poi of data.pois) poi.scale.setScalar(r);
       }
     },
   };

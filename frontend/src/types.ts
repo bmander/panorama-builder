@@ -196,6 +196,9 @@ export function fmtCpLatLng(lat: number | null, lng: number | null): string {
   return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 }
 
+// Display label for a CP — the description, or "(unnamed)" if blank.
+export const cpLabel = (description: string): string => description || '(unnamed)';
+
 // Optional `focusImageId` deep-links the station page to recenter the 360°
 // camera on a specific image measurement after hydrate.
 export function stationHref(stationId: string, focusImageId?: string): string {

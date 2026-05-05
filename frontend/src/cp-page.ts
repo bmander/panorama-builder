@@ -1,5 +1,5 @@
 import * as api from './api.js';
-import { formatLocalDateTime, getElement, indexCpHref, stationHref } from './types.js';
+import { cpLabel, formatLocalDateTime, getElement, indexCpHref, stationHref } from './types.js';
 
 const CP_ID_RE = /^\/cp\/([A-Z2-7]{13})$/;
 
@@ -91,7 +91,7 @@ function attachNameEditor(cp: api.ApiControlPoint, host: HTMLElement): void {
   attachInlineEditor<string, HTMLInputElement>({
     host,
     read: () => cp.description,
-    render: (v) => { host.textContent = v || '(unnamed)'; },
+    render: (v) => { host.textContent = cpLabel(v); },
     makeInput: (cur) => {
       const el = document.createElement('input');
       el.type = 'text';
@@ -286,7 +286,7 @@ function attachDeleteButton(cp: api.ApiControlPoint, obsCount: number): void {
     const obsNote = obsCount === 0
       ? ''
       : `\n\nIts ${obsCount} observation${obsCount === 1 ? '' : 's'} will also be deleted.`;
-    const label = cp.description || '(unnamed)';
+    const label = cpLabel(cp.description);
     if (!confirm(`Delete ${label}?${obsNote}`)) return;
     btn.disabled = true;
     api.deleteControlPoint(cp.id).then(

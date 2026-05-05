@@ -6,7 +6,7 @@
 // ground elevation at the click to seed the CP's est_alt.
 
 import * as THREE from 'three';
-import { fmtCpLatLng, getElement } from './types.js';
+import { cpLabel, fmtCpLatLng, getElement } from './types.js';
 import type { ControlPointView, LatLng } from './types.js';
 import { getElevationAt } from './dem.js';
 
@@ -65,7 +65,7 @@ export function createObservationModal({
       row.className = 'cp-row';
       const desc = document.createElement('span');
       desc.className = 'desc';
-      desc.textContent = cp.description || '(unnamed)';
+      desc.textContent = cpLabel(cp.description);
       const meta = document.createElement('span');
       meta.className = 'meta';
       if (cp.estLat === null || cp.estLng === null) meta.classList.add('unlocated');

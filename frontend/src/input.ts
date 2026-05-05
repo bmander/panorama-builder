@@ -42,9 +42,6 @@ export interface AttachInputOptions {
   // tex's URL.createObjectURL is held until the host finishes — the host
   // revokes after addOverlay completes.
   onPhotoDropped?: (tex: THREE.Texture, blob: Blob, aspect: number, dir: THREE.Vector3, revokeUrl: () => void) => void;
-  // Fired when the user matches a hovered column to a photo body. Host POSTs
-  // an image-poi with map_poi_id set, then calls overlays.addPOI with both.
-  onMatchImagePOI?: (overlay: THREE.Group, u: number, v: number, controlPointId: string) => void;
   // Fired on shift+wheel with the same normalized px-delta the FOV path uses.
   // Routed out so the host module decides what shift-wheel does.
   onShiftWheel?: (deltaPx: number) => void;
@@ -69,13 +66,20 @@ export interface AttachInputOptions {
   // id so the click callback can open the station menu.
   findStationAtNDC?: (ndc: { x: number; y: number }) => { id: string } | null;
   onStationClick?: (id: string, screenX: number, screenY: number) => void;
+  // Left-click on a control-point dot. The host receives the CP id plus an
+  // optional body hit at the same NDC so the menu can offer "add observation
+  // here" anchored to the photo behind the marker.
+  onCPClick?: (
+    controlPointId: string, screenX: number, screenY: number,
+    bodyHit: { overlay: THREE.Group; u: number; v: number } | null,
+  ) => void;
   // Records before/after snapshots for gesture-end mutations and applies
   // them on Cmd/Ctrl+Z. Optional for the index page where attachInput
   // still runs but no overlays are mutated.
   undoManager?: UndoManager;
 }
 
-export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatchImagePOI, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu, findStationAtNDC, onStationClick, undoManager }: AttachInputOptions): void {
+export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu, findStationAtNDC, onStationClick, onCPClick, undoManager }: AttachInputOptions): void {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -166,11 +170,29 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
     raycaster.setFromCamera(ndc, camera);
     const hits = raycastOverlays();
 
+    // CP-marker click → open the CP menu. Skipped when a POI sits at the
+    // same NDC; clicking an existing observation should take priority over
+    // the CP marker behind it.
+    const earlyPoiHit = hits.find(h => getRole(h.object) === ROLE_POI);
+    if (!earlyPoiHit && onCPClick) {
+      const cpHit = findColumnAtNDC?.({ x: ndc.x, y: ndc.y }) ?? null;
+      if (cpHit) {
+        e.stopPropagation();
+        pointers.delete(e.pointerId);
+        const earlyBodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
+        const body = earlyBodyHit?.uv
+          ? { overlay: earlyBodyHit.object.parent as THREE.Group, u: earlyBodyHit.uv.x, v: earlyBodyHit.uv.y }
+          : null;
+        onCPClick(cpHit.controlPointId, e.clientX, e.clientY, body);
+        return;
+      }
+    }
+
     // Open a batch for the entire drag so per-pointermove mutations don't each
     // re-fire the solver / map redraw / bake-dirty cascade. Closed in endDrag.
     openBatch();
 
-    const poiHit = hits.find(h => getRole(h.object) === ROLE_POI);
+    const poiHit = earlyPoiHit;
     const dragHandleHit = hits.find(h => getRole(h.object) === ROLE_HANDLE_DRAG);
     const rotateHandleHit = hits.find(h => getRole(h.object) === ROLE_HANDLE_ROTATE);
     const fovHandleHit = hits.find(h => getRole(h.object) === ROLE_HANDLE_FOV);
@@ -184,17 +206,6 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
       capturePoi(poiMesh);
       mode = { type: 'poi-drag', poi: poiMesh };
       viewer.requestRender();
-    }
-    // Hovered column + photo body hit → match. Host POSTs an image measurement
-    // with control_point_id set then calls overlays.addImageMeasurement.
-    else if (hoveredColumn && bodyHit?.uv) {
-      const o = bodyHit.object.parent as THREE.Group;
-      const col = hoveredColumn;
-      onMatchImagePOI?.(o, bodyHit.uv.x, bodyHit.uv.y, col.controlPointId);
-      // Clear the hover now that the click has been consumed; the cursor
-      // hasn't moved yet, but the next pointermove will recompute.
-      setHoveredColumn(null);
-      mode = { type: 'pan' };
     }
     // 3a. Rotate handle on the selected photo → roll about photo center.
     else if (rotateHandleHit && selected && rotateHandleHit.object.parent === selected) {

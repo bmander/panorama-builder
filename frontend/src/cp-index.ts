@@ -1,5 +1,5 @@
 import * as api from './api.js';
-import { cpHref, fmtCpLatLng, getElement } from './types.js';
+import { cpHref, cpLabel, fmtCpLatLng, getElement } from './types.js';
 
 function renderList(cps: readonly api.ApiControlPoint[]): void {
   const list = getElement('list');
@@ -19,7 +19,7 @@ function renderList(cps: readonly api.ApiControlPoint[]): void {
     const a = document.createElement('a');
     a.href = cpHref(cp.id);
     a.className = 'desc';
-    a.textContent = cp.description || '(unnamed)';
+    a.textContent = cpLabel(cp.description);
     const meta = document.createElement('span');
     meta.className = 'meta';
     if (cp.est_lat === null || cp.est_lng === null) meta.classList.add('unlocated');

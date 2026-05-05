@@ -13,9 +13,9 @@ import type { ControlPointColumn } from './map-poi-columns.js';
 import { createStationMarkers } from './station-markers.js';
 import type { StationMarker } from './station-markers.js';
 import { findHitDot } from './dot-layer.js';
-import { cpHref, FOCUS_QUERY_PARAM, getElement, INDEX_CP_QUERY_PARAM, INDEX_STATION_QUERY_PARAM, indexStationHref, overlayData, poiData, stationHref } from './types.js';
+import { cpHref, cpLabel, FOCUS_QUERY_PARAM, getElement, INDEX_CP_QUERY_PARAM, INDEX_STATION_QUERY_PARAM, indexStationHref, overlayData, poiData, stationHref } from './types.js';
 import { groundDistance, vecToAzAlt } from './geo.js';
-import { wrapPi } from './mathx.js';
+import { degToRad, wrapPi } from './mathx.js';
 import type { ControlPointView, LatLng } from './types.js';
 import * as api from './api.js';
 import type { ApiControlPoint, ApiHydratedStation, ApiStation } from './api.js';
@@ -25,6 +25,7 @@ import { createOrchestration } from './handlers.js';
 import { createAdminModal } from './admin-modal.js';
 import { createStartStationModal } from './start-station-modal.js';
 import { createContextMenu } from './context-menu.js';
+import type { ContextMenuItem } from './context-menu.js';
 import { createObservationModal } from './observation-modal.js';
 import { createPhotoParamsModal } from './photo-params-modal.js';
 import { createUndoManager } from './undo.js';
@@ -64,7 +65,17 @@ if (currentStationId === null) {
 
 // --- Viewer + scene singletons -----------------------------------------
 
-const viewer = createViewer({ container: document.body });
+const halfFovTan = (fovDeg: number): number => Math.tan(degToRad(fovDeg) / 2);
+const POI_FOV_REFERENCE_TAN = halfFovTan(DEFAULT_FOV);
+const viewer = createViewer({
+  container: document.body,
+  onFovChange: fov => {
+    // Skip the per-overlay rescale during a fly: photos are hidden, and
+    // setFov fires every tween frame.
+    if (!viewer.overlaysGroup.visible) return;
+    overlays.setPoiFovScale(halfFovTan(fov) / POI_FOV_REFERENCE_TAN);
+  },
+});
 
 const overlays = createOverlayManager({
   overlaysGroup: viewer.overlaysGroup,
@@ -136,21 +147,26 @@ const getStationLocation = (): LatLng | null => stationLocation;
 
 // --- Cross-cutting refreshers ------------------------------------------
 
-// CPs with an estimated location that are observed by at least one image
-// measurement on this station. Same set drives column rendering and the
-// matcher hit-test, so what you see is what you can click.
-function getStationObservedControlPoints(): ControlPointView[] {
+// When true, the photo viewer renders every located CP as a marker, not
+// just those observed by this station. Toggled from the settings panel.
+let showAllCPs = false;
+
+// CPs visible in the photo viewer. Same set drives column rendering and
+// the matcher hit-test, so what you see is what you can click.
+function getVisibleControlPoints(): ControlPointView[] {
+  const all = overlays.getControlPoints().filter(cp =>
+    cp.estLat !== null && cp.estLng !== null,
+  );
+  if (showAllCPs) return all;
   const observed = new Set<string>();
   for (const im of overlays.getImageMeasurements()) {
     if (im.controlPointId) observed.add(im.controlPointId);
   }
-  return overlays.getControlPoints().filter(cp =>
-    cp.estLat !== null && cp.estLng !== null && observed.has(cp.id),
-  );
+  return all.filter(cp => observed.has(cp.id));
 }
 
 function refreshControlPointColumns(): void {
-  const cps = getStationObservedControlPoints();
+  const cps = getVisibleControlPoints();
   const ims = overlays.getImageMeasurements();
   const markers: ControlPointColumn[] = cps.map(cp => ({
     id: cp.id,
@@ -214,6 +230,10 @@ const sync = createSyncManager({
 const settings = createSettingsPanel({
   viewer, terrain, sunMarker,
   getCameraLocation: getStationLocation,
+  onShowAllCPsChange: value => {
+    showAllCPs = value;
+    refreshControlPointColumns();
+  },
 });
 
 const handlers = createOrchestration({
@@ -277,9 +297,6 @@ attachInput({
   onPhotoDropped: (tex, blob, aspect, dir, revokeUrl) => {
     void handlers.onPhotoDropped(tex, blob, aspect, dir, revokeUrl);
   },
-  onMatchImagePOI: (overlay, u, v, controlPointId) => {
-    void handlers.onMatchImageMeasurement(overlay, u, v, controlPointId);
-  },
   onShiftWheel: deltaPx => {
     const h = terrain.getCameraHeight();
     const s = Math.sign(h) * Math.log1p(Math.abs(h)) - deltaPx * SHIFT_WHEEL_LOG_PER_PX;
@@ -291,7 +308,7 @@ attachInput({
   findColumnAtNDC: ndc => {
     if (!stationLocation) return null;
     return findHitColumn(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, stationLocation,
-      terrain.getCameraHeight(), getStationObservedControlPoints());
+      terrain.getCameraHeight(), getVisibleControlPoints());
   },
   onHoveredColumnChange: id => { cpColumns.setHoveredMarker(id); },
   onPhotoBodyContextMenu: (overlay, u, v, sx, sy) => {
@@ -318,6 +335,25 @@ attachInput({
     contextMenu.open(sx, sy, [
       { label: 'Go to camera →', onClick: () => { void flyToStation(id); } },
     ], header);
+  },
+  onCPClick: (cpId, sx, sy, body) => {
+    const cp = overlays.getControlPointById(cpId);
+    const header = cpLabel(cp?.description ?? '');
+    const items: ContextMenuItem[] = [
+      { label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } },
+    ];
+    // Skip the "add observation" option when this station already observes
+    // the CP — duplicates aren't useful — or when the click missed any
+    // photo body (no u/v anchor to attach the observation to).
+    const stationObserves = overlays.getImageMeasurements()
+      .some(im => im.controlPointId === cpId);
+    if (!stationObserves && body) {
+      items.push({
+        label: 'Add observation here',
+        onClick: () => { void handlers.onMatchImageMeasurement(body.overlay, body.u, body.v, cpId); },
+      });
+    }
+    contextMenu.open(sx, sy, items, header);
   },
   undoManager,
 });
