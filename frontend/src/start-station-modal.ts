@@ -15,6 +15,7 @@ export interface CreateStartStationModalOptions {
   onSubmit: (input: {
     loc: LatLng;
     name: string;
+    capturedAt: string;
     photos: File[];
   }) => Promise<void>;
 }
@@ -25,6 +26,7 @@ export function createStartStationModal({ onSubmit }: CreateStartStationModalOpt
   const cancelBtn = getElement<HTMLButtonElement>('start-station-cancel');
   const submitBtn = getElement<HTMLButtonElement>('start-station-submit');
   const titleEl = getElement<HTMLInputElement>('start-station-title');
+  const capturedAtEl = getElement<HTMLInputElement>('start-station-captured-at');
   const dropEl = getElement('start-station-drop');
   const fileInputEl = getElement<HTMLInputElement>('start-station-files');
   const previewEl = getElement('start-station-photos-preview');
@@ -72,6 +74,7 @@ export function createStartStationModal({ onSubmit }: CreateStartStationModalOpt
     pendingLoc = loc;
     photos = initialPhotos ? [...initialPhotos] : [];
     titleEl.value = '';
+    capturedAtEl.value = '';
     fileInputEl.value = '';
     renderPreview();
     submitBtn.disabled = false;
@@ -109,10 +112,19 @@ export function createStartStationModal({ onSubmit }: CreateStartStationModalOpt
       titleEl.focus();
       return;
     }
+    if (!capturedAtEl.value) {
+      capturedAtEl.focus();
+      return;
+    }
+    const capturedAt = new Date(capturedAtEl.value);
+    if (Number.isNaN(capturedAt.getTime())) {
+      capturedAtEl.focus();
+      return;
+    }
     submitBtn.disabled = true;
     const loc = pendingLoc;
     const submittedPhotos = photos.slice();
-    onSubmit({ loc, name, photos: submittedPhotos })
+    onSubmit({ loc, name, capturedAt: capturedAt.toISOString(), photos: submittedPhotos })
       .catch((err: unknown) => { console.error('start station failed:', err); })
       .finally(() => { submitBtn.disabled = false; });
   });

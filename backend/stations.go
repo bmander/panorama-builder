@@ -31,6 +31,10 @@ func (s *Server) postStation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "lat/lng out of range")
 		return
 	}
+	if req.CapturedAt.IsZero() {
+		writeError(w, http.StatusBadRequest, "captured_at is required")
+		return
+	}
 	id := newID()
 	const q = `INSERT INTO stations (id, lat, lng, alt, name, lock_lat, lock_lng, lock_alt, captured_at)
 	           VALUES ($1, $2, $3, COALESCE($4, 0), $5,
@@ -180,6 +184,10 @@ func (s *Server) putStation(w http.ResponseWriter, r *http.Request) {
 	if v, present, err := patch.NullableTime("captured_at"); present {
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if v == nil {
+			writeError(w, http.StatusBadRequest, "captured_at must not be null")
 			return
 		}
 		b.Set("captured_at", v)

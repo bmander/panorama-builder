@@ -314,13 +314,19 @@ function renderObservations(obs: api.ApiControlPointObservations): void {
     list.appendChild(empty);
     return;
   }
-  for (const m of obs.image_measurements) {
+  const measurements = [...obs.image_measurements].sort((a, b) =>
+    Date.parse(a.station_captured_at) - Date.parse(b.station_captured_at)
+  );
+  for (const m of measurements) {
     const meta = document.createElement('span');
     meta.className = 'meta';
     const a = document.createElement('a');
     a.href = stationHref(m.station_id, m.id);
     a.textContent = stationLabel(m.station_id, m.station_name);
-    meta.append(`(u=${m.u.toFixed(2)}, v=${m.v.toFixed(2)}) in `, a);
+    const captured = document.createElement('span');
+    captured.className = 'captured-at';
+    captured.textContent = new Date(m.station_captured_at).toLocaleString();
+    meta.append(captured, ` (u=${m.u.toFixed(2)}, v=${m.v.toFixed(2)}) in `, a);
     appendObservationItem(list, 'image', meta);
   }
 }

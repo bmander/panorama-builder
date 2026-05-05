@@ -233,12 +233,13 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 	imRows, err := s.db.Query(r.Context(), `
 		SELECT im.id, im.photo_id, im.u, im.v,
 		       p.station_id, st.name, st.lat, st.lng,
+		       st.captured_at,
 		       p.photo_az, p.photo_tilt, p.photo_roll, p.size_rad, p.aspect
 		FROM image_measurements im
 		JOIN photos p    ON p.id = im.photo_id
 		JOIN stations st ON st.id = p.station_id
 		WHERE im.control_point_id = $1
-		ORDER BY im.created_at`, id)
+		ORDER BY st.captured_at, im.created_at`, id)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -249,6 +250,7 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 		if err := imRows.Scan(
 			&o.ID, &o.PhotoID, &o.U, &o.V,
 			&o.StationID, &o.StationName, &o.StationLat, &o.StationLng,
+			&o.StationCapturedAt,
 			&o.PhotoAz, &o.PhotoTilt, &o.PhotoRoll, &o.SizeRad, &o.Aspect,
 		); err != nil {
 			writeErrorFromDB(w, err)

@@ -57,8 +57,13 @@ async function requestVoid(method: string, path: string): Promise<void> {
 
 // --- Stations ---
 
-export function createStation(latlng: LatLng, name?: string): Promise<ApiStation> {
-  return request<ApiStation>('POST', '/stations', { lat: latlng.lat, lng: latlng.lng, name: name ?? null });
+export function createStation(latlng: LatLng, capturedAt: string, name?: string): Promise<ApiStation> {
+  return request<ApiStation>('POST', '/stations', {
+    lat: latlng.lat,
+    lng: latlng.lng,
+    captured_at: capturedAt,
+    name: name ?? null,
+  });
 }
 
 export function listStations(): Promise<ApiStation[]> {

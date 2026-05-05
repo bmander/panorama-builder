@@ -73,7 +73,7 @@ falling back to `index.html` (SPA `/station/<id>` and `/cp/<id>` deep-links).
 ```sh
 ST=$(curl -sS -X POST http://localhost:8080/api/stations \
       -H 'Content-Type: application/json' \
-      -d '{"lat":47.607,"lng":-122.335,"name":"Seattle"}' | jq -r .id)
+      -d '{"lat":47.607,"lng":-122.335,"captured_at":"2026-05-05T12:00:00Z","name":"Seattle"}' | jq -r .id)
 
 PHOTO=$(curl -sS -X POST "http://localhost:8080/api/stations/$ST/photos" \
          -H 'Content-Type: application/json' -d '{"aspect":1.5}' | jq -r .id)

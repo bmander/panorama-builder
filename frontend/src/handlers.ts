@@ -16,6 +16,7 @@ import { clamp } from './mathx.js';
 export interface StartStationInput {
   readonly loc: LatLng;
   readonly name: string;
+  readonly capturedAt: string;
   readonly photos: readonly File[];
 }
 
@@ -67,10 +68,10 @@ export function createOrchestration({
   getCurrentStationId, overlays, sync,
 }: CreateOrchestrationOptions): OrchestrationHandlers {
   async function onStartStationHere(input: StartStationInput): Promise<void> {
-    const { loc, name, photos } = input;
+    const { loc, name, capturedAt, photos } = input;
     let created;
     try {
-      created = await api.createStation(loc, name || undefined);
+      created = await api.createStation(loc, capturedAt, name || undefined);
     } catch (err) {
       sync.reportError('start station', err);
       return;

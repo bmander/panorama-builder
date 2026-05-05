@@ -17,9 +17,9 @@ export interface StationFields {
   lat: number; lng: number; alt: number;
   lockLat: boolean; lockLng: boolean; lockAlt: boolean;
   // ISO timestamp for when the photographer set up the camera at this
-  // station. Null = unknown. Round-trips as `string | null` because the
-  // backend stores TIMESTAMPTZ; the UI converts to/from datetime-local.
-  capturedAt: string | null;
+  // station. The backend stores TIMESTAMPTZ; the UI converts to/from
+  // datetime-local.
+  capturedAt: string;
 }
 
 export interface StationFieldsHandle {
@@ -50,13 +50,17 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
   const lockPosEl = getElement<HTMLInputElement>('station-lock-pos');
   const lockAltEl = getElement<HTMLInputElement>('station-lock-alt');
   const capturedAtEl = getElement<HTMLInputElement>('station-captured-at');
-  const capturedAtClearEl = getElement<HTMLButtonElement>('station-captured-at-clear');
 
   // Local mirror of the canonical station fields, populated by hydrate().
   // Used for rendering inputs and detecting no-op edits; the PUT itself only
   // carries the changed key, so this is a display cache, not a round-trip
   // shim.
   let cache: StationFields | null = null;
+
+  function renderCapturedAt(): void {
+    if (!cache) return;
+    capturedAtEl.value = formatLocalDateTime(new Date(cache.capturedAt));
+  }
 
   function render(): void {
     if (!cache) return;
@@ -65,7 +69,7 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
     if (document.activeElement !== lngEl) lngEl.value = cache.lng.toFixed(fieldDigits('lng'));
     if (document.activeElement !== altEl) altEl.value = cache.alt.toFixed(fieldDigits('alt'));
     if (document.activeElement !== capturedAtEl) {
-      capturedAtEl.value = cache.capturedAt ? formatLocalDateTime(new Date(cache.capturedAt)) : '';
+      renderCapturedAt();
     }
     lockPosEl.checked = cache.lockLat && cache.lockLng;
     lockAltEl.checked = cache.lockAlt;
@@ -136,14 +140,20 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
     if (!cache) return;
     // datetime-local emits 'YYYY-MM-DDTHH:mm' in local time. new Date() of
     // that same string interprets it as local — round-tripping through
-    // toISOString sends UTC to the server. Empty value = clear (null).
-    const next = capturedAtEl.value ? new Date(capturedAtEl.value).toISOString() : null;
+    // toISOString sends UTC to the server. Empty value is not valid because
+    // station capture time is required.
+    if (!capturedAtEl.value) {
+      renderCapturedAt();
+      return;
+    }
+    const parsed = new Date(capturedAtEl.value);
+    if (Number.isNaN(parsed.getTime())) {
+      renderCapturedAt();
+      return;
+    }
+    const next = parsed.toISOString();
     if (cache.capturedAt === next) return;
     void putPatch({ capturedAt: next });
-  });
-  capturedAtClearEl.addEventListener('click', () => {
-    if (cache?.capturedAt == null) return;
-    void putPatch({ capturedAt: null });
   });
 
   return {

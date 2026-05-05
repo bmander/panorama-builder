@@ -362,9 +362,9 @@ export interface components {
             lock_alt: boolean;
             /**
              * Format: date-time
-             * @description when the photographer's camera was set up at this site (null when unknown)
+             * @description when the photographer's camera was set up at this site
              */
-            captured_at: string | null;
+            captured_at: string;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -481,6 +481,8 @@ export interface components {
             station_lat: number;
             /** Format: double */
             station_lng: number;
+            /** Format: date-time */
+            station_captured_at: string;
             /** Format: double */
             photo_az: number;
             /** Format: double */
@@ -506,7 +508,7 @@ export interface components {
              */
             control_points: components["schemas"]["ControlPoint"][];
         };
-        /** @description POST body. lat/lng are required; other fields default if omitted. */
+        /** @description POST body. lat/lng/captured_at are required; other fields default if omitted. */
         CreateStationRequest: {
             /** Format: double */
             lat: number;
@@ -523,13 +525,13 @@ export interface components {
             lock_lng?: boolean;
             lock_alt?: boolean;
             /** Format: date-time */
-            captured_at?: string | null;
+            captured_at: string;
         };
         /**
          * @description Partial-update body for PUT /stations/{id}. Every field is
          *     optional; only keys present in the body are written. Sending
-         *     `name: null` clears the name; sending `captured_at: null`
-         *     clears the recorded capture time.
+         *     `name: null` clears the name. `captured_at`, when present,
+         *     must be a non-null date-time.
          */
         StationUpdate: {
             /** Format: double */
@@ -543,7 +545,7 @@ export interface components {
             lock_lng?: boolean;
             lock_alt?: boolean;
             /** Format: date-time */
-            captured_at?: string | null;
+            captured_at?: string;
         };
         /**
          * @description POST body for `POST /stations/{id}/photos`. Pose fields are

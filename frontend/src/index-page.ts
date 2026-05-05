@@ -156,11 +156,13 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     });
   }
 
-  async function onStartStationHere(input: { loc: LatLng; name: string; photos: readonly File[] }): Promise<void> {
-    const { loc, name, photos } = input;
+  async function onStartStationHere(
+    input: { loc: LatLng; name: string; capturedAt: string; photos: readonly File[] },
+  ): Promise<void> {
+    const { loc, name, capturedAt, photos } = input;
     let created;
     try {
-      created = await api.createStation(loc, name || undefined);
+      created = await api.createStation(loc, capturedAt, name || undefined);
     } catch (err) {
       console.error('start station failed:', err);
       alert('Could not start station.');

@@ -67,10 +67,11 @@ type ControlPointImageObservation struct {
 	PhotoAz float64 `json:"photo_az"`
 
 	// PhotoID 13-character base32 server-assigned id
-	PhotoID   ID      `json:"photo_id"`
-	PhotoRoll float64 `json:"photo_roll"`
-	PhotoTilt float64 `json:"photo_tilt"`
-	SizeRad   float64 `json:"size_rad"`
+	PhotoID           ID        `json:"photo_id"`
+	PhotoRoll         float64   `json:"photo_roll"`
+	PhotoTilt         float64   `json:"photo_tilt"`
+	SizeRad           float64   `json:"size_rad"`
+	StationCapturedAt time.Time `json:"station_captured_at"`
 
 	// StationID 13-character base32 server-assigned id
 	StationID   ID      `json:"station_id"`
@@ -103,14 +104,14 @@ type ControlPointPatch struct {
 	StartedAt   *time.Time `json:"started_at,omitempty"`
 }
 
-// CreateStationRequest POST body. lat/lng are required; other fields default if omitted.
+// CreateStationRequest POST body. lat/lng/captured_at are required; other fields default if omitted.
 type CreateStationRequest struct {
 	// Alt defaults to 0 when omitted
-	Alt        *float64   `json:"alt,omitempty"`
-	CapturedAt *time.Time `json:"captured_at,omitempty"`
-	Lat        float64    `json:"lat"`
-	Lng        float64    `json:"lng"`
-	LockAlt    *bool      `json:"lock_alt,omitempty"`
+	Alt        *float64  `json:"alt,omitempty"`
+	CapturedAt time.Time `json:"captured_at"`
+	Lat        float64   `json:"lat"`
+	Lng        float64   `json:"lng"`
+	LockAlt    *bool     `json:"lock_alt,omitempty"`
 
 	// LockLat defaults to false when omitted
 	LockLat *bool   `json:"lock_lat,omitempty"`
@@ -293,9 +294,9 @@ type Station struct {
 	// Alt meters above sea level (defaults to 0 when unknown)
 	Alt float64 `json:"alt"`
 
-	// CapturedAt when the photographer's camera was set up at this site (null when unknown)
-	CapturedAt *time.Time `json:"captured_at"`
-	CreatedAt  time.Time  `json:"created_at"`
+	// CapturedAt when the photographer's camera was set up at this site
+	CapturedAt time.Time `json:"captured_at"`
+	CreatedAt  time.Time `json:"created_at"`
 
 	// ID 13-character base32 server-assigned id
 	ID  ID      `json:"id"`
@@ -316,8 +317,8 @@ type Station struct {
 
 // StationUpdate Partial-update body for PUT /stations/{id}. Every field is
 // optional; only keys present in the body are written. Sending
-// `name: null` clears the name; sending `captured_at: null`
-// clears the recorded capture time.
+// `name: null` clears the name. `captured_at`, when present,
+// must be a non-null date-time.
 type StationUpdate struct {
 	Alt        *float64   `json:"alt,omitempty"`
 	CapturedAt *time.Time `json:"captured_at,omitempty"`

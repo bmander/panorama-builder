@@ -47,6 +47,7 @@ h2 { font-size: 14px; color: #aaa; margin: 32px 0 8px; font-weight: normal;
 .observations a { color: #5080ff; text-decoration: none; }
 .observations a:hover { text-decoration: underline; }
 .observations .meta { color: #888; }
+.observations .captured-at { color: #ddd; }
 .observations .empty { color: #888; font-style: italic; padding: 6px 8px; }
 .cp-list { list-style: none; margin: 0; padding: 0;
            display: flex; flex-direction: column; gap: 4px; }
