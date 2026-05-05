@@ -35,6 +35,11 @@ export interface OrchestrationHandlers {
   // Index-map right-click → modal: a CP seeded at the click latlng with the
   // user-supplied estimated altitude (meters above mean sea level).
   onCreateCPAtLocation(latlng: LatLng, description: string, estAlt: number | null): Promise<void>;
+  // Replace the photo blob backing this overlay (for swapping in a higher-
+  // resolution version). Existing pose and observations are preserved; if
+  // the new file has a different aspect ratio, the overlay's body is
+  // re-shaped and the change syncs to the backend.
+  onReplacePhoto(overlay: THREE.Group, file: File): Promise<void>;
 }
 
 export interface CreateOrchestrationOptions {
@@ -224,11 +229,41 @@ export function createOrchestration({
     });
   }
 
+  async function onReplacePhoto(overlay: THREE.Group, file: File): Promise<void> {
+    const photoId = overlayData(overlay).id;
+    let aspect: number;
+    try {
+      aspect = await readAspectRatio(file);
+    } catch (err) {
+      sync.reportError('decode replacement image', err);
+      return;
+    }
+    try {
+      await api.uploadPhotoBlob(photoId, file);
+    } catch (err) {
+      sync.reportError('replace photo', err);
+      return;
+    }
+    overlays.setAspect(overlay, aspect);
+    // Use the local file as the texture source — avoids HTTP-cache fights
+    // with the (now-replaced) /photos/<id>/blob URL and skips a round-trip.
+    const blobUrl = URL.createObjectURL(file);
+    const loader = new THREE.TextureLoader();
+    loader.load(blobUrl, tex => {
+      overlays.setOverlayTexture(overlay, tex);
+      URL.revokeObjectURL(blobUrl);
+    }, undefined, (err: unknown) => {
+      URL.revokeObjectURL(blobUrl);
+      console.error('replacement texture load failed:', err);
+    });
+  }
+
   return {
     onStartStationHere,
     onPhotoDropped,
     onMatchImageMeasurement,
     onCreateCPAndObserve,
     onCreateCPAtLocation,
+    onReplacePhoto,
   };
 }

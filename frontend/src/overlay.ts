@@ -33,7 +33,7 @@ export const ROLE_HANDLE_FOV = 'handle-fov' satisfies Role;
 const POI_COLOR = 0xff5050;
 const POI_COLOR_SELECTED = 0xffff66;
 // POI radius = this fraction of the overlay's world width — scales with the photo.
-const POI_WIDTH_FRACTION = 0.09;
+const POI_WIDTH_FRACTION = 0.054;
 // Action-handle radius: a chunky chunk of the photo width so the icons stay
 // touchable without overwhelming small overlays.
 const ACTION_HANDLE_FRACTION = 0.05;
@@ -167,6 +167,9 @@ function getPlaceholderTexture(): THREE.Texture {
 }
 
 const widthFromSizeRad = (sr: number): number => 2 * OVERLAY_R * Math.tan(sr / 2);
+// POI baseline width — derived from a default 30° photo so reticules look
+// the same size on every photo regardless of its individual size_rad.
+const POI_REFERENCE_WIDTH = widthFromSizeRad(DEFAULT_SIZE_RAD);
 
 export function dirFromAzAlt(az: number, alt: number): THREE.Vector3 {
   const v = new THREE.Vector3(0, 0, -1);
@@ -256,6 +259,10 @@ export interface OverlayManager {
   // roughly constant across camera FOV changes. Pass tan(fov/2)/tan(default/2)
   // (so 1 at the default FOV).
   setPoiFovScale(scale: number): void;
+  // Update the overlay's aspect ratio (used when a photo blob is replaced
+  // with a different-aspect file). POI u/v stay in [0,1] so observations
+  // ride the photo and end up at the same relative point.
+  setAspect(o: THREE.Group, aspect: number): void;
 }
 
 export interface CreateOverlayManagerOptions {
@@ -351,7 +358,10 @@ export function createOverlayManager(
     data.body.scale.set(w, h, 1);
     if (data.outline) data.outline.scale.set(w, h, 1);
     if (data.pois) {
-      const r = w * POI_WIDTH_FRACTION * poiFovScale;
+      // POI radius is a fraction of a reference photo width, not the host
+      // photo's width — otherwise wide-angle photos get visibly larger
+      // reticules than telephoto ones at the same screen position.
+      const r = POI_REFERENCE_WIDTH * POI_WIDTH_FRACTION * poiFovScale;
       for (const poi of data.pois) {
         const { u, v } = poiData(poi).uv;
         poi.position.set((u - 0.5) * w, (v - 0.5) * h, 0);
@@ -787,14 +797,21 @@ export function createOverlayManager(
         for (const poi of data.pois) poi.visible = visible;
       }
     },
+    setAspect(o, aspect) {
+      const data = overlayData(o);
+      if (data.aspect === aspect) return;
+      data.aspect = aspect;
+      applySize(o);
+      notify();
+    },
     setPoiFovScale(scale) {
       if (poiFovScale === scale) return;
       poiFovScale = scale;
       // Only POIs depend on fov scale; skip body / outline / handle layout.
+      const r = POI_REFERENCE_WIDTH * POI_WIDTH_FRACTION * poiFovScale;
       for (const child of overlaysGroup.children) {
         const data = overlayData(child as THREE.Group);
         if (!data.pois || data.pois.length === 0) continue;
-        const r = widthFromSizeRad(data.sizeRad) * POI_WIDTH_FRACTION * poiFovScale;
         for (const poi of data.pois) poi.scale.setScalar(r);
       }
     },

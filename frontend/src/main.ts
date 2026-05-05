@@ -254,6 +254,28 @@ let mapView: MapView | null = null;
 const SHIFT_WHEEL_LOG_PER_PX = 0.005;
 const COLUMN_NDC_HIT_RADIUS = 0.01;
 
+// Modal-style file picker for menu actions ("Replace image…"). Resolves
+// with the chosen File or null on cancel.
+function pickImageFile(): Promise<File | null> {
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.style.display = 'none';
+    let settled = false;
+    const finish = (file: File | null): void => {
+      if (settled) return;
+      settled = true;
+      input.remove();
+      resolve(file);
+    };
+    input.addEventListener('change', () => { finish(input.files?.[0] ?? null); });
+    input.addEventListener('cancel', () => { finish(null); });
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
 const opacityRowEl = getElement('overlay-opacity-row');
 const opacitySliderEl = getElement<HTMLInputElement>('overlay-opacity');
 
@@ -315,6 +337,11 @@ attachInput({
     contextMenu.open(sx, sy, [
       { label: 'Add observation here', onClick: () => { observationModal.open(overlay, u, v); } },
       { label: 'Photo parameters…', onClick: () => { photoParamsModal.open(overlay); } },
+      { label: 'Replace image…', onClick: () => {
+        void pickImageFile().then(file => {
+          if (file) void handlers.onReplacePhoto(overlay, file);
+        });
+      } },
     ]);
   },
   onImagePOIContextMenu: (poi, sx, sy) => {
