@@ -34,6 +34,16 @@ type ModeState =
 // Squared px threshold separating a tap (open menu) from a drag (reposition).
 const TAP_THRESHOLD_PX2 = 25;
 
+// A click that resolved to a photo body hit, with the uv where the ray
+// crossed the photo. The host uses (overlay, u, v) to anchor a new
+// observation if the user picks "Add observation here" from a menu opened
+// over the photo.
+export interface PhotoBodyHit {
+  readonly overlay: THREE.Group;
+  readonly u: number;
+  readonly v: number;
+}
+
 const PINCH_MIN_DIST = 20;
 function pinchDist(a: PointerPos, b: PointerPos): number {
   return Math.max(dist2(a.x, a.y, b.x, b.y), PINCH_MIN_DIST);
@@ -77,7 +87,7 @@ export interface AttachInputOptions {
   // here" anchored to the photo behind the marker.
   onCPClick?: (
     controlPointId: string, screenX: number, screenY: number,
-    bodyHit: { overlay: THREE.Group; u: number; v: number } | null,
+    bodyHit: PhotoBodyHit | null,
   ) => void;
   // Records before/after snapshots for gesture-end mutations and applies
   // them on Cmd/Ctrl+Z. Optional for the index page where attachInput
@@ -123,6 +133,15 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
       onHoveredColumnChange?.(nextId);
       canvas.classList.toggle('tool-poi', hoveredColumn !== null);
     }
+  }
+
+  // Update photo + reticule hover together. Both stores must always be
+  // notified (clearing one without the other leaves a stale highlight); the
+  // ||-fold here is just to amortize a single requestRender.
+  function applyHover(photo: THREE.Group | null, poi: THREE.Mesh | null): void {
+    const a = overlays.photos.setHovered(photo);
+    const b = overlays.measurements.setHovered(poi);
+    if (a || b) viewer.requestRender();
   }
 
   let batchOpen = false;
@@ -343,9 +362,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
   canvas.addEventListener('lostpointercapture', onPointerEnd);
   canvas.addEventListener('pointerleave', () => {
     if (mode) return;
-    let dirty = overlays.photos.setHovered(null);
-    if (overlays.measurements.setHovered(null)) dirty = true;
-    if (dirty) viewer.requestRender();
+    applyHover(null, null);
     setHoveredColumn(null);
   });
 
@@ -370,18 +387,16 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
       const colHit = findColumnAtNDC?.({ x: ndc.x, y: ndc.y }) ?? null;
       setHoveredColumn(colHit);
       if (colHit) {
-        let dirty = overlays.photos.setHovered(null);
-        if (overlays.measurements.setHovered(null)) dirty = true;
-        if (dirty) viewer.requestRender();
+        applyHover(null, null);
         return;
       }
       const hits = raycastOverlays();
       const poiHit = hits.find(h => getRole(h.object) === ROLE_POI);
-      let dirty = overlays.measurements.setHovered(poiHit ? poiHit.object as THREE.Mesh : null);
       const bodyHit = !poiHit ? hits.find(h => getRole(h.object) === ROLE_BODY) : undefined;
-      const hoverTarget = bodyHit ? bodyHit.object.parent as THREE.Group : null;
-      if (overlays.photos.setHovered(hoverTarget)) dirty = true;
-      if (dirty) viewer.requestRender();
+      applyHover(
+        bodyHit ? bodyHit.object.parent as THREE.Group : null,
+        poiHit ? poiHit.object as THREE.Mesh : null,
+      );
       return;
     }
     switch (mode.type) {

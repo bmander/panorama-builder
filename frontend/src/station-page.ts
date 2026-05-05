@@ -9,6 +9,7 @@ import { createViewer, DEFAULT_FOV } from './viewer.js';
 import { createOverlayManager, dirFromAzAlt } from './overlay.js';
 import { createBaker } from './bake.js';
 import { attachInput } from './input.js';
+import type { PhotoBodyHit } from './input.js';
 import { createHud, attachDownload } from './ui.js';
 import { createTerrainView } from './terrain.js';
 import { createSunMarker } from './sun-marker.js';
@@ -289,14 +290,11 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       handlers.onCreateCPAndObserve(overlay, u, v, description),
   });
 
-  // Shared menu builder for any CP-targeted gesture (left-click on a CP
-  // marker, right-click on a reticule). Always headed by the CP description
-  // and offers the standard CP actions; "Add observation here" is only
-  // appended when this station doesn't already observe the CP and the click
-  // landed on a photo body that can anchor the new observation.
+  // "Add observation here" is suppressed when this station already observes
+  // the CP (duplicates aren't useful) or when the click missed any photo
+  // body (no u/v anchor to attach the observation to).
   function openCpContextMenu(
-    cpId: string, sx: number, sy: number,
-    body: { overlay: THREE.Group; u: number; v: number } | null,
+    cpId: string, sx: number, sy: number, body: PhotoBodyHit | null,
   ): void {
     const cp = overlays.controlPoints.getById(cpId);
     const header = cpLabel(cp?.description ?? '');

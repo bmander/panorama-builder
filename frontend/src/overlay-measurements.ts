@@ -106,12 +106,20 @@ export function createMeasurementStore(
   const hoveredControlPointId = (): string | null =>
     hovered ? poiData(hovered).controlPointId : null;
 
-  // Highlight = selected, hovered, or sharing a CP with either.
+  // A POI is "selected" if the user clicked it directly OR if it shares a
+  // control point with the currently selected POI — so all reticules for
+  // one landmark highlight as a group.
+  const isSelected = (poi: THREE.Mesh, controlPointId: string | null): boolean => {
+    if (poi === selected) return true;
+    return controlPointId !== null && controlPointId === selectedControlPointId();
+  };
+
+  // Hover follows the same group rule as selection. Visually selected and
+  // hovered share one yellow color, so isHighlighted = isSelected ∨ isHovered.
   const isHighlighted = (poi: THREE.Mesh, controlPointId: string | null): boolean => {
-    if (poi === selected || poi === hovered) return true;
-    if (controlPointId === null) return false;
-    return controlPointId === selectedControlPointId()
-      || controlPointId === hoveredControlPointId();
+    if (isSelected(poi, controlPointId)) return true;
+    if (poi === hovered) return true;
+    return controlPointId !== null && controlPointId === hoveredControlPointId();
   };
 
   const currentPoiRadius = (): number =>
@@ -193,9 +201,7 @@ export function createMeasurementStore(
             az: azFromLocal(o, poi.position.x, poi.position.y, poi.position.z),
             uv: { ...pData.uv },
             controlPointId: pData.controlPointId,
-            selected: poi === selected
-              || (pData.controlPointId !== null
-                && pData.controlPointId === selectedControlPointId()),
+            selected: isSelected(poi, pData.controlPointId),
           });
         }
       }
