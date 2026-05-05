@@ -14,81 +14,30 @@
 
 import * as THREE from 'three';
 import type { LatLng } from './types.js';
-import {
-  TILE_PX,
-  fetchTileElevations,
-  latToTileY,
-  lngToTileX,
-  tileKey,
-  tileXToLng,
-  tileYToLat,
-} from './dem.js';
-import { fetchImageryTile } from './imagery.js';
 import { sunDirection } from './solar.js';
-import { M_PER_DEG_LAT, latLngToCameraRelativeMeters } from './geo.js';
-import { clamp, degToRad } from './mathx.js';
-
-// Outer-edge angular-pitch target driving the ring layout below: ~5 mrad
-// (~0.29°). At 75° FOV / ~1920 px viewport one screen pixel subtends ~0.7
-// mrad, so 5 mrad ≈ 7 px per mesh cell — coarser than per-pixel but enough
-// for a reference surface. To retune, pick a new target and re-derive RINGS.
-interface RingSpec {
-  zoom: number;
-  radiusTiles: number;
-  stride: number;
-}
-
-// Each successive ring drops 2 zoom levels (4× spacing, 4× tile width). The
-// rebuild orchestrator threads each ring's outer half-width to the next so
-// outer rings carve a hole exactly matching the inner ring's coverage —
-// otherwise their meshes z-fight in the overlap band.
-const RINGS: readonly RingSpec[] = [
-  { zoom: 11, radiusTiles: 2, stride: 2 },
-  { zoom:  9, radiusTiles: 2, stride: 2 },
-  { zoom:  7, radiusTiles: 2, stride: 2 },
-];
-
-// World-meter coverage rectangle of a ring relative to the camera. Asymmetric
-// because the camera generally isn't centered within its tile.
-interface RingBounds {
-  readonly xMin: number;
-  readonly xMax: number;
-  readonly zMin: number;
-  readonly zMax: number;
-}
+import { latLngToCameraRelativeMeters } from './geo.js';
+import {
+  CURVATURE_FACTOR_GEOMETRIC,
+  CURVATURE_FACTOR_REFRACTED,
+  RINGS,
+  buildRingGeometry,
+} from './terrain-geometry.js';
+import type { PrevRing, RingBounds, RingSpec } from './terrain-geometry.js';
+import {
+  loadRingTiles,
+  prefetchRingTiles,
+  stitchImageryCanvas,
+} from './terrain-tiles.js';
 
 const WIREFRAME_COLOR = 0x88aaff;
 const WIREFRAME_OPACITY = 0.35;
-// Fallback fill for the imagery canvas when individual tiles fail to load.
-const IMAGERY_FALLBACK = '#888';
 const DIR_LIGHT_INTENSITY = 2.5;
 const AMBIENT_LIGHT_INTENSITY = 0.7;
 // Far enough that direction is the only thing that matters; lambert ignores
 // magnitude but Three.js still uses the position vector to build the direction.
 const DIR_LIGHT_DISTANCE = 1000;
 
-// Curvature + standard atmospheric refraction. The geometric drop below the
-// tangent plane at distance d from the camera is d²/(2R) (small-angle
-// approximation; correct to <0.2 % at 525 km). Light refracts back toward
-// Earth, raising apparent positions by k·d²/(2R); the surveyor's k = 0.14
-// (the "0.0675 d² km" rule of thumb) cancels part of the drop. Net y-offset:
-// −(1 − k) · d² / (2R), which reaches 73 m at 33 km, 608 m at 95 km, and
-// 18.6 km at the outer ring's 525 km horizon.
-const EARTH_RADIUS_M = 6371000;
-const SURVEY_REFRACTION_K = 0.14;
-// drop = factor · d². Curvature off → 0 (flat plane). Curvature on,
-// refraction off → full geometric drop. Both on → drop reduced by k.
-const CURVATURE_FACTOR_GEOMETRIC = 1 / (2 * EARTH_RADIUS_M);
-const CURVATURE_FACTOR_REFRACTED = (1 - SURVEY_REFRACTION_K) / (2 * EARTH_RADIUS_M);
-
 export type TerrainMode = 'off' | 'wireframe' | 'shaded';
-
-// Sample elevation at fractional pixel coords within a tile (nearest-neighbor).
-function sampleTile(elev: Float32Array, px: number, py: number): number {
-  const ix = clamp(Math.floor(px), 0, TILE_PX - 1);
-  const iy = clamp(Math.floor(py), 0, TILE_PX - 1);
-  return elev[iy * TILE_PX + ix]!;
-}
 
 export interface TerrainView {
   setLocation(camLoc: LatLng | null): void;
@@ -180,178 +129,25 @@ interface RingResult {
   bounds: RingBounds;
 }
 
-// Build one ring's geometry. When `prev` is supplied (every ring except the
-// innermost), the ring reuses the inner ring's ground elevation so meshes line
-// up at boundaries, and skips quads whose bounding box is fully contained in
-// the inner ring's coverage rectangle. The "fully contained" rule lets outer
-// quads extend one cell into the inner ring's coverage — that overlap gets
-// resolved by per-ring polygonOffset (see makeMaterial) so the inner ring
-// always wins the depth test there, no gap, no z-fighting.
 async function buildRing(
   camLoc: LatLng,
   spec: RingSpec,
   curvatureFactor: number,
-  prev?: { camGroundElev: number; bounds: RingBounds },
+  prev?: PrevRing,
 ): Promise<RingResult> {
-  const { zoom, radiusTiles, stride } = spec;
-
-  const cxFrac = lngToTileX(camLoc.lng, zoom);
-  const cyFrac = latToTileY(camLoc.lat, zoom);
-  const cx = Math.floor(cxFrac);
-  const cy = Math.floor(cyFrac);
-
-  // Fetch DEM and imagery for the (2R+1)×(2R+1) window in parallel.
-  const demPromises: Promise<{ tx: number; ty: number; data: Float32Array | null }>[] = [];
-  const imageryPromises: Promise<{ tx: number; ty: number; img: HTMLImageElement | null }>[] = [];
-  for (let dy = -radiusTiles; dy <= radiusTiles; dy++) {
-    for (let dx = -radiusTiles; dx <= radiusTiles; dx++) {
-      const tx = cx + dx;
-      const ty = cy + dy;
-      demPromises.push(fetchTileElevations(zoom, tx, ty).then(data => ({ tx, ty, data })));
-      imageryPromises.push(fetchImageryTile(zoom, tx, ty).then(img => ({ tx, ty, img })));
-    }
-  }
-  const [tiles, imageryTiles] = await Promise.all([
-    Promise.all(demPromises),
-    Promise.all(imageryPromises),
-  ]);
-
-  const tileMap = new Map<string, Float32Array>();
-  for (const t of tiles) {
-    if (t.data) tileMap.set(tileKey(zoom, t.tx, t.ty), t.data);
-  }
-
-  const centerTile = tileMap.get(tileKey(zoom, cx, cy));
-  const camGroundElev = prev?.camGroundElev ?? (centerTile
-    ? sampleTile(centerTile, (cxFrac - cx) * TILE_PX, (cyFrac - cy) * TILE_PX)
-    : 0);
-
-  // Build the mesh: one vertex per (sampled) DEM pixel across the tile window,
-  // with seams welded by including the rightmost/topmost edge.
-  const samplesPerTile = TILE_PX / stride;
-  const nx = samplesPerTile * (radiusTiles * 2 + 1) + 1;
-  const ny = samplesPerTile * (radiusTiles * 2 + 1) + 1;
-
-  const positions = new Float32Array(nx * ny * 3);
-  const uvs = new Float32Array(nx * ny * 2);
-  const cosLat = Math.cos(degToRad(camLoc.lat));
-
-  // Precompute per-row and per-column geometry once. Each row's tile + sub-pixel
-  // depends only on j; each column's depends only on i; and the world-meters
-  // wx / wz follow from those. Pulls 410k function calls out of the inner loop.
-  const rowTy = new Int32Array(ny);
-  const rowPy = new Int32Array(ny);
-  const rowWz = new Float64Array(ny);
-  for (let j = 0; j < ny; j++) {
-    const tileJ = Math.floor(j / samplesPerTile);
-    const subJ = j - tileJ * samplesPerTile;
-    const ty = cy - radiusTiles + tileJ;
-    const py = (subJ === samplesPerTile) ? TILE_PX - 1 : subJ * stride;
-    const lat = tileYToLat(ty + py / TILE_PX, zoom);
-    rowTy[j] = ty;
-    rowPy[j] = py;
-    rowWz[j] = -(lat - camLoc.lat) * M_PER_DEG_LAT;
-  }
-  const colTx = new Int32Array(nx);
-  const colPx = new Int32Array(nx);
-  const colWx = new Float64Array(nx);
-  for (let i = 0; i < nx; i++) {
-    const tileI = Math.floor(i / samplesPerTile);
-    const subI = i - tileI * samplesPerTile;
-    const tx = cx - radiusTiles + tileI;
-    const px = (subI === samplesPerTile) ? TILE_PX - 1 : subI * stride;
-    const lng = tileXToLng(tx + px / TILE_PX, zoom);
-    colTx[i] = tx;
-    colPx[i] = px;
-    colWx[i] = (lng - camLoc.lng) * M_PER_DEG_LAT * cosLat;
-  }
-
-  for (let j = 0; j < ny; j++) {
-    const ty = rowTy[j]!;
-    const py = rowPy[j]!;
-    const wz = rowWz[j]!;
-    for (let i = 0; i < nx; i++) {
-      const tx = colTx[i]!;
-      const px = colPx[i]!;
-      const tile = tileMap.get(tileKey(zoom, tx, ty));
-      const elev = tile ? tile[py * TILE_PX + px]! : 0;
-      const idx = (j * nx + i) * 3;
-      const wx = colWx[i]!;
-      const drop = curvatureFactor * (wx * wx + wz * wz);
-      positions[idx] = wx;
-      positions[idx + 1] = elev - camGroundElev - drop;
-      positions[idx + 2] = wz;
-      const uvIdx = (j * nx + i) * 2;
-      uvs[uvIdx] = i / (nx - 1);
-      uvs[uvIdx + 1] = j / (ny - 1);
-    }
-  }
-
-  // Skip quads fully inside the inner ring's bounds. Quads that straddle the
-  // boundary stay (one cell of overlap with the inner ring), which makes the
-  // boundary seamless; polygonOffset on the outer ring's material biases its
-  // depth so the inner ring wins the overlap.
-  const ixMin = prev?.bounds.xMin ?? 0;
-  const ixMax = prev?.bounds.xMax ?? 0;
-  const izMin = prev?.bounds.zMin ?? 0;
-  const izMax = prev?.bounds.zMax ?? 0;
-  const quadCount = (nx - 1) * (ny - 1);
-  // Uint32 since vertex count can exceed 65535. Over-allocated when skipping;
-  // trimmed below via slice() so the unused tail is GC-eligible.
-  const indices = new Uint32Array(quadCount * 6);
-  let k = 0;
-  for (let j = 0; j < ny - 1; j++) {
-    const wzA = rowWz[j]!, wzB = rowWz[j + 1]!;
-    const zMin = Math.min(wzA, wzB);
-    const zMax = Math.max(wzA, wzB);
-    const zInside = zMin >= izMin && zMax <= izMax;
-    for (let i = 0; i < nx - 1; i++) {
-      if (prev && zInside) {
-        const wxA = colWx[i]!, wxB = colWx[i + 1]!;
-        if (Math.min(wxA, wxB) >= ixMin && Math.max(wxA, wxB) <= ixMax) continue;
-      }
-      const a = j * nx + i;
-      const b = a + 1;
-      const c = a + nx;
-      const d = c + 1;
-      indices[k++] = a; indices[k++] = c; indices[k++] = b;
-      indices[k++] = b; indices[k++] = c; indices[k++] = d;
-    }
-  }
+  const { demTiles, imageryTiles } = await loadRingTiles(camLoc, spec);
+  const geom = buildRingGeometry(camLoc, spec, curvatureFactor, demTiles, prev);
 
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-  // slice() (not subarray) so the over-allocation isn't retained via the view.
-  geometry.setIndex(new THREE.BufferAttribute(indices.slice(0, k), 1));
+  geometry.setAttribute('position', new THREE.BufferAttribute(geom.positions, 3));
+  geometry.setAttribute('uv', new THREE.BufferAttribute(geom.uvs, 2));
+  geometry.setIndex(new THREE.BufferAttribute(geom.indices, 1));
   // Normals required for Lambert lighting; cheap enough to always compute so
   // wireframe→shaded swaps don't need a rebuild.
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
 
-  const bounds: RingBounds = {
-    xMin: colWx[0]!,
-    xMax: colWx[nx - 1]!,
-    zMin: Math.min(rowWz[0]!, rowWz[ny - 1]!),
-    zMax: Math.max(rowWz[0]!, rowWz[ny - 1]!),
-  };
-
-  // Stitch the (2R+1)² imagery tiles into a single square canvas. Tile (cx-R,
-  // cy-R) lands at the canvas's top-left, matching how UVs are assigned above
-  // (UV.y=0 → vertex j=0 → northernmost row → top of canvas).
-  const canvasSize = TILE_PX * (radiusTiles * 2 + 1);
-  const canvas = document.createElement('canvas');
-  canvas.width = canvasSize;
-  canvas.height = canvasSize;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = IMAGERY_FALLBACK;
-  ctx.fillRect(0, 0, canvasSize, canvasSize);
-  for (const t of imageryTiles) {
-    if (!t.img) continue;
-    const ox = (t.tx - (cx - radiusTiles)) * TILE_PX;
-    const oy = (t.ty - (cy - radiusTiles)) * TILE_PX;
-    ctx.drawImage(t.img, ox, oy);
-  }
+  const canvas = stitchImageryCanvas(camLoc, spec, imageryTiles);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 4;
@@ -360,7 +156,7 @@ async function buildRing(
   // → canvas top → north tile.
   texture.flipY = false;
 
-  return { geometry, texture, camGroundElev, bounds };
+  return { geometry, texture, camGroundElev: geom.camGroundElev, bounds: geom.bounds };
 }
 
 export function createTerrainView({ scene, requestRender }: CreateTerrainViewOptions): TerrainView {
@@ -463,16 +259,7 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
     // dem/imagery modules dedupe via their inflight maps, so this just warms
     // the caches so outer rings' network round-trips overlap with the inner
     // ring's geometry build instead of running serially after it.
-    for (const spec of RINGS) {
-      const cx = Math.floor(lngToTileX(camLoc.lng, spec.zoom));
-      const cy = Math.floor(latToTileY(camLoc.lat, spec.zoom));
-      for (let dy = -spec.radiusTiles; dy <= spec.radiusTiles; dy++) {
-        for (let dx = -spec.radiusTiles; dx <= spec.radiusTiles; dx++) {
-          void fetchTileElevations(spec.zoom, cx + dx, cy + dy);
-          void fetchImageryTile(spec.zoom, cx + dx, cy + dy);
-        }
-      }
-    }
+    for (const spec of RINGS) prefetchRingTiles(camLoc, spec);
 
     // Build inner ring first to fix camGroundElev; outer rings reuse it so the
     // meshes line up cleanly at boundaries. Each ring's outer coverage is
@@ -480,7 +267,7 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
     const factor = curvatureFactor();
     const builtGeometries: THREE.BufferGeometry[] = [];
     const builtTextures: THREE.Texture[] = [];
-    let prev: { camGroundElev: number; bounds: RingBounds } | undefined;
+    let prev: PrevRing | undefined;
     for (const spec of RINGS) {
       const result = await buildRing(camLoc, spec, factor, prev);
       if (myBuildId !== buildId) {
