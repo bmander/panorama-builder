@@ -754,6 +754,7 @@ components:
       properties:
         max_iters: { type: integer, minimum: 1, maximum: 10000, description: GN iteration cap (synchronous default 30, streaming default 1000) }
         residual_tol_rad: { type: number, format: double, description: per-residual-RMS convergence threshold, default 1e-4 }
+        rel_improve_tol: { type: number, format: double, description: per-iteration fractional reduction in residual RMS below which the run is considered converged (default 1e-4); push smaller for tighter convergence at the cost of more iterations }
         dry_run:
           type: boolean
           description: |

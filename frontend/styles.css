@@ -111,6 +111,9 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 #context-menu button { padding: 6px 10px; background: transparent; border: none;
                        color: #fff; font: inherit; text-align: left; cursor: pointer; }
 #context-menu button:hover { background: rgba(255,255,255,0.15); }
+#context-menu .header { padding: 6px 10px; color: #aaa; font: inherit;
+                        border-bottom: 1px solid rgba(255,255,255,0.2);
+                        text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
 .cp-list { display: flex; flex-direction: column; gap: 2px; max-height: 240px;
            overflow-y: auto; border: 1px solid #444; padding: 4px; }
 .cp-list .empty { color: #888; padding: 8px; text-align: center; }

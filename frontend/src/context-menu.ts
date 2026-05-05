@@ -6,7 +6,7 @@ export interface ContextMenuItem {
 }
 
 export interface ContextMenu {
-  open(x: number, y: number, items: readonly ContextMenuItem[]): void;
+  open(x: number, y: number, items: readonly ContextMenuItem[], header?: string): void;
   close(): void;
 }
 
@@ -18,8 +18,14 @@ export function createContextMenu(): ContextMenu {
     el.replaceChildren();
   }
 
-  function open(x: number, y: number, items: readonly ContextMenuItem[]): void {
+  function open(x: number, y: number, items: readonly ContextMenuItem[], header?: string): void {
     el.replaceChildren();
+    if (header !== undefined) {
+      const h = document.createElement('div');
+      h.className = 'header';
+      h.textContent = header;
+      el.appendChild(h);
+    }
     for (const item of items) {
       const btn = document.createElement('button');
       btn.type = 'button';

@@ -64,18 +64,18 @@ export interface AttachInputOptions {
     overlay: THREE.Group, u: number, v: number, screenX: number, screenY: number,
   ) => void;
   onImagePOIContextMenu?: (poi: THREE.Mesh, screenX: number, screenY: number) => void;
-  // Right-click on an other-station green dot. Hit-test is owned by the host
+  // Left-click on an other-station green dot. Hit-test is owned by the host
   // (it has the camera + dot list in scope); the host hands back the station
-  // id so the menu callback can navigate to that station's page.
+  // id so the click callback can open the station menu.
   findStationAtNDC?: (ndc: { x: number; y: number }) => { id: string } | null;
-  onStationContextMenu?: (id: string, screenX: number, screenY: number) => void;
+  onStationClick?: (id: string, screenX: number, screenY: number) => void;
   // Records before/after snapshots for gesture-end mutations and applies
   // them on Cmd/Ctrl+Z. Optional for the index page where attachInput
   // still runs but no overlays are mutated.
   undoManager?: UndoManager;
 }
 
-export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatchImagePOI, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu, findStationAtNDC, onStationContextMenu, undoManager }: AttachInputOptions): void {
+export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatchImagePOI, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu, findStationAtNDC, onStationClick, undoManager }: AttachInputOptions): void {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -151,6 +151,18 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
     }
     if (pointers.size > 2) return;
     ndcFromEvent(e);
+    // Station dots are screen-space and rendered always-on-top; intercept
+    // them before any drag/pan dispatch so the click opens the station menu
+    // instead of starting a pan. stopPropagation prevents the menu's own
+    // document-level outside-click closer from firing on this same event
+    // and immediately closing the menu we're about to open.
+    const stationHit = findStationAtNDC?.({ x: ndc.x, y: ndc.y }) ?? null;
+    if (stationHit && onStationClick) {
+      e.stopPropagation();
+      pointers.delete(e.pointerId);
+      onStationClick(stationHit.id, e.clientX, e.clientY);
+      return;
+    }
     raycaster.setFromCamera(ndc, camera);
     const hits = raycastOverlays();
 
@@ -244,14 +256,6 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onMatc
   canvas.addEventListener('contextmenu', (e: MouseEvent) => {
     if (mode) return;
     ndcFromEvent(e);
-    // Station dots are screen-space and rendered always-on-top, so hit-test
-    // them before raycasting world-space overlays.
-    const stationHit = findStationAtNDC?.({ x: ndc.x, y: ndc.y }) ?? null;
-    if (stationHit && onStationContextMenu) {
-      e.preventDefault();
-      onStationContextMenu(stationHit.id, e.clientX, e.clientY);
-      return;
-    }
     raycaster.setFromCamera(ndc, camera);
     const hits = raycastOverlays();
     // POI sits visually on top of body, so a hit on both means the user

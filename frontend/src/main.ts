@@ -312,10 +312,12 @@ attachInput({
     return findHitDot(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, stationLocation,
       terrain.getCameraHeight(), otherStations);
   },
-  onStationContextMenu: (id, sx, sy) => {
+  onStationClick: (id, sx, sy) => {
+    const st = otherStations.find(s => s.id === id);
+    const header = st?.name ?? `Untitled ${id.slice(0, 6)}`;
     contextMenu.open(sx, sy, [
       { label: 'Go to camera →', onClick: () => { void flyToStation(id); } },
-    ]);
+    ], header);
   },
   undoManager,
 });
@@ -565,7 +567,7 @@ async function hydrateFromAPI(id: string): Promise<void> {
     // Skip the current station: a dot at (0,0,0) just sits on top of the camera.
     otherStations = stationsRes.value
       .filter(st => st.id !== id)
-      .map(st => ({ id: st.id, anchor: { lat: st.lat, lng: st.lng }, altitude: st.alt }));
+      .map(st => ({ id: st.id, name: st.name, anchor: { lat: st.lat, lng: st.lng }, altitude: st.alt }));
     refreshControlPointColumns();
   } else {
     console.error('list stations failed:', stationsRes.reason);
@@ -624,6 +626,7 @@ async function flyToStation(destId: string): Promise<void> {
 
     otherStations = [...savedOtherStations, {
       id: currentStationId,
+      name: stationCache.name,
       anchor: { lat: src.lat, lng: src.lng },
       altitude: src.alt,
     }];

@@ -118,6 +118,9 @@
       <label class="modal-field" title="Per-residual RMS angular error threshold, in radians. When the average per-observation residual drops below this, the solver stops as converged. Default 1e-4 ≈ 20 arcsec.">Residual tolerance (rad)
         <input type="text" id="solve-residual-tol" value="1e-4">
       </label>
+      <label class="modal-field" title="Per-iteration fractional reduction in residual RMS below which the run is considered converged. Push smaller (e.g. 1e-6) for tighter convergence at the cost of more iterations. Default 1e-4 = stop when each iteration improves by less than 0.01%.">Convergence tolerance (relative)
+        <input type="text" id="solve-rel-improve-tol" value="1e-4">
+      </label>
       <label class="settings-check"><input type="checkbox" id="solve-dry-run"> Dry run (don't write to DB)</label>
       <div id="solve-progress" hidden>
         <div id="solve-status"></div>

@@ -10,6 +10,7 @@ const STATION_COLOR = 0x40d040;
 
 export interface StationMarker {
   readonly id: string;
+  readonly name: string | null;
   readonly anchor: LatLng;
   readonly altitude: number;
 }

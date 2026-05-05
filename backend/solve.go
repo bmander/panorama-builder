@@ -80,6 +80,9 @@ func parseSolveConfig(w http.ResponseWriter, r *http.Request) (solver.Config, bo
 	if req.ResidualTolRad != nil {
 		cfg.ResidualTolRad = *req.ResidualTolRad
 	}
+	if req.RelImproveTol != nil {
+		cfg.RelImproveTol = *req.RelImproveTol
+	}
 	if req.DryRun != nil {
 		dryRun = *req.DryRun
 	}

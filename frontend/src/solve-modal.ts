@@ -42,6 +42,7 @@ export function createSolveModal(
   const stopBtn = getElement<HTMLButtonElement>('solve-stop-btn');
   const runBtn = getElement<HTMLButtonElement>('solve-run');
   const tolEl = getElement<HTMLInputElement>('solve-residual-tol');
+  const relImproveTolEl = getElement<HTMLInputElement>('solve-rel-improve-tol');
   const dryRunEl = getElement<HTMLInputElement>('solve-dry-run');
   const progressEl = getElement('solve-progress');
   const statusEl = getElement('solve-status');
@@ -52,6 +53,7 @@ export function createSolveModal(
 
   function setRunning(running: boolean): void {
     tolEl.disabled = running;
+    relImproveTolEl.disabled = running;
     dryRunEl.disabled = running;
     runBtn.hidden = running;
     closeBtn.hidden = running;
@@ -183,8 +185,14 @@ export function createSolveModal(
     if (activeAbort) return;
     const tol = parseFloat(tolEl.value);
     if (!Number.isFinite(tol) || tol <= 0) { tolEl.focus(); return; }
+    const relImproveTol = parseFloat(relImproveTolEl.value);
+    if (!Number.isFinite(relImproveTol) || relImproveTol <= 0) { relImproveTolEl.focus(); return; }
     const dryRun = dryRunEl.checked;
-    const config: api.SolveConfig = { residual_tol_rad: tol, dry_run: dryRun };
+    const config: api.SolveConfig = {
+      residual_tol_rad: tol,
+      rel_improve_tol: relImproveTol,
+      dry_run: dryRun,
+    };
 
     setRunning(true);
     progressEl.hidden = false;

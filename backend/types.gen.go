@@ -236,6 +236,9 @@ type SolveConfig struct {
 	// MaxIters GN iteration cap (synchronous default 30
 	MaxIters *int `json:"max_iters,omitempty"`
 
+	// RelImproveTol per-iteration fractional reduction in residual RMS below which the run is considered converged (default 1e-4); push smaller for tighter convergence at the cost of more iterations
+	RelImproveTol *float64 `json:"rel_improve_tol,omitempty"`
+
 	// ResidualTolRad per-residual-RMS convergence threshold
 	ResidualTolRad *float64 `json:"residual_tol_rad,omitempty"`
 }

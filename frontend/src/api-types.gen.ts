@@ -557,6 +557,11 @@ export interface components {
              */
             residual_tol_rad?: number;
             /**
+             * Format: double
+             * @description per-iteration fractional reduction in residual RMS below which the run is considered converged (default 1e-4); push smaller for tighter convergence at the cost of more iterations
+             */
+            rel_improve_tol?: number;
+            /**
              * @description When true, run the solver but skip the DB writeback. The response
              *     still carries iterations, residuals, auto_locked_columns, and the
              *     diff that would have been applied. Useful for diagnosis.
