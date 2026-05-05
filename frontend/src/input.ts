@@ -24,9 +24,15 @@ type ModeState =
   | { type: 'move'; offset: THREE.Quaternion }
   | { type: 'resize'; dist: number; sizeRad: number }
   | { type: 'rotate'; cx: number; cy: number; startAngle: number; startRoll: number }
-  | { type: 'poi-drag'; poi: THREE.Mesh }
+  // downX/downY + moved track tap-vs-drag: a click that releases without
+  // crossing TAP_THRESHOLD_PX opens the POI's context menu instead of
+  // committing a no-op move (and skips the undo record).
+  | { type: 'poi-drag'; poi: THREE.Mesh; downX: number; downY: number; moved: boolean }
   | { type: 'pinch'; startDist: number; startFov: number; p0: PointerPos; p1: PointerPos }
   | null;
+
+// Squared px threshold separating a tap (open menu) from a drag (reposition).
+const TAP_THRESHOLD_PX2 = 25;
 
 const PINCH_MIN_DIST = 20;
 function pinchDist(a: PointerPos, b: PointerPos): number {
@@ -199,12 +205,14 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
     const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
     const selected = overlays.photos.getSelected();
 
-    // 1. POI hits always start a POI drag, regardless of selection state.
+    // 1. POI hits arm a tap-or-drag gesture. A pure tap (release within
+    //    TAP_THRESHOLD_PX) opens the unified CP menu; once the cursor moves
+    //    past the threshold, subsequent pointermoves drag the reticule.
     if (poiHit) {
       const poiMesh = poiHit.object as THREE.Mesh;
       overlays.measurements.setSelected(poiMesh);
       capturePoi(poiMesh);
-      mode = { type: 'poi-drag', poi: poiMesh };
+      mode = { type: 'poi-drag', poi: poiMesh, downX: e.clientX, downY: e.clientY, moved: false };
       viewer.requestRender();
     }
     else {
@@ -319,7 +327,16 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
       lastX = remaining.x; lastY = remaining.y;
       return;
     }
-    if (pointers.size === 0) endDrag();
+    if (pointers.size === 0) {
+      // Tap on a reticule (no drag motion) → open the CP menu and skip the
+      // would-be no-op poi-move undo record.
+      if (mode?.type === 'poi-drag' && !mode.moved) {
+        const poi = mode.poi;
+        gestureBefore = null;
+        onImagePOIContextMenu?.(poi, e.clientX, e.clientY);
+      }
+      endDrag();
+    }
   }
   canvas.addEventListener('pointerup', onPointerEnd);
   canvas.addEventListener('pointercancel', onPointerEnd);
@@ -411,6 +428,11 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
         break;
       }
       case 'poi-drag': {
+        if (!mode.moved) {
+          const ddx = e.clientX - mode.downX, ddy = e.clientY - mode.downY;
+          if (ddx * ddx + ddy * ddy < TAP_THRESHOLD_PX2) break;
+          mode.moved = true;
+        }
         ndcFromEvent(e);
         raycaster.setFromCamera(ndc, camera);
         // Re-raycast against the POI's parent overlay body to recompute UV.
