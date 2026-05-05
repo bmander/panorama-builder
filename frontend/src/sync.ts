@@ -66,14 +66,14 @@ export function createSyncManager({
   });
 
   function buildCurrentPhoto(o: THREE.Group): SyncedPhoto {
-    const pose = overlays.extractPose(o, null);
+    const pose = overlays.photos.extractPose(o, null);
     return {
       aspect: pose.aspect,
       photo_az: pose.photoAz,
       photo_tilt: pose.photoTilt,
       photo_roll: pose.photoRoll,
       size_rad: pose.sizeRad,
-      opacity: overlays.getOpacity(o),
+      opacity: overlays.photos.getOpacity(o),
     };
   }
 
@@ -124,15 +124,15 @@ export function createSyncManager({
     // can mark a fresh-from-server location, but no implicit PUT is done.
 
     const currentPhotos = new Map<string, SyncedPhoto>();
-    for (const o of overlays.listOverlays() as THREE.Group[]) {
+    for (const o of overlays.photos.list() as THREE.Group[]) {
       currentPhotos.set(overlayData(o).id, buildCurrentPhoto(o));
     }
     const currentImageMeasurements = new Map<string, SyncedImageMeasurement>();
-    for (const p of overlays.getImageMeasurements()) {
+    for (const p of overlays.measurements.list()) {
       currentImageMeasurements.set(p.id, { u: p.uv.u, v: p.uv.v, control_point_id: p.controlPointId });
     }
     const currentControlPoints = new Map<string, SyncedControlPoint>();
-    for (const cp of overlays.getControlPoints()) {
+    for (const cp of overlays.controlPoints.list()) {
       currentControlPoints.set(cp.id, {
         description: cp.description,
         est_lat: cp.estLat, est_lng: cp.estLng, est_alt: cp.estAlt,

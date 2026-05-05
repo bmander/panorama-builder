@@ -197,12 +197,12 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
     const rotateHandleHit = hits.find(h => getRole(h.object) === ROLE_HANDLE_ROTATE);
     const fovHandleHit = hits.find(h => getRole(h.object) === ROLE_HANDLE_FOV);
     const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
-    const selected = overlays.getSelected();
+    const selected = overlays.photos.getSelected();
 
     // 1. POI hits always start a POI drag, regardless of selection state.
     if (poiHit) {
       const poiMesh = poiHit.object as THREE.Mesh;
-      overlays.setSelectedImageMeasurement(poiMesh);
+      overlays.measurements.setSelected(poiMesh);
       capturePoi(poiMesh);
       mode = { type: 'poi-drag', poi: poiMesh };
       viewer.requestRender();
@@ -227,7 +227,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
       ndcFromEvent(e);
       raycaster.setFromCamera(ndc, camera);
       const hit = new THREE.Vector3();
-      if (raycaster.ray.intersectSphere(overlays.overlaySphere, hit)) {
+      if (raycaster.ray.intersectSphere(overlays.photos.overlaySphere, hit)) {
         const offset = new THREE.Quaternion().setFromUnitVectors(
           hit.normalize(),
           tmpVec3.copy(selected.position).normalize(),
@@ -252,12 +252,12 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
     //    starts a drag — the rest of the gesture pans the camera.
     else if (bodyHit?.uv) {
       const o = bodyHit.object.parent as THREE.Group;
-      if (selected !== o) { overlays.setSelected(o); onChange(); }
+      if (selected !== o) { overlays.photos.setSelected(o); onChange(); }
       mode = { type: 'pan' };
     }
     // 5. Empty space → deselect + pan.
     else {
-      if (selected) { overlays.setSelected(null); onChange(); }
+      if (selected) { overlays.photos.setSelected(null); onChange(); }
       mode = { type: 'pan' };
     }
     lastX = e.clientX; lastY = e.clientY;
@@ -318,7 +318,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
   canvas.addEventListener('lostpointercapture', onPointerEnd);
   canvas.addEventListener('pointerleave', () => {
     if (mode) return;
-    if (overlays.setHovered(null)) viewer.requestRender();
+    if (overlays.photos.setHovered(null)) viewer.requestRender();
     setHoveredColumn(null);
   });
 
@@ -342,13 +342,13 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
       const colHit = findColumnAtNDC?.({ x: ndc.x, y: ndc.y }) ?? null;
       setHoveredColumn(colHit);
       if (colHit) {
-        if (overlays.setHovered(null)) viewer.requestRender();
+        if (overlays.photos.setHovered(null)) viewer.requestRender();
         return;
       }
       const hits = raycastOverlays();
       const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
       const hoverTarget = bodyHit ? bodyHit.object.parent as THREE.Group : null;
-      if (overlays.setHovered(hoverTarget)) viewer.requestRender();
+      if (overlays.photos.setHovered(hoverTarget)) viewer.requestRender();
       return;
     }
     switch (mode.type) {
@@ -365,9 +365,9 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
       case 'move': {
         ndcFromEvent(e);
         raycaster.setFromCamera(ndc, camera);
-        if (raycaster.ray.intersectSphere(overlays.overlaySphere, movePoint)) {
+        if (raycaster.ray.intersectSphere(overlays.photos.overlaySphere, movePoint)) {
           movePoint.normalize().applyQuaternion(mode.offset);
-          overlays.moveSelectedTo(movePoint);
+          overlays.photos.moveSelectedTo(movePoint);
           // Mutation is inside the drag batch, so onMutate (which would normally
           // request a render) is queued. Request the render directly instead.
           viewer.requestRender();
@@ -375,12 +375,12 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
         break;
       }
       case 'resize': {
-        const selected = overlays.getSelected();
+        const selected = overlays.photos.getSelected();
         if (!selected) return;
         const center = projectToScreen(selected.position);
         const dx = e.clientX - center.x, dy = e.clientY - center.y;
         const dist = norm2(dx, dy);
-        overlays.resizeSelectedTo(mode.sizeRad * (dist / mode.dist));
+        overlays.photos.resizeSelectedTo(mode.sizeRad * (dist / mode.dist));
         onChange();
         break;
       }
@@ -390,7 +390,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
         // with positive roll appears CCW to the viewer — flip the sign so a CW
         // drag rotates the photo CW.
         const currentAngle = Math.atan2(e.clientY - mode.cy, e.clientX - mode.cx);
-        overlays.setSelectedRoll(mode.startRoll - (currentAngle - mode.startAngle));
+        overlays.photos.setSelectedRoll(mode.startRoll - (currentAngle - mode.startAngle));
         viewer.requestRender();
         break;
       }
@@ -401,7 +401,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
         const body = overlayData(poiData(mode.poi).parentOverlay).body;
         const hit = raycaster.intersectObject(body)[0];
         if (hit?.uv) {
-          overlays.moveImageMeasurement(mode.poi, hit.uv.x, hit.uv.y);
+          overlays.measurements.move(mode.poi, hit.uv.x, hit.uv.y);
           viewer.requestRender();
         }
         break;
@@ -450,12 +450,12 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
       // POI selection takes priority: a selected POI (photo-attached OR
       // standalone map-POI) is the more specific target the user is acting
       // on (vs the photo it sits on).
-      if (overlays.getSelectedImageMeasurement()) {
-        overlays.deleteSelectedMeasurement();
+      if (overlays.measurements.getSelected()) {
+        overlays.measurements.deleteSelected();
         endDrag();
         onChange();
-      } else if (overlays.getSelected()) {
-        overlays.deleteSelected();
+      } else if (overlays.photos.getSelected()) {
+        overlays.photos.deleteSelected();
         endDrag();
         onChange();
       }

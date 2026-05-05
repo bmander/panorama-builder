@@ -62,7 +62,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       // Skip the per-overlay rescale during a fly: photos are hidden, and
       // setFov fires every tween frame.
       if (!viewer.overlaysGroup.visible) return;
-      overlays.setPoiFovScale(halfFovTan(fov) / POI_FOV_REFERENCE_TAN);
+      overlays.measurements.setFovScale(halfFovTan(fov) / POI_FOV_REFERENCE_TAN);
     },
   });
 
@@ -101,7 +101,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   });
   const hud = createHud(() => {
     const { azimuth, altitude } = viewer.getAzAlt();
-    const sel = overlays.getSelected();
+    const sel = overlays.photos.getSelected();
     return {
       azimuth, altitude,
       fov: viewer.camera.fov,
@@ -124,12 +124,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   // CPs visible in the photo viewer. Same set drives column rendering and
   // the matcher hit-test, so what you see is what you can click.
   function getVisibleControlPoints(): ControlPointView[] {
-    const all = overlays.getControlPoints().filter(cp =>
+    const all = overlays.controlPoints.list().filter(cp =>
       cp.estLat !== null && cp.estLng !== null,
     );
     if (showAllCPs) return all;
     const observed = new Set<string>();
-    for (const im of overlays.getImageMeasurements()) {
+    for (const im of overlays.measurements.list()) {
       if (im.controlPointId) observed.add(im.controlPointId);
     }
     return all.filter(cp => observed.has(cp.id));
@@ -138,7 +138,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   function refreshControlPointColumns(): void {
     const cps = getVisibleControlPoints();
     const handlesByCpId = new Map<string, THREE.Object3D[]>();
-    for (const im of overlays.getImageMeasurements()) {
+    for (const im of overlays.measurements.list()) {
       if (!im.controlPointId) continue;
       const arr = handlesByCpId.get(im.controlPointId);
       if (arr) arr.push(im.handle);
@@ -165,8 +165,8 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   }
 
   function registerControlPoint(cp: ApiControlPoint): void {
-    if (overlays.getControlPointById(cp.id) !== null) return;
-    overlays.addControlPoint(cp.id, {
+    if (overlays.controlPoints.getById(cp.id) !== null) return;
+    overlays.controlPoints.add(cp.id, {
       description: cp.description, estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,
     });
     sync.registerControlPoint(cp.id, {
@@ -178,15 +178,15 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     sync.registerControlPoint(cp.id, {
       description: cp.description, est_lat: cp.est_lat, est_lng: cp.est_lng, est_alt: cp.est_alt,
     });
-    if (overlays.getControlPointById(cp.id) === null) {
-      overlays.addControlPoint(cp.id, {
+    if (overlays.controlPoints.getById(cp.id) === null) {
+      overlays.controlPoints.add(cp.id, {
         description: cp.description, estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,
       });
       return;
     }
     overlays.withBatch(() => {
-      overlays.setControlPointDescription(cp.id, cp.description);
-      overlays.setControlPointEst(cp.id, {
+      overlays.controlPoints.setDescription(cp.id, cp.description);
+      overlays.controlPoints.setEst(cp.id, {
         lat: cp.est_lat, lng: cp.est_lng, alt: cp.est_alt,
       });
     });
@@ -261,7 +261,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   const opacitySliderEl = getElement<HTMLInputElement>('overlay-opacity');
 
   function refreshSelectionUI(): void {
-    const opacity = overlays.getSelectedOpacity();
+    const opacity = overlays.photos.getSelectedOpacity();
     if (opacity === null) {
       opacityRowEl.style.display = 'none';
       return;
@@ -271,7 +271,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   }
 
   opacitySliderEl.addEventListener('input', () => {
-    overlays.setSelectedOpacity(parseFloat(opacitySliderEl.value) / 100);
+    overlays.photos.setSelectedOpacity(parseFloat(opacitySliderEl.value) / 100);
   });
 
   const contextMenu = createContextMenu();
@@ -281,7 +281,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   });
   const photoParamsModal = createPhotoParamsModal({ overlays, sync, undoManager });
   const observationModal = createObservationModal({
-    getControlPoints: () => overlays.getControlPoints(),
+    getControlPoints: () => overlays.controlPoints.list(),
     onPickExisting: (overlay, u, v, controlPointId) => {
       void handlers.onMatchImageMeasurement(overlay, u, v, controlPointId);
     },
@@ -341,7 +341,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       ], header);
     },
     onCPClick: (cpId, sx, sy, body) => {
-      const cp = overlays.getControlPointById(cpId);
+      const cp = overlays.controlPoints.getById(cpId);
       const header = cpLabel(cp?.description ?? '');
       const items: ContextMenuItem[] = [
         { label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } },
@@ -349,7 +349,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       // Skip the "add observation" option when this station already observes
       // the CP — duplicates aren't useful — or when the click missed any
       // photo body (no u/v anchor to attach the observation to).
-      const stationObserves = overlays.getImageMeasurements()
+      const stationObserves = overlays.measurements.list()
         .some(im => im.controlPointId === cpId);
       if (!stationObserves && body) {
         items.push({
@@ -386,13 +386,13 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
       applyCameraLocation(loc);
       for (const p of data.photos) {
-        const o = overlays.getOverlayById(p.id);
+        const o = overlays.photos.getById(p.id);
         if (!o) continue;
-        overlays.applyPose(o, {
+        overlays.photos.applyPose(o, {
           photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
           sizeRad: p.size_rad, aspect: p.aspect, camLat: data.station.lat, camLng: data.station.lng,
         });
-        overlays.setPhotoLocks(o, {
+        overlays.photos.setLocks(o, {
           lockPhotoAz: p.lock_photo_az, lockPhotoTilt: p.lock_photo_tilt,
           lockPhotoRoll: p.lock_photo_roll, lockSizeRad: p.lock_size_rad,
         });
@@ -451,13 +451,13 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     overlays.withBatch(() => {
       for (const p of data.photos) {
         const dir = dirFromAzAlt(p.photo_az, p.photo_tilt);
-        const o = overlays.addPendingOverlay(p.aspect, dir, { id: p.id });
-        overlays.applyPose(o, {
+        const o = overlays.photos.addPending(p.aspect, dir, { id: p.id });
+        overlays.photos.applyPose(o, {
           photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
           sizeRad: p.size_rad, aspect: p.aspect, camLat: loc.lat, camLng: loc.lng,
         });
-        overlays.setOpacity(o, p.opacity);
-        overlays.setPhotoLocks(o, {
+        overlays.photos.setOpacity(o, p.opacity);
+        overlays.photos.setLocks(o, {
           lockPhotoAz: p.lock_photo_az, lockPhotoTilt: p.lock_photo_tilt,
           lockPhotoRoll: p.lock_photo_roll, lockSizeRad: p.lock_size_rad,
         });
@@ -467,7 +467,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         });
         loader.load(
           api.photoBlobUrl(p.id),
-          tex => { overlays.setOverlayTexture(o, tex); },
+          tex => { overlays.photos.setTexture(o, tex); },
           undefined,
           err => { console.error(`photo ${p.id} load failed:`, err); },
         );
@@ -479,9 +479,9 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       }
 
       for (const im of data.image_measurements) {
-        const overlay = overlays.getOverlayById(im.photo_id);
+        const overlay = overlays.photos.getById(im.photo_id);
         if (!overlay) continue;
-        overlays.addImageMeasurement(overlay, im.u, im.v, {
+        overlays.measurements.add(overlay, im.u, im.v, {
           id: im.id,
           controlPointId: im.control_point_id,
         });
@@ -515,13 +515,13 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
 
   const focusScratch = new THREE.Vector3();
   function focusCameraOnImageMeasurement(id: string): boolean {
-    const handle = overlays.getImageMeasurementById(id);
+    const handle = overlays.measurements.getById(id);
     if (!handle) return false;
     handle.getWorldPosition(focusScratch);
     const { az, alt } = vecToAzAlt(focusScratch.x, focusScratch.y, focusScratch.z);
     viewer.setAzAlt(az, alt);
     viewer.setFov(FOCUS_FOV_DEG);
-    overlays.setSelectedImageMeasurement(handle);
+    overlays.measurements.setSelected(handle);
     return true;
   }
 
@@ -529,8 +529,8 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   hud.setVisible(true);
 
   await hydrateFromAPI(stationId);
-  overlays.setSelected(null);
-  overlays.setSelectedImageMeasurement(null);
+  overlays.photos.setSelected(null);
+  overlays.measurements.setSelected(null);
   admin.setVisible(true);
   if (focusImageMeasurementId && !focusCameraOnImageMeasurement(focusImageMeasurementId)) {
     console.warn('focus image measurement not found:', focusImageMeasurementId);

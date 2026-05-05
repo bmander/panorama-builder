@@ -66,22 +66,22 @@ function photoSnapshotsEqual(a: PhotoSnapshot, b: PhotoSnapshot): boolean {
 }
 
 export function snapshotPhoto(overlays: OverlayManager, id: string): PhotoSnapshot | null {
-  const o = overlays.getOverlayById(id);
+  const o = overlays.photos.getById(id);
   if (!o) return null;
-  const pose = overlays.extractPose(o, null);
+  const pose = overlays.photos.extractPose(o, null);
   return {
     photoAz: pose.photoAz,
     photoTilt: pose.photoTilt,
     photoRoll: pose.photoRoll,
     sizeRad: pose.sizeRad,
     aspect: pose.aspect,
-    opacity: overlays.getOpacity(o),
-    locks: overlays.getPhotoLocks(o),
+    opacity: overlays.photos.getOpacity(o),
+    locks: overlays.photos.getLocks(o),
   };
 }
 
 export function snapshotPoi(overlays: OverlayManager, id: string): { u: number; v: number } | null {
-  const poi = overlays.getImageMeasurementById(id);
+  const poi = overlays.measurements.getById(id);
   if (!poi) return null;
   const { u, v } = poiData(poi).uv;
   return { u, v };
@@ -95,7 +95,7 @@ export function applyPhotoSnapshot(
   overlays: OverlayManager, sync: SyncManager,
   id: string, snap: PhotoSnapshot,
 ): Promise<void> {
-  const o = overlays.getOverlayById(id);
+  const o = overlays.photos.getById(id);
   if (!o) return Promise.resolve();
   const patch: api.PhotoPosePatch = {
     aspect: snap.aspect,
@@ -119,13 +119,13 @@ export function applyPhotoSnapshot(
       opacity: snap.opacity,
     });
     overlays.withBatch(() => {
-      overlays.applyPose(o, {
+      overlays.photos.applyPose(o, {
         photoAz: snap.photoAz, photoTilt: snap.photoTilt,
         photoRoll: snap.photoRoll, sizeRad: snap.sizeRad,
         aspect: snap.aspect, camLat: 0, camLng: 0,
       });
-      overlays.setPhotoLocks(o, snap.locks);
-      overlays.setOpacity(o, snap.opacity);
+      overlays.photos.setLocks(o, snap.locks);
+      overlays.photos.setOpacity(o, snap.opacity);
     });
   });
 }
@@ -150,8 +150,8 @@ export function createUndoManager(
       return;
     }
     const target = direction === 'undo' ? action.before : action.after;
-    const poi = overlays.getImageMeasurementById(action.id);
-    if (poi) overlays.moveImageMeasurement(poi, target.u, target.v);
+    const poi = overlays.measurements.getById(action.id);
+    if (poi) overlays.measurements.move(poi, target.u, target.v);
   }
 
   return {

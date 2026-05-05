@@ -52,8 +52,8 @@ export function createPhotoParamsModal(
 
   function open(overlay: THREE.Group): void {
     pending = overlay;
-    const pose = overlays.extractPose(overlay, null);
-    const locks = overlays.getPhotoLocks(overlay);
+    const pose = overlays.photos.extractPose(overlay, null);
+    const locks = overlays.photos.getLocks(overlay);
     beforeSnapshot = undoManager ? snapshotPhoto(overlays, overlayData(overlay).id) : null;
     azEl.value = deg(pose.photoAz).toFixed(2);
     tiltEl.value = deg(pose.photoTilt).toFixed(2);
@@ -102,7 +102,7 @@ export function createPhotoParamsModal(
       photoRoll: rad(rollDeg),
       sizeRad: clamp(rad(fovDeg), SIZE_MIN, SIZE_MAX),
       aspect: data.aspect,
-      opacity: overlays.getOpacity(overlay),
+      opacity: overlays.photos.getOpacity(overlay),
       locks: {
         lockPhotoAz: azLockEl.checked,
         lockPhotoTilt: tiltLockEl.checked,

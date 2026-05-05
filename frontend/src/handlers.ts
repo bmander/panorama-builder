@@ -141,7 +141,7 @@ export function createOrchestration({
       return;
     }
     sync.registerPhoto(photo.id, pose);
-    overlays.addOverlay(tex, aspect, dir, { id: photo.id });
+    overlays.photos.add(tex, aspect, dir, { id: photo.id });
     revokeUrl();
   }
 
@@ -157,8 +157,8 @@ export function createOrchestration({
       return null;
     }
     sync.registerImageMeasurement(created.id, { u, v, control_point_id: controlPointId });
-    overlays.addImageMeasurement(overlay, u, v, { id: created.id, controlPointId });
-    return overlays.getImageMeasurementById(created.id);
+    overlays.measurements.add(overlay, u, v, { id: created.id, controlPointId });
+    return overlays.measurements.getById(created.id);
   }
 
   // Register a fetched CP both with sync (snake-case) and the overlay
@@ -167,7 +167,7 @@ export function createOrchestration({
     sync.registerControlPoint(cp.id, {
       description: cp.description, est_lat: cp.est_lat, est_lng: cp.est_lng, est_alt: cp.est_alt,
     });
-    overlays.addControlPoint(cp.id, {
+    overlays.controlPoints.add(cp.id, {
       description: cp.description, estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,
     });
   }
@@ -196,7 +196,7 @@ export function createOrchestration({
     if (!measurement) {
       // Roll back the CP — would otherwise be an orphan with no observations.
       await api.deleteControlPoint(cp.id).catch((e: unknown) => { console.error('orphan CP cleanup failed:', e); });
-      overlays.removeControlPoint(cp.id);
+      overlays.controlPoints.remove(cp.id);
     }
   }
 
@@ -204,14 +204,14 @@ export function createOrchestration({
     overlay: THREE.Group, u: number, v: number, controlPointId: string,
   ): Promise<void> {
     // Re-match: move the existing pin instead of stacking a duplicate.
-    const existing = overlays.getImageMeasurementOnOverlayByControlPointId(overlay, controlPointId);
+    const existing = overlays.measurements.findOnOverlayByCpId(overlay, controlPointId);
     if (existing) {
-      overlays.moveImageMeasurement(existing, u, v);
-      overlays.setSelectedImageMeasurement(existing);
+      overlays.measurements.move(existing, u, v);
+      overlays.measurements.setSelected(existing);
       return;
     }
     const created = await createImageMeasurement(overlay, u, v, controlPointId);
-    if (created) overlays.setSelectedImageMeasurement(created);
+    if (created) overlays.measurements.setSelected(created);
   }
 
   async function onCreateCPAtLocation(
@@ -243,13 +243,13 @@ export function createOrchestration({
       sync.reportError('replace photo', err);
       return;
     }
-    overlays.setAspect(overlay, aspect);
+    overlays.photos.setAspect(overlay, aspect);
     // Use the local file as the texture source — avoids HTTP-cache fights
     // with the (now-replaced) /photos/<id>/blob URL and skips a round-trip.
     const blobUrl = URL.createObjectURL(file);
     const loader = new THREE.TextureLoader();
     loader.load(blobUrl, tex => {
-      overlays.setOverlayTexture(overlay, tex);
+      overlays.photos.setTexture(overlay, tex);
       URL.revokeObjectURL(blobUrl);
     }, undefined, (err: unknown) => {
       URL.revokeObjectURL(blobUrl);
