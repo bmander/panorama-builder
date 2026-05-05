@@ -10,6 +10,7 @@ import type { MapView } from './map.js';
 import { createSolveModal } from './solve-modal.js';
 import { createStartStationModal } from './start-station-modal.js';
 import { createObservationModal } from './observation-modal.js';
+import { createTimeFilter } from './time-filter.js';
 import { DEFAULT_SIZE_RAD } from './overlay.js';
 import { readAspectRatio } from './handlers.js';
 import { getElement, stationHref } from './types.js';
@@ -28,10 +29,21 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   // share with, so a flat Map is enough.
   const cpsById = new Map<string, ApiControlPoint>();
 
+  // A CP is extant at time t when t falls within [started_at, ended_at].
+  // Either bound being null means "unknown / open-ended", which always
+  // satisfies that side — so a CP with both nulls always passes.
+  function isExtantAt(cp: ApiControlPoint, ms: number): boolean {
+    if (cp.started_at !== null && new Date(cp.started_at).getTime() > ms) return false;
+    if (cp.ended_at !== null && new Date(cp.ended_at).getTime() < ms) return false;
+    return true;
+  }
+
   function refreshIndexControlPoints(): void {
+    const filterMs = timeFilter.getTime().getTime();
     const dots = [];
     for (const cp of cpsById.values()) {
       if (cp.est_lat === null || cp.est_lng === null) continue;
+      if (!isExtantAt(cp, filterMs)) continue;
       dots.push({
         id: cp.id,
         latlng: { lat: cp.est_lat, lng: cp.est_lng },
@@ -211,6 +223,11 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   // Show the map container and instantiate Leaflet (the container must be
   // visible before L.map measures it, or tiles won't load at the right size).
   getElement('map-wrap').classList.add('show');
+  const timeFilter = createTimeFilter({
+    initial: new Date(),
+    onChange: () => { refreshIndexControlPoints(); },
+  });
+  timeFilter.setVisible(true);
   const startStationModal = createStartStationModal({
     onSubmit: input => onStartStationHere(input),
   });

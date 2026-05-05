@@ -20,6 +20,14 @@
   <div id="index-top-right" class="top-right-fixed" hidden>
     <button id="index-solve-btn" class="btn">Solve</button>
   </div>
+  <div id="time-filter" hidden>
+    <div class="time-filter-row">
+      <label for="time-filter-date">Show CPs extant on</label>
+      <input type="date" id="time-filter-date">
+    </div>
+    <input type="range" id="time-filter-slider" step="1">
+    <div class="time-filter-year" id="time-filter-year-readout"></div>
+  </div>
   <div id="admin-modal" class="modal" hidden>
     <div class="modal-panel">
       <div class="modal-header">

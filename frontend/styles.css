@@ -130,6 +130,17 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 #save-error[hidden] { display: none; }
 #save-error .btn { background: rgba(0,0,0,0.3); }
 
+#time-filter { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+               background: rgba(0,0,0,0.75); color: #fff; padding: 8px 12px;
+               border: 1px solid #fff; font: 12px monospace; z-index: 1000;
+               display: flex; flex-direction: column; gap: 6px; min-width: 320px;
+               max-width: calc(100vw - 32px); }
+#time-filter[hidden] { display: none; }
+#time-filter input[type="range"] { width: 100%; accent-color: #fff; }
+.time-filter-row { display: flex; gap: 8px; align-items: center; }
+.time-filter-row input[type="date"] { flex: 1; }
+.time-filter-year { text-align: center; opacity: 0.75; }
+
 /* Touch devices: scale chrome up so labels stay readable and buttons are
    reachable with a fingertip. Roughly 2× the desktop sizing. */
 @media (pointer: coarse) {
