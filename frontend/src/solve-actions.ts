@@ -1,5 +1,3 @@
-// Solve buttons on the station route.
-//
 // After a successful solve we re-fetch the hydrated station and replay it
 // over the scene-graph. The /solve handler returns the diff in result.changes,
 // but the simplest correct way to mirror it is to re-hydrate; the cost is one

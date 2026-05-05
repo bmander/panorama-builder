@@ -66,10 +66,8 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     },
   });
 
-  // overlays is created without callbacks; setCallbacks is called below once
-  // sync, baker, and refreshControlPointColumns exist. This breaks the
-  // construction-order cycle that otherwise forces the overlay callbacks to
-  // close over later-declared lets.
+  // Callbacks are attached below via setCallbacks once sync, baker, and the
+  // refreshers exist — see the construction-order note in overlay.ts.
   const overlays = createOverlayManager({
     overlaysGroup: viewer.overlaysGroup,
     getAnisotropy: () => viewer.renderer.capabilities.getMaxAnisotropy(),
@@ -139,15 +137,19 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
 
   function refreshControlPointColumns(): void {
     const cps = getVisibleControlPoints();
-    const ims = overlays.getImageMeasurements();
+    const handlesByCpId = new Map<string, THREE.Object3D[]>();
+    for (const im of overlays.getImageMeasurements()) {
+      if (!im.controlPointId) continue;
+      const arr = handlesByCpId.get(im.controlPointId);
+      if (arr) arr.push(im.handle);
+      else handlesByCpId.set(im.controlPointId, [im.handle]);
+    }
     const markers: ControlPointColumn[] = cps.map(cp => ({
       id: cp.id,
       anchor: { lat: cp.estLat!, lng: cp.estLng! },
       altitude: cp.estAlt,
       selected: cp.selected,
-      observations: ims
-        .filter(im => im.controlPointId === cp.id)
-        .map(im => im.handle),
+      observations: handlesByCpId.get(cp.id) ?? [],
     }));
     cpColumns.update(stationLocation, terrain.getCameraHeight(), markers);
     stationDots.update(stationLocation, terrain.getCameraHeight(), otherStations);
@@ -213,9 +215,8 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
 
   const admin = createAdminModal({ getCurrentStationId });
 
-  // Late-bind the overlay callbacks now that sync, baker, and the refreshers
-  // exist. Solving is no longer triggered by mutations: the solver lives on
-  // the backend and runs only when the user clicks Solve.
+  // Mutations no longer trigger a solve — the solver is backend-side, behind
+  // the explicit Solve buttons.
   overlays.setCallbacks({
     onMutate: () => {
       viewer.requestRender();
@@ -419,10 +420,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     currentStationId: stationId,
     getStationLocation: () => stationLocation,
     setStationLocation: (loc) => { stationLocation = loc; },
-    getStationCache: () => {
-      const c = stationFields.getCache();
-      return c ? { name: c.name, alt: c.alt } : null;
-    },
+    getStationCache: stationFields.getNameAndAlt,
     getOtherStations: () => otherStations,
     setOtherStations: (s) => { otherStations = [...s]; },
   });
@@ -452,34 +450,46 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     // Place each photo synchronously with a placeholder so the viewer can
     // paint terrain + rectangles before any blob arrives.
     const loader = new THREE.TextureLoader();
-    for (const p of data.photos) {
-      const dir = dirFromAzAlt(p.photo_az, p.photo_tilt);
-      const o = overlays.addPendingOverlay(p.aspect, dir, { id: p.id });
-      overlays.applyPose(o, {
-        photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
-        sizeRad: p.size_rad, aspect: p.aspect, camLat: loc.lat, camLng: loc.lng,
-      });
-      overlays.setOpacity(o, p.opacity);
-      overlays.setPhotoLocks(o, {
-        lockPhotoAz: p.lock_photo_az, lockPhotoTilt: p.lock_photo_tilt,
-        lockPhotoRoll: p.lock_photo_roll, lockSizeRad: p.lock_size_rad,
-      });
-      sync.registerPhoto(p.id, {
-        aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,
-        photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
-      });
-      loader.load(
-        api.photoBlobUrl(p.id),
-        tex => { overlays.setOverlayTexture(o, tex); },
-        undefined,
-        err => { console.error(`photo ${p.id} load failed:`, err); },
-      );
-    }
+    overlays.withBatch(() => {
+      for (const p of data.photos) {
+        const dir = dirFromAzAlt(p.photo_az, p.photo_tilt);
+        const o = overlays.addPendingOverlay(p.aspect, dir, { id: p.id });
+        overlays.applyPose(o, {
+          photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
+          sizeRad: p.size_rad, aspect: p.aspect, camLat: loc.lat, camLng: loc.lng,
+        });
+        overlays.setOpacity(o, p.opacity);
+        overlays.setPhotoLocks(o, {
+          lockPhotoAz: p.lock_photo_az, lockPhotoTilt: p.lock_photo_tilt,
+          lockPhotoRoll: p.lock_photo_roll, lockSizeRad: p.lock_size_rad,
+        });
+        sync.registerPhoto(p.id, {
+          aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,
+          photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
+        });
+        loader.load(
+          api.photoBlobUrl(p.id),
+          tex => { overlays.setOverlayTexture(o, tex); },
+          undefined,
+          err => { console.error(`photo ${p.id} load failed:`, err); },
+        );
+      }
 
-    // Control points first so subsequent measurement adds reference an existing CP entry.
-    for (const cp of data.control_points) {
-      registerControlPoint(cp);
-    }
+      // Control points first so subsequent measurement adds reference an existing CP entry.
+      for (const cp of data.control_points) {
+        registerControlPoint(cp);
+      }
+
+      for (const im of data.image_measurements) {
+        const overlay = overlays.getOverlayById(im.photo_id);
+        if (!overlay) continue;
+        overlays.addImageMeasurement(overlay, im.u, im.v, {
+          id: im.id,
+          controlPointId: im.control_point_id,
+        });
+        sync.registerImageMeasurement(im.id, { u: im.u, v: im.v, control_point_id: im.control_point_id });
+      }
+    });
 
     // Independent fetches — kick off in parallel so hydrate latency isn't
     // gated on the slower of the two.
@@ -487,11 +497,13 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       api.listControlPoints(),
       api.listStations(),
     ]);
-    if (cpsRes.status === 'fulfilled') {
-      for (const cp of cpsRes.value) registerControlPoint(cp);
-    } else {
-      console.error('list control points failed:', cpsRes.reason);
-    }
+    overlays.withBatch(() => {
+      if (cpsRes.status === 'fulfilled') {
+        for (const cp of cpsRes.value) registerControlPoint(cp);
+      } else {
+        console.error('list control points failed:', cpsRes.reason);
+      }
+    });
     if (stationsRes.status === 'fulfilled') {
       // Skip the current station: a dot at (0,0,0) just sits on top of the camera.
       otherStations = stationsRes.value
@@ -500,16 +512,6 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       refreshControlPointColumns();
     } else {
       console.error('list stations failed:', stationsRes.reason);
-    }
-
-    for (const im of data.image_measurements) {
-      const overlay = overlays.getOverlayById(im.photo_id);
-      if (!overlay) continue;
-      overlays.addImageMeasurement(overlay, im.u, im.v, {
-        id: im.id,
-        controlPointId: im.control_point_id,
-      });
-      sync.registerImageMeasurement(im.id, { u: im.u, v: im.v, control_point_id: im.control_point_id });
     }
   }
 

@@ -11,6 +11,7 @@ import { createSolveModal } from './solve-modal.js';
 import { createStartStationModal } from './start-station-modal.js';
 import { createObservationModal } from './observation-modal.js';
 import { DEFAULT_SIZE_RAD } from './overlay.js';
+import { readAspectRatio } from './handlers.js';
 import { getElement, stationHref } from './types.js';
 import type { ControlPointView, LatLng } from './types.js';
 
@@ -153,21 +154,6 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
       cones,
       observedCpIds,
     });
-  }
-
-  async function readAspectRatio(file: File): Promise<number> {
-    const url = URL.createObjectURL(file);
-    try {
-      const img = new Image();
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => { resolve(); };
-        img.onerror = () => { reject(new Error('decode failed')); };
-        img.src = url;
-      });
-      return img.naturalWidth / img.naturalHeight;
-    } finally {
-      URL.revokeObjectURL(url);
-    }
   }
 
   async function onStartStationHere(input: { loc: LatLng; name: string; photos: readonly File[] }): Promise<void> {

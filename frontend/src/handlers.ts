@@ -48,6 +48,21 @@ export interface CreateOrchestrationOptions {
   sync: SyncManager;
 }
 
+export async function readAspectRatio(file: File): Promise<number> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => { resolve(); };
+      img.onerror = () => { reject(new Error('decode failed')); };
+      img.src = url;
+    });
+    return img.naturalWidth / img.naturalHeight;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 export function createOrchestration({
   getCurrentStationId, overlays, sync,
 }: CreateOrchestrationOptions): OrchestrationHandlers {
@@ -92,21 +107,6 @@ export function createOrchestration({
     }
 
     location.assign(stationHref(created.id));
-  }
-
-  async function readAspectRatio(file: File): Promise<number> {
-    const url = URL.createObjectURL(file);
-    try {
-      const img = new Image();
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => { resolve(); };
-        img.onerror = () => { reject(new Error('decode failed')); };
-        img.src = url;
-      });
-      return img.naturalWidth / img.naturalHeight;
-    } finally {
-      URL.revokeObjectURL(url);
-    }
   }
 
   async function onPhotoDropped(

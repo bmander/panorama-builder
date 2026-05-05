@@ -20,7 +20,9 @@ export interface StationFields {
 
 export interface StationFieldsHandle {
   hydrate: (s: api.ApiStation) => void;
-  getCache: () => Readonly<StationFields> | null;
+  // The fly-between animation needs the station's display name + altitude
+  // before transitioning. Other cache fields (lat/lng/locks) are internal.
+  getNameAndAlt: () => { name: string | null; alt: number } | null;
 }
 
 export interface CreateStationFieldsOptions {
@@ -117,6 +119,6 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
 
   return {
     hydrate,
-    getCache: () => cache,
+    getNameAndAlt: () => cache && { name: cache.name, alt: cache.alt },
   };
 }

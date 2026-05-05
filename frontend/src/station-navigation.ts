@@ -1,9 +1,6 @@
-// Animated transition between two stations on the photo-viewer page. Tweens
-// the camera location, altitude (with a parabolic hop at the apex), and
-// orientation (toward the mean direction of the destination's photos) so the
-// world flies past in real time, then performs a page reload at the
-// destination URL — the reload does the heavy hydrate (photos, image
-// measurements) when the world is already in roughly the right place.
+// Tweens the camera into roughly the destination's pose, then page-reloads at
+// the destination URL — landing close to the final pose lets the post-reload
+// hydrate paint without a visible snap.
 
 import * as api from './api.js';
 import { dirFromAzAlt } from './overlay.js';
