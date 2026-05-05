@@ -21,7 +21,7 @@ import {
   cpHref, cpLabel, getElement, indexStationHref,
   overlayData, poiData,
 } from './types.js';
-import { latLngToCameraRelativeMeters, vecToAzAlt } from './geo.js';
+import { vecToAzAlt } from './geo.js';
 import { degToRad } from './mathx.js';
 import type { ControlPointView, LatLng } from './types.js';
 import { createSyncManager } from './sync.js';
@@ -64,7 +64,6 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       if (!viewer.overlaysGroup.visible) return;
       overlays.measurements.setFovScale(halfFovTan(fov) / POI_FOV_REFERENCE_TAN);
     },
-    onBeforeRender: () => { updateCpLabel(); },
   });
 
   // Callbacks are attached below via setCallbacks once sync, baker, and the
@@ -134,40 +133,6 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       if (im.controlPointId) observed.add(im.controlPointId);
     }
     return all.filter(cp => observed.has(cp.id));
-  }
-
-  const cpLabelEl = getElement('cp-label');
-  const cpLabelScratch = new THREE.Vector3();
-  // The on-screen label sits this many px above the projected CP marker
-  // center — leaves room for the 12px-radius marker dot plus a small gap.
-  const CP_LABEL_OFFSET_PX = 12;
-
-  function updateCpLabel(): void {
-    if (stationLocation === null) {
-      cpLabelEl.hidden = true;
-      return;
-    }
-    const cp = overlays.controlPoints.list().find(
-      (c): c is ControlPointView & { estLat: number; estLng: number } =>
-        c.selected && c.estLat !== null && c.estLng !== null,
-    );
-    if (!cp) {
-      cpLabelEl.hidden = true;
-      return;
-    }
-    const { x, z } = latLngToCameraRelativeMeters({ lat: cp.estLat, lng: cp.estLng }, stationLocation);
-    const y = cp.estAlt - terrain.getCameraHeight();
-    cpLabelScratch.set(x, y, z).project(viewer.camera);
-    if (cpLabelScratch.z > 1) {
-      cpLabelEl.hidden = true;
-      return;
-    }
-    const sx = (cpLabelScratch.x + 1) * 0.5 * innerWidth;
-    const sy = (1 - cpLabelScratch.y) * 0.5 * innerHeight;
-    cpLabelEl.style.left = `${sx.toString()}px`;
-    cpLabelEl.style.top = `${(sy - CP_LABEL_OFFSET_PX).toString()}px`;
-    cpLabelEl.textContent = cpLabel(cp.description);
-    cpLabelEl.hidden = false;
   }
 
   function refreshControlPointColumns(): void {
