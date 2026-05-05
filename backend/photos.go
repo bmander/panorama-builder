@@ -82,32 +82,55 @@ func (s *Server) putPhoto(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		return
 	}
-	var req PhotoPosePatch
-	if !parseJSON(w, r, &req) {
+	patch, ok := parsePatch(w, r)
+	if !ok {
 		return
 	}
-	if msg := validatePhotoPosePatch(req); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
+	b := newUpdateBuilder(id)
+	if v, present, err := patch.Float64("aspect"); present {
+		if err != nil || v <= 0 || v > 100 {
+			writeError(w, http.StatusBadRequest, "aspect must be in (0, 100]")
+			return
+		}
+		b.Set("aspect", v)
+	}
+	for _, key := range []string{"photo_az", "photo_tilt", "photo_roll"} {
+		if v, present, err := patch.Float64(key); present {
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			b.Set(key, v)
+		}
+	}
+	if v, present, err := patch.Float64("size_rad"); present {
+		if err != nil || v < 0 {
+			writeError(w, http.StatusBadRequest, "size_rad must be non-negative")
+			return
+		}
+		b.Set("size_rad", v)
+	}
+	if v, present, err := patch.Float64("opacity"); present {
+		if err != nil || !inRange(v, 0, 1) {
+			writeError(w, http.StatusBadRequest, "opacity must be in [0, 1]")
+			return
+		}
+		b.Set("opacity", v)
+	}
+	for _, key := range []string{"lock_photo_az", "lock_photo_tilt", "lock_photo_roll", "lock_size_rad"} {
+		if v, present, err := patch.Bool(key); present {
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			b.Set(key, v)
+		}
+	}
+	if b.Empty() {
+		writeError(w, http.StatusBadRequest, "no updatable fields")
 		return
 	}
-	opacity := 1.0
-	if req.Opacity != nil {
-		opacity = *req.Opacity
-	}
-	// Lock fields use COALESCE so omitting them from the patch preserves the
-	// existing value (matches the pattern on description / notes elsewhere).
-	q := `UPDATE photos
-		SET aspect=$2, photo_az=$3, photo_tilt=$4, photo_roll=$5, size_rad=$6, opacity=$7,
-		    lock_photo_az   = COALESCE($8,  lock_photo_az),
-		    lock_photo_tilt = COALESCE($9,  lock_photo_tilt),
-		    lock_photo_roll = COALESCE($10, lock_photo_roll),
-		    lock_size_rad   = COALESCE($11, lock_size_rad),
-		    updated_at=NOW()
-		WHERE id=$1
-		RETURNING ` + photoCols
-	p, err := scanPhoto(s.db.QueryRow(r.Context(), q, id, req.Aspect,
-		req.PhotoAz, req.PhotoTilt, req.PhotoRoll, req.SizeRad, opacity,
-		req.LockPhotoAz, req.LockPhotoTilt, req.LockPhotoRoll, req.LockSizeRad))
+	p, err := scanPhoto(s.db.QueryRow(r.Context(), b.Query("photos", photoCols), b.Args()...))
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return

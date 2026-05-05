@@ -135,24 +135,53 @@ func (s *Server) putStation(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		return
 	}
-	var req CreateStationRequest
-	if !parseJSON(w, r, &req) {
+	patch, ok := parsePatch(w, r)
+	if !ok {
 		return
 	}
-	if !validLat(req.Lat) || !validLng(req.Lng) {
-		writeError(w, http.StatusBadRequest, "lat/lng out of range")
+	b := newUpdateBuilder(id)
+	if v, present, err := patch.Float64("lat"); present {
+		if err != nil || !validLat(v) {
+			writeError(w, http.StatusBadRequest, "lat out of range")
+			return
+		}
+		b.Set("lat", v)
+	}
+	if v, present, err := patch.Float64("lng"); present {
+		if err != nil || !validLng(v) {
+			writeError(w, http.StatusBadRequest, "lng out of range")
+			return
+		}
+		b.Set("lng", v)
+	}
+	if v, present, err := patch.Float64("alt"); present {
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		b.Set("alt", v)
+	}
+	if v, present, err := patch.NullableString("name"); present {
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		b.Set("name", v)
+	}
+	for _, key := range []string{"lock_lat", "lock_lng", "lock_alt"} {
+		if v, present, err := patch.Bool(key); present {
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			b.Set(key, v)
+		}
+	}
+	if b.Empty() {
+		writeError(w, http.StatusBadRequest, "no updatable fields")
 		return
 	}
-	const q = `UPDATE stations SET lat=$2, lng=$3, name=$4,
-	             alt      = COALESCE($5, alt),
-	             lock_lat = COALESCE($6, lock_lat),
-	             lock_lng = COALESCE($7, lock_lng),
-	             lock_alt = COALESCE($8, lock_alt),
-	             updated_at=NOW()
-	           WHERE id=$1
-	           RETURNING ` + stationCols
-	st, err := scanStation(s.db.QueryRow(r.Context(), q, id, req.Lat, req.Lng, req.Name,
-		req.Alt, req.LockLat, req.LockLng, req.LockAlt))
+	st, err := scanStation(s.db.QueryRow(r.Context(), b.Query("stations", stationCols), b.Args()...))
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return

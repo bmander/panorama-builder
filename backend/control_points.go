@@ -124,34 +124,69 @@ func (s *Server) putControlPoint(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		return
 	}
-	var req ControlPointPatch
-	if !parseJSON(w, r, &req) {
+	patch, ok := parsePatch(w, r)
+	if !ok {
 		return
 	}
-	if msg := validateControlPointPatch(req); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
+	b := newUpdateBuilder(id)
+	if v, present, err := patch.String("description"); present {
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		b.Set("description", v)
+	}
+	if v, present, err := patch.String("notes"); present {
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		b.Set("notes", v)
+	}
+	if v, present, err := patch.NullableFloat64("est_lat"); present {
+		if err != nil || (v != nil && !validLat(*v)) {
+			writeError(w, http.StatusBadRequest, "est_lat out of range")
+			return
+		}
+		b.Set("est_lat", v)
+	}
+	if v, present, err := patch.NullableFloat64("est_lng"); present {
+		if err != nil || (v != nil && !validLng(*v)) {
+			writeError(w, http.StatusBadRequest, "est_lng out of range")
+			return
+		}
+		b.Set("est_lng", v)
+	}
+	if v, present, err := patch.Float64("est_alt"); present {
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		b.Set("est_alt", v)
+	}
+	for _, key := range []string{"started_at", "ended_at"} {
+		if v, present, err := patch.NullableTime(key); present {
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			b.Set(key, v)
+		}
+	}
+	for _, key := range []string{"lock_est_lat", "lock_est_lng", "lock_est_alt"} {
+		if v, present, err := patch.Bool(key); present {
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			b.Set(key, v)
+		}
+	}
+	if b.Empty() {
+		writeError(w, http.StatusBadRequest, "no updatable fields")
 		return
 	}
-	// description / notes COALESCE so omitting keeps the existing value;
-	// the other fields are unconditional `=`, so callers must always include
-	// them in the patch or they'll be cleared.
-	q := `UPDATE control_points SET
-	        description  = COALESCE($2, description),
-	        notes        = COALESCE($3, notes),
-	        est_lat      = $4,
-	        est_lng      = $5,
-	        est_alt      = $6,
-	        started_at   = $7,
-	        ended_at     = $8,
-	        lock_est_lat = COALESCE($9, lock_est_lat),
-	        lock_est_lng = COALESCE($10, lock_est_lng),
-	        lock_est_alt = COALESCE($11, lock_est_alt),
-	        updated_at   = NOW()
-	      WHERE id = $1
-	      RETURNING ` + controlPointCols
-	cp, err := scanControlPoint(s.db.QueryRow(r.Context(), q, id, req.Description, req.Notes,
-		req.EstLat, req.EstLng, req.EstAlt, req.StartedAt, req.EndedAt,
-		req.LockEstLat, req.LockEstLng, req.LockEstAlt))
+	cp, err := scanControlPoint(s.db.QueryRow(r.Context(), b.Query("control_points", controlPointCols), b.Args()...))
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return

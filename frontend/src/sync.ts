@@ -23,8 +23,6 @@ export interface SyncedControlPoint {
   est_lat: number | null;
   est_lng: number | null;
   est_alt: number;
-  started_at: string | null;
-  ended_at: string | null;
 }
 
 export interface SyncManager {
@@ -88,8 +86,7 @@ export function createSyncManager({
   }
   function controlPointsEqual(a: SyncedControlPoint, b: SyncedControlPoint): boolean {
     return a.description === b.description
-      && a.est_lat === b.est_lat && a.est_lng === b.est_lng && a.est_alt === b.est_alt
-      && a.started_at === b.started_at && a.ended_at === b.ended_at;
+      && a.est_lat === b.est_lat && a.est_lng === b.est_lng && a.est_alt === b.est_alt;
   }
 
   function syncResource<T>(
@@ -136,13 +133,9 @@ export function createSyncManager({
     }
     const currentControlPoints = new Map<string, SyncedControlPoint>();
     for (const cp of overlays.getControlPoints()) {
-      // Carry started_at / ended_at through unchanged: sync doesn't track them.
-      const cached = synced.controlPoints.get(cp.id);
       currentControlPoints.set(cp.id, {
         description: cp.description,
         est_lat: cp.estLat, est_lng: cp.estLng, est_alt: cp.estAlt,
-        started_at: cached?.started_at ?? null,
-        ended_at: cached?.ended_at ?? null,
       });
     }
 

@@ -103,13 +103,17 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
     put:
       tags: [stations]
-      summary: Update a station's lat/lng/name
+      summary: Partial-update a station
+      description: |
+        Partial update: only the keys present in the request body are
+        written. Omitting a key preserves its current value; sending an
+        explicit `null` clears nullable columns (e.g. `name`).
       operationId: updateStation
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CreateStationRequest' }
+            schema: { $ref: '#/components/schemas/StationUpdate' }
       responses:
         '200':
           description: OK
@@ -172,13 +176,16 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
     put:
       tags: [photos]
-      summary: Update photo pose / opacity / aspect
+      summary: Partial-update photo pose / opacity / aspect / locks
+      description: |
+        Partial update: only the keys present in the request body are
+        written. Omitting a key preserves its current value.
       operationId: updatePhoto
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/PhotoPosePatch' }
+            schema: { $ref: '#/components/schemas/PhotoUpdate' }
       responses:
         '200':
           description: OK
@@ -258,13 +265,17 @@ paths:
       - $ref: '#/components/parameters/ImageMeasurementId'
     put:
       tags: [image-measurements]
-      summary: Update an image measurement's u/v or control point link
+      summary: Partial-update an image measurement's u/v or control point link
+      description: |
+        Partial update: only the keys present in the request body are
+        written. Sending `control_point_id: null` unlinks the measurement
+        from its control point.
       operationId: updateImageMeasurement
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ImageMeasurementPatch' }
+            schema: { $ref: '#/components/schemas/ImageMeasurementUpdate' }
       responses:
         '200':
           description: OK
@@ -698,18 +709,38 @@ components:
 
     CreateStationRequest:
       type: object
+      description: |
+        POST body. lat/lng are required; other fields default if omitted.
       required: [lat, lng]
       properties:
         lat: { type: number, format: double, minimum: -90, maximum: 90 }
         lng: { type: number, format: double, minimum: -180, maximum: 180 }
-        alt: { type: number, format: double, description: omit to preserve existing value (PUT) or default 0 (POST) }
+        alt: { type: number, format: double, description: defaults to 0 when omitted }
         name: { type: string, nullable: true }
-        lock_lat: { type: boolean, description: omit to preserve existing value (PUT) or default false (POST) }
+        lock_lat: { type: boolean, description: defaults to false when omitted }
+        lock_lng: { type: boolean }
+        lock_alt: { type: boolean }
+
+    StationUpdate:
+      type: object
+      description: |
+        Partial-update body for PUT /stations/{id}. Every field is
+        optional; only keys present in the body are written. Sending
+        `name: null` clears the name.
+      properties:
+        lat: { type: number, format: double, minimum: -90, maximum: 90 }
+        lng: { type: number, format: double, minimum: -180, maximum: 180 }
+        alt: { type: number, format: double }
+        name: { type: string, nullable: true }
+        lock_lat: { type: boolean }
         lock_lng: { type: boolean }
         lock_alt: { type: boolean }
 
     PhotoPosePatch:
       type: object
+      description: |
+        POST body for `POST /stations/{id}/photos`. Pose fields are
+        required; opacity / lock_* default if omitted.
       required: [aspect, photo_az, photo_tilt, photo_roll, size_rad]
       properties:
         aspect: { type: number, format: double }
@@ -718,14 +749,46 @@ components:
         photo_roll: { type: number, format: double }
         size_rad: { type: number, format: double }
         opacity: { type: number, format: double, minimum: 0, maximum: 1 }
-        lock_photo_az: { type: boolean, description: omit to preserve existing value (PUT) or default false (POST) }
+        lock_photo_az: { type: boolean, description: defaults to false when omitted }
+        lock_photo_tilt: { type: boolean }
+        lock_photo_roll: { type: boolean }
+        lock_size_rad: { type: boolean }
+
+    PhotoUpdate:
+      type: object
+      description: |
+        Partial-update body for PUT /photos/{id}. Every field is
+        optional; only keys present in the body are written.
+      properties:
+        aspect: { type: number, format: double }
+        photo_az: { type: number, format: double }
+        photo_tilt: { type: number, format: double }
+        photo_roll: { type: number, format: double }
+        size_rad: { type: number, format: double }
+        opacity: { type: number, format: double, minimum: 0, maximum: 1 }
+        lock_photo_az: { type: boolean }
         lock_photo_tilt: { type: boolean }
         lock_photo_roll: { type: boolean }
         lock_size_rad: { type: boolean }
 
     ImageMeasurementPatch:
       type: object
+      description: |
+        POST body for `POST /photos/{id}/image-measurements`. u/v
+        required; control_point_id optional (null = unlinked).
       required: [u, v]
+      properties:
+        u: { type: number, format: double, minimum: 0, maximum: 1 }
+        v: { type: number, format: double, minimum: 0, maximum: 1 }
+        control_point_id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          nullable: true
+
+    ImageMeasurementUpdate:
+      type: object
+      description: |
+        Partial-update body for PUT /image-measurements/{id}. Every
+        field optional. `control_point_id: null` unlinks.
       properties:
         u: { type: number, format: double, minimum: 0, maximum: 1 }
         v: { type: number, format: double, minimum: 0, maximum: 1 }
@@ -735,6 +798,11 @@ components:
 
     ControlPointPatch:
       type: object
+      description: |
+        Body for both `POST /control-points` and `PUT
+        /control-points/{id}`. Every field optional. On POST, omitted
+        fields take their column defaults; on PUT, omitted fields are
+        preserved.
       properties:
         description: { type: string }
         notes: { type: string }
@@ -743,7 +811,7 @@ components:
         est_alt: { type: number, format: double }
         started_at: { type: string, format: date-time, nullable: true }
         ended_at: { type: string, format: date-time, nullable: true }
-        lock_est_lat: { type: boolean, description: omit to preserve existing value (PUT) or default false (POST) }
+        lock_est_lat: { type: boolean }
         lock_est_lng: { type: boolean }
         lock_est_alt: { type: boolean }
 

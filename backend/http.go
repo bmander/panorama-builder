@@ -37,14 +37,21 @@ func writeErrorFromDB(w http.ResponseWriter, err error) {
 }
 
 func parseJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, metadataBodyMax)
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(dst); err != nil {
+	if err := decodeBody(w, r, dst); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return false
 	}
 	return true
+}
+
+// decodeBody is the shared "small JSON request body" reader: it caps the
+// body at metadataBodyMax and rejects unknown fields. Both parseJSON (typed
+// destination) and parsePatch (raw map destination) go through it.
+func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, metadataBodyMax)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	return dec.Decode(dst)
 }
 
 // requireID validates a path-param id; writes 400 and returns "" on failure.

@@ -68,18 +68,9 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   }
 
   async function moveControlPointTo(id: string, latlng: LatLng): Promise<void> {
-    // Backend PUT /control-points/{id} writes lat/lng/alt/started_at/ended_at
-    // unconditionally, so we round-trip the rest from the current row.
     try {
-      const cur = await api.getControlPoint(id);
       const updated = await api.updateControlPoint(id, {
-        description: cur.description,
-        notes: cur.notes,
-        est_lat: latlng.lat,
-        est_lng: latlng.lng,
-        est_alt: cur.est_alt,
-        started_at: cur.started_at,
-        ended_at: cur.ended_at,
+        est_lat: latlng.lat, est_lng: latlng.lng,
       });
       cpsById.set(updated.id, updated);
     } catch (err) {
@@ -92,11 +83,8 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   }
 
   async function moveStationTo(id: string, latlng: LatLng): Promise<void> {
-    // Backend PUT /stations/{id} writes name unconditionally, so we have to
-    // round-trip the current name to avoid clearing it.
     try {
-      const cur = await api.getStation(id);
-      await api.updateStation(id, { lat: latlng.lat, lng: latlng.lng, name: cur.station.name });
+      await api.updateStation(id, { lat: latlng.lat, lng: latlng.lng });
     } catch (err) {
       console.error('move station failed:', err);
       alert('Move station failed.');

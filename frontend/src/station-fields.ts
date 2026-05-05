@@ -47,8 +47,9 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
   const lockAltEl = getElement<HTMLInputElement>('station-lock-alt');
 
   // Local mirror of the canonical station fields, populated by hydrate().
-  // Each PUT round-trips name + the unmoved fields so the backend (which writes
-  // most columns unconditionally) preserves them.
+  // Used for rendering inputs and detecting no-op edits; the PUT itself only
+  // carries the changed key, so this is a display cache, not a round-trip
+  // shim.
   let cache: StationFields | null = null;
 
   function render(): void {
@@ -73,13 +74,17 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
 
   async function putPatch(patch: Partial<StationFields>): Promise<void> {
     if (!cache) return;
-    const merged = { ...cache, ...patch };
+    const body: api.StationUpdate = {};
+    if (patch.lat !== undefined) body.lat = patch.lat;
+    if (patch.lng !== undefined) body.lng = patch.lng;
+    if (patch.alt !== undefined) body.alt = patch.alt;
+    if (patch.name !== undefined) body.name = patch.name;
+    if (patch.lockLat !== undefined) body.lock_lat = patch.lockLat;
+    if (patch.lockLng !== undefined) body.lock_lng = patch.lockLng;
+    if (patch.lockAlt !== undefined) body.lock_alt = patch.lockAlt;
     let updated: api.ApiStation;
     try {
-      updated = await api.updateStation(stationId, {
-        lat: merged.lat, lng: merged.lng, name: merged.name, alt: merged.alt,
-        lockLat: merged.lockLat, lockLng: merged.lockLng, lockAlt: merged.lockAlt,
-      });
+      updated = await api.updateStation(stationId, body);
     } catch (err) {
       console.error('update station failed:', err);
       render(); // revert UI to the last known-good cache

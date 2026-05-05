@@ -36,19 +36,33 @@ func (s *Server) putImageMeasurement(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		return
 	}
-	var req ImageMeasurementPatch
-	if !parseJSON(w, r, &req) {
+	patch, ok := parsePatch(w, r)
+	if !ok {
 		return
 	}
-	if msg := validateImageMeasurementPatch(req); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
+	b := newUpdateBuilder(id)
+	for _, key := range []string{"u", "v"} {
+		if v, present, err := patch.Float64(key); present {
+			if err != nil || !validUV(v) {
+				writeError(w, http.StatusBadRequest, "u/v must be in [0, 1]")
+				return
+			}
+			b.Set(key, v)
+		}
+	}
+	if v, present, err := patch.NullableID("control_point_id"); present {
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		b.Set("control_point_id", v)
+	}
+	if b.Empty() {
+		writeError(w, http.StatusBadRequest, "no updatable fields")
 		return
 	}
-	q := `UPDATE image_measurements SET u=$2, v=$3, control_point_id=$4, updated_at=NOW()
-	      WHERE id=$1
-	      RETURNING ` + imageMeasurementCols
 	var im ImageMeasurement
-	err := s.db.QueryRow(r.Context(), q, id, req.U, req.V, req.ControlPointID).Scan(
+	err := s.db.QueryRow(r.Context(), b.Query("image_measurements", imageMeasurementCols), b.Args()...).Scan(
 		&im.ID, &im.PhotoID, &im.U, &im.V, &im.ControlPointID, &im.CreatedAt, &im.UpdatedAt)
 	if err != nil {
 		writeErrorFromDB(w, err)

@@ -22,6 +22,9 @@ export type ApiHydratedStation = Schemas['HydratedStation'];
 export type PhotoPosePatch = Schemas['PhotoPosePatch'];
 export type ImageMeasurementPatch = Schemas['ImageMeasurementPatch'];
 export type ControlPointPatch = Schemas['ControlPointPatch'];
+export type StationUpdate = Schemas['StationUpdate'];
+export type PhotoUpdate = Schemas['PhotoUpdate'];
+export type ImageMeasurementUpdate = Schemas['ImageMeasurementUpdate'];
 export type ApiControlPointObservations = Schemas['ControlPointObservations'];
 export type SolveConfig = Schemas['SolveConfig'];
 export type SolveResult = Schemas['SolveResult'];
@@ -66,28 +69,8 @@ export function getStation(id: string): Promise<ApiHydratedStation> {
   return request<ApiHydratedStation>('GET', `/stations/${encodeURIComponent(id)}`);
 }
 
-// `name` is written unconditionally by the backend (passing null clears it),
-// so callers must always include it. `alt` and the lock_* fields are
-// COALESCE-preserved when omitted.
-export interface UpdateStationPatch {
-  readonly lat: number;
-  readonly lng: number;
-  readonly name: string | null;
-  readonly alt?: number;
-  readonly lockLat?: boolean;
-  readonly lockLng?: boolean;
-  readonly lockAlt?: boolean;
-}
-
-export function updateStation(id: string, patch: UpdateStationPatch): Promise<ApiStation> {
-  const body: Record<string, unknown> = {
-    lat: patch.lat, lng: patch.lng, name: patch.name,
-  };
-  if (patch.alt !== undefined) body.alt = patch.alt;
-  if (patch.lockLat !== undefined) body.lock_lat = patch.lockLat;
-  if (patch.lockLng !== undefined) body.lock_lng = patch.lockLng;
-  if (patch.lockAlt !== undefined) body.lock_alt = patch.lockAlt;
-  return request<ApiStation>('PUT', `/stations/${encodeURIComponent(id)}`, body);
+export function updateStation(id: string, patch: StationUpdate): Promise<ApiStation> {
+  return request<ApiStation>('PUT', `/stations/${encodeURIComponent(id)}`, patch);
 }
 
 export function deleteStation(id: string): Promise<void> {
@@ -100,8 +83,8 @@ export function createPhoto(stationId: string, init: PhotoPosePatch): Promise<Ap
   return request<ApiPhoto>('POST', `/stations/${encodeURIComponent(stationId)}/photos`, init);
 }
 
-export function updatePhoto(id: string, pose: PhotoPosePatch): Promise<ApiPhoto> {
-  return request<ApiPhoto>('PUT', `/photos/${encodeURIComponent(id)}`, pose);
+export function updatePhoto(id: string, patch: PhotoUpdate): Promise<ApiPhoto> {
+  return request<ApiPhoto>('PUT', `/photos/${encodeURIComponent(id)}`, patch);
 }
 
 export function deletePhoto(id: string): Promise<void> {
@@ -134,7 +117,7 @@ export function createImageMeasurement(
 }
 
 export function updateImageMeasurement(
-  id: string, patch: ImageMeasurementPatch,
+  id: string, patch: ImageMeasurementUpdate,
 ): Promise<ApiImageMeasurement> {
   return request<ApiImageMeasurement>('PUT', `/image-measurements/${encodeURIComponent(id)}`, patch);
 }

@@ -86,7 +86,10 @@ type ControlPointObservations struct {
 	ImageMeasurements []ControlPointImageObservation `json:"image_measurements"`
 }
 
-// ControlPointPatch defines model for ControlPointPatch.
+// ControlPointPatch Body for both `POST /control-points` and `PUT
+// /control-points/{id}`. Every field optional. On POST, omitted
+// fields take their column defaults; on PUT, omitted fields are
+// preserved.
 type ControlPointPatch struct {
 	Description *string    `json:"description,omitempty"`
 	EndedAt     *time.Time `json:"ended_at,omitempty"`
@@ -94,23 +97,21 @@ type ControlPointPatch struct {
 	EstLat      *float64   `json:"est_lat,omitempty"`
 	EstLng      *float64   `json:"est_lng,omitempty"`
 	LockEstAlt  *bool      `json:"lock_est_alt,omitempty"`
-
-	// LockEstLat omit to preserve existing value (PUT) or default false (POST)
-	LockEstLat *bool      `json:"lock_est_lat,omitempty"`
-	LockEstLng *bool      `json:"lock_est_lng,omitempty"`
-	Notes      *string    `json:"notes,omitempty"`
-	StartedAt  *time.Time `json:"started_at,omitempty"`
+	LockEstLat  *bool      `json:"lock_est_lat,omitempty"`
+	LockEstLng  *bool      `json:"lock_est_lng,omitempty"`
+	Notes       *string    `json:"notes,omitempty"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
 }
 
-// CreateStationRequest defines model for CreateStationRequest.
+// CreateStationRequest POST body. lat/lng are required; other fields default if omitted.
 type CreateStationRequest struct {
-	// Alt omit to preserve existing value (PUT) or default 0 (POST)
+	// Alt defaults to 0 when omitted
 	Alt     *float64 `json:"alt,omitempty"`
 	Lat     float64  `json:"lat"`
 	Lng     float64  `json:"lng"`
 	LockAlt *bool    `json:"lock_alt,omitempty"`
 
-	// LockLat omit to preserve existing value (PUT) or default false (POST)
+	// LockLat defaults to false when omitted
 	LockLat *bool   `json:"lock_lat,omitempty"`
 	LockLng *bool   `json:"lock_lng,omitempty"`
 	Name    *string `json:"name,omitempty"`
@@ -169,11 +170,20 @@ type ImageMeasurement struct {
 	V         float64   `json:"v"`
 }
 
-// ImageMeasurementPatch defines model for ImageMeasurementPatch.
+// ImageMeasurementPatch POST body for `POST /photos/{id}/image-measurements`. u/v
+// required; control_point_id optional (null = unlinked).
 type ImageMeasurementPatch struct {
 	ControlPointID *ID     `json:"control_point_id,omitempty"`
 	U              float64 `json:"u"`
 	V              float64 `json:"v"`
+}
+
+// ImageMeasurementUpdate Partial-update body for PUT /image-measurements/{id}. Every
+// field optional. `control_point_id: null` unlinks.
+type ImageMeasurementUpdate struct {
+	ControlPointID *ID      `json:"control_point_id,omitempty"`
+	U              *float64 `json:"u,omitempty"`
+	V              *float64 `json:"v,omitempty"`
 }
 
 // Photo defines model for Photo.
@@ -210,11 +220,12 @@ type Photo struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// PhotoPosePatch defines model for PhotoPosePatch.
+// PhotoPosePatch POST body for `POST /stations/{id}/photos`. Pose fields are
+// required; opacity / lock_* default if omitted.
 type PhotoPosePatch struct {
 	Aspect float64 `json:"aspect"`
 
-	// LockPhotoAz omit to preserve existing value (PUT) or default false (POST)
+	// LockPhotoAz defaults to false when omitted
 	LockPhotoAz   *bool    `json:"lock_photo_az,omitempty"`
 	LockPhotoRoll *bool    `json:"lock_photo_roll,omitempty"`
 	LockPhotoTilt *bool    `json:"lock_photo_tilt,omitempty"`
@@ -224,6 +235,21 @@ type PhotoPosePatch struct {
 	PhotoRoll     float64  `json:"photo_roll"`
 	PhotoTilt     float64  `json:"photo_tilt"`
 	SizeRad       float64  `json:"size_rad"`
+}
+
+// PhotoUpdate Partial-update body for PUT /photos/{id}. Every field is
+// optional; only keys present in the body are written.
+type PhotoUpdate struct {
+	Aspect        *float64 `json:"aspect,omitempty"`
+	LockPhotoAz   *bool    `json:"lock_photo_az,omitempty"`
+	LockPhotoRoll *bool    `json:"lock_photo_roll,omitempty"`
+	LockPhotoTilt *bool    `json:"lock_photo_tilt,omitempty"`
+	LockSizeRad   *bool    `json:"lock_size_rad,omitempty"`
+	Opacity       *float64 `json:"opacity,omitempty"`
+	PhotoAz       *float64 `json:"photo_az,omitempty"`
+	PhotoRoll     *float64 `json:"photo_roll,omitempty"`
+	PhotoTilt     *float64 `json:"photo_tilt,omitempty"`
+	SizeRad       *float64 `json:"size_rad,omitempty"`
 }
 
 // SolveConfig Optional knobs for the solver. Defaults are used when omitted.
@@ -284,6 +310,19 @@ type Station struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// StationUpdate Partial-update body for PUT /stations/{id}. Every field is
+// optional; only keys present in the body are written. Sending
+// `name: null` clears the name.
+type StationUpdate struct {
+	Alt     *float64 `json:"alt,omitempty"`
+	Lat     *float64 `json:"lat,omitempty"`
+	Lng     *float64 `json:"lng,omitempty"`
+	LockAlt *bool    `json:"lock_alt,omitempty"`
+	LockLat *bool    `json:"lock_lat,omitempty"`
+	LockLng *bool    `json:"lock_lng,omitempty"`
+	Name    *string  `json:"name,omitempty"`
+}
+
 // ControlPointID 13-character base32 server-assigned id
 type ControlPointID = ID
 
@@ -325,10 +364,10 @@ type CreateControlPointJSONRequestBody = ControlPointPatch
 type UpdateControlPointJSONRequestBody = ControlPointPatch
 
 // UpdateImageMeasurementJSONRequestBody defines body for UpdateImageMeasurement for application/json ContentType.
-type UpdateImageMeasurementJSONRequestBody = ImageMeasurementPatch
+type UpdateImageMeasurementJSONRequestBody = ImageMeasurementUpdate
 
 // UpdatePhotoJSONRequestBody defines body for UpdatePhoto for application/json ContentType.
-type UpdatePhotoJSONRequestBody = PhotoPosePatch
+type UpdatePhotoJSONRequestBody = PhotoUpdate
 
 // CreateImageMeasurementJSONRequestBody defines body for CreateImageMeasurement for application/json ContentType.
 type CreateImageMeasurementJSONRequestBody = ImageMeasurementPatch
@@ -346,7 +385,7 @@ type SolveStationJSONRequestBody = SolveConfig
 type CreateStationJSONRequestBody = CreateStationRequest
 
 // UpdateStationJSONRequestBody defines body for UpdateStation for application/json ContentType.
-type UpdateStationJSONRequestBody = CreateStationRequest
+type UpdateStationJSONRequestBody = StationUpdate
 
 // CreatePhotoJSONRequestBody defines body for CreatePhoto for application/json ContentType.
 type CreatePhotoJSONRequestBody = PhotoPosePatch

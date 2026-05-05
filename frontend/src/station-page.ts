@@ -171,14 +171,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     });
     sync.registerControlPoint(cp.id, {
       description: cp.description, est_lat: cp.est_lat, est_lng: cp.est_lng, est_alt: cp.est_alt,
-      started_at: cp.started_at, ended_at: cp.ended_at,
     });
   }
 
   function syncControlPoint(cp: ApiControlPoint): void {
     sync.registerControlPoint(cp.id, {
       description: cp.description, est_lat: cp.est_lat, est_lng: cp.est_lng, est_alt: cp.est_alt,
-      started_at: cp.started_at, ended_at: cp.ended_at,
     });
     if (overlays.getControlPointById(cp.id) === null) {
       overlays.addControlPoint(cp.id, {

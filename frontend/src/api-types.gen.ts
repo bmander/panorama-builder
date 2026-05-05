@@ -50,7 +50,12 @@ export interface paths {
         };
         /** Get a station with its photos, measurements, and referenced control points */
         get: operations["getStation"];
-        /** Update a station's lat/lng/name */
+        /**
+         * Partial-update a station
+         * @description Partial update: only the keys present in the request body are
+         *     written. Omitting a key preserves its current value; sending an
+         *     explicit `null` clears nullable columns (e.g. `name`).
+         */
         put: operations["updateStation"];
         post?: never;
         /**
@@ -101,7 +106,11 @@ export interface paths {
         };
         /** Get photo metadata */
         get: operations["getPhoto"];
-        /** Update photo pose / opacity / aspect */
+        /**
+         * Partial-update photo pose / opacity / aspect / locks
+         * @description Partial update: only the keys present in the request body are
+         *     written. Omitting a key preserves its current value.
+         */
         put: operations["updatePhoto"];
         post?: never;
         /** Delete a photo (and its blob) */
@@ -160,7 +169,12 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Update an image measurement's u/v or control point link */
+        /**
+         * Partial-update an image measurement's u/v or control point link
+         * @description Partial update: only the keys present in the request body are
+         *     written. Sending `control_point_id: null` unlinks the measurement
+         *     from its control point.
+         */
         put: operations["updateImageMeasurement"];
         post?: never;
         /** Delete an image measurement */
@@ -487,6 +501,7 @@ export interface components {
              */
             control_points: components["schemas"]["ControlPoint"][];
         };
+        /** @description POST body. lat/lng are required; other fields default if omitted. */
         CreateStationRequest: {
             /** Format: double */
             lat: number;
@@ -494,15 +509,36 @@ export interface components {
             lng: number;
             /**
              * Format: double
-             * @description omit to preserve existing value (PUT) or default 0 (POST)
+             * @description defaults to 0 when omitted
              */
             alt?: number;
             name?: string | null;
-            /** @description omit to preserve existing value (PUT) or default false (POST) */
+            /** @description defaults to false when omitted */
             lock_lat?: boolean;
             lock_lng?: boolean;
             lock_alt?: boolean;
         };
+        /**
+         * @description Partial-update body for PUT /stations/{id}. Every field is
+         *     optional; only keys present in the body are written. Sending
+         *     `name: null` clears the name.
+         */
+        StationUpdate: {
+            /** Format: double */
+            lat?: number;
+            /** Format: double */
+            lng?: number;
+            /** Format: double */
+            alt?: number;
+            name?: string | null;
+            lock_lat?: boolean;
+            lock_lng?: boolean;
+            lock_alt?: boolean;
+        };
+        /**
+         * @description POST body for `POST /stations/{id}/photos`. Pose fields are
+         *     required; opacity / lock_* default if omitted.
+         */
         PhotoPosePatch: {
             /** Format: double */
             aspect: number;
@@ -516,12 +552,38 @@ export interface components {
             size_rad: number;
             /** Format: double */
             opacity?: number;
-            /** @description omit to preserve existing value (PUT) or default false (POST) */
+            /** @description defaults to false when omitted */
             lock_photo_az?: boolean;
             lock_photo_tilt?: boolean;
             lock_photo_roll?: boolean;
             lock_size_rad?: boolean;
         };
+        /**
+         * @description Partial-update body for PUT /photos/{id}. Every field is
+         *     optional; only keys present in the body are written.
+         */
+        PhotoUpdate: {
+            /** Format: double */
+            aspect?: number;
+            /** Format: double */
+            photo_az?: number;
+            /** Format: double */
+            photo_tilt?: number;
+            /** Format: double */
+            photo_roll?: number;
+            /** Format: double */
+            size_rad?: number;
+            /** Format: double */
+            opacity?: number;
+            lock_photo_az?: boolean;
+            lock_photo_tilt?: boolean;
+            lock_photo_roll?: boolean;
+            lock_size_rad?: boolean;
+        };
+        /**
+         * @description POST body for `POST /photos/{id}/image-measurements`. u/v
+         *     required; control_point_id optional (null = unlinked).
+         */
         ImageMeasurementPatch: {
             /** Format: double */
             u: number;
@@ -529,6 +591,23 @@ export interface components {
             v: number;
             control_point_id?: components["schemas"]["Id"] | null;
         };
+        /**
+         * @description Partial-update body for PUT /image-measurements/{id}. Every
+         *     field optional. `control_point_id: null` unlinks.
+         */
+        ImageMeasurementUpdate: {
+            /** Format: double */
+            u?: number;
+            /** Format: double */
+            v?: number;
+            control_point_id?: components["schemas"]["Id"] | null;
+        };
+        /**
+         * @description Body for both `POST /control-points` and `PUT
+         *     /control-points/{id}`. Every field optional. On POST, omitted
+         *     fields take their column defaults; on PUT, omitted fields are
+         *     preserved.
+         */
         ControlPointPatch: {
             description?: string;
             notes?: string;
@@ -542,7 +621,6 @@ export interface components {
             started_at?: string | null;
             /** Format: date-time */
             ended_at?: string | null;
-            /** @description omit to preserve existing value (PUT) or default false (POST) */
             lock_est_lat?: boolean;
             lock_est_lng?: boolean;
             lock_est_alt?: boolean;
@@ -747,7 +825,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateStationRequest"];
+                "application/json": components["schemas"]["StationUpdate"];
             };
         };
         responses: {
@@ -847,7 +925,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PhotoPosePatch"];
+                "application/json": components["schemas"]["PhotoUpdate"];
             };
         };
         responses: {
@@ -982,7 +1060,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ImageMeasurementPatch"];
+                "application/json": components["schemas"]["ImageMeasurementUpdate"];
             };
         };
         responses: {

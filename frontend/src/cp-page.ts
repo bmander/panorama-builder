@@ -3,17 +3,6 @@ import { cpLabel, formatLocalDateTime, getElement, indexCpHref, stationHref } fr
 
 const CP_ID_RE = /^\/cp\/([A-Z2-7]{13})$/;
 
-// Fields that the PUT SQL writes unconditionally. Patches must include them
-// or they'll be cleared.
-function cpPatch(cp: api.ApiControlPoint,
-  override: Partial<api.ControlPointPatch>): api.ControlPointPatch {
-  return {
-    est_lat: cp.est_lat, est_lng: cp.est_lng, est_alt: cp.est_alt,
-    started_at: cp.started_at, ended_at: cp.ended_at,
-    ...override,
-  };
-}
-
 type EditorEl = HTMLInputElement | HTMLTextAreaElement;
 
 interface InlineEditorOptions<V, El extends EditorEl> {
@@ -101,7 +90,7 @@ function attachNameEditor(cp: api.ApiControlPoint, host: HTMLElement): void {
     },
     parse: (el) => el.value.trim(),
     save: async (next) => {
-      const updated = await api.updateControlPoint(cp.id, cpPatch(cp, { description: next }));
+      const updated = await api.updateControlPoint(cp.id, { description: next });
       cp.description = updated.description;
     },
     afterAttach: (el) => { el.select(); },
@@ -126,7 +115,7 @@ function attachNotesEditor(cp: api.ApiControlPoint, host: HTMLElement): void {
     },
     parse: (el) => el.value,
     save: async (next) => {
-      const updated = await api.updateControlPoint(cp.id, cpPatch(cp, { notes: next }));
+      const updated = await api.updateControlPoint(cp.id, { notes: next });
       cp.notes = updated.notes;
     },
     enter: 'modifier-enter',
@@ -169,7 +158,7 @@ function attachLatLngEditor(
       return Number.isFinite(n) ? n : cp[field];
     },
     save: async (next) => {
-      const updated = await api.updateControlPoint(cp.id, cpPatch(cp, { [field]: next }));
+      const updated = await api.updateControlPoint(cp.id, { [field]: next });
       cp.est_lat = updated.est_lat;
       cp.est_lng = updated.est_lng;
       onAfterSave?.();
@@ -200,7 +189,7 @@ function attachAltEditor(cp: api.ApiControlPoint, host: HTMLElement): () => void
       return Number.isFinite(n) ? n : cp.est_alt;
     },
     save: async (next) => {
-      const updated = await api.updateControlPoint(cp.id, cpPatch(cp, { est_alt: next }));
+      const updated = await api.updateControlPoint(cp.id, { est_alt: next });
       cp.est_alt = updated.est_alt;
     },
     afterAttach: (el) => { el.select(); },
@@ -235,7 +224,7 @@ function attachDateEditor(cp: api.ApiControlPoint, host: HTMLElement, field: Dat
     parse: (el) => el.value === '' ? null : new Date(el.value).toISOString(),
     equal: (a, b) => visible(a) === visible(b),
     save: async (next) => {
-      const updated = await api.updateControlPoint(cp.id, cpPatch(cp, { [field]: next }));
+      const updated = await api.updateControlPoint(cp.id, { [field]: next });
       cp.started_at = updated.started_at;
       cp.ended_at = updated.ended_at;
     },
@@ -344,7 +333,7 @@ function attachLockToggle(cp: api.ApiControlPoint, elId: string, field: LockFiel
   el.addEventListener('change', () => {
     const next = el.checked;
     el.disabled = true;
-    api.updateControlPoint(cp.id, cpPatch(cp, { [field]: next })).then(
+    api.updateControlPoint(cp.id, { [field]: next }).then(
       updated => { cp[field] = updated[field]; el.disabled = false; },
       (err: unknown) => {
         console.error('lock update failed:', err);
