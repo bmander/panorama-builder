@@ -324,6 +324,31 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       handlers.onCreateCPAndObserve(overlay, u, v, description),
   });
 
+  // Shared menu builder for any CP-targeted gesture (left-click on a CP
+  // marker, right-click on a reticule). Always headed by the CP description
+  // and offers the standard CP actions; "Add observation here" is only
+  // appended when this station doesn't already observe the CP and the click
+  // landed on a photo body that can anchor the new observation.
+  function openCpContextMenu(
+    cpId: string, sx: number, sy: number,
+    body: { overlay: THREE.Group; u: number; v: number } | null,
+  ): void {
+    const cp = overlays.controlPoints.getById(cpId);
+    const header = cpLabel(cp?.description ?? '');
+    const items: ContextMenuItem[] = [
+      { label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } },
+    ];
+    const stationObserves = overlays.measurements.list()
+      .some(im => im.controlPointId === cpId);
+    if (!stationObserves && body) {
+      items.push({
+        label: 'Add observation here',
+        onClick: () => { void handlers.onMatchImageMeasurement(body.overlay, body.u, body.v, cpId); },
+      });
+    }
+    contextMenu.open(sx, sy, items, header);
+  }
+
   attachInput({
     viewer,
     overlays,
@@ -359,9 +384,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     onImagePOIContextMenu: (poi, sx, sy) => {
       const cpId = poiData(poi).controlPointId;
       if (!cpId) return;
-      contextMenu.open(sx, sy, [
-        { label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } },
-      ]);
+      openCpContextMenu(cpId, sx, sy, null);
     },
     findStationAtNDC: ndc => {
       if (!stationLocation || otherStations.length === 0) return null;
@@ -375,25 +398,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         { label: 'Go to camera →', onClick: () => { void stationNavigation.flyToStation(id); } },
       ], header);
     },
-    onCPClick: (cpId, sx, sy, body) => {
-      const cp = overlays.controlPoints.getById(cpId);
-      const header = cpLabel(cp?.description ?? '');
-      const items: ContextMenuItem[] = [
-        { label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } },
-      ];
-      // Skip the "add observation" option when this station already observes
-      // the CP — duplicates aren't useful — or when the click missed any
-      // photo body (no u/v anchor to attach the observation to).
-      const stationObserves = overlays.measurements.list()
-        .some(im => im.controlPointId === cpId);
-      if (!stationObserves && body) {
-        items.push({
-          label: 'Add observation here',
-          onClick: () => { void handlers.onMatchImageMeasurement(body.overlay, body.u, body.v, cpId); },
-        });
-      }
-      contextMenu.open(sx, sy, items, header);
-    },
+    onCPClick: (cpId, sx, sy, body) => { openCpContextMenu(cpId, sx, sy, body); },
     undoManager,
   });
 
