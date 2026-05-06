@@ -447,9 +447,9 @@ export interface components {
             est_lng: number | null;
             /**
              * Format: double
-             * @description meters above sea level (defaults to 0 when unknown)
+             * @description meters above sea level; null when the elevation isn't known
              */
-            est_alt: number;
+            est_alt: number | null;
             /**
              * Format: date-time
              * @description when the landmark began existing
@@ -628,7 +628,7 @@ export interface components {
             /** Format: double */
             est_lng?: number | null;
             /** Format: double */
-            est_alt?: number;
+            est_alt?: number | null;
             /** Format: date-time */
             started_at?: string | null;
             /** Format: date-time */

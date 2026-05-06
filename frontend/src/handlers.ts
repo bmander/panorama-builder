@@ -35,7 +35,7 @@ export interface OrchestrationHandlers {
   ): Promise<void>;
   // Index-map right-click → modal: a CP seeded at the click latlng with the
   // user-supplied estimated altitude (meters above mean sea level).
-  onCreateCPAtLocation(latlng: LatLng, description: string, estAlt: number | null): Promise<void>;
+  onCreateCPAtLocation(latlng: LatLng, description: string): Promise<void>;
   // Replace the photo blob backing this overlay (for swapping in a higher-
   // resolution version). Existing pose and observations are preserved; if
   // the new file has a different aspect ratio, the overlay's body is
@@ -176,7 +176,7 @@ export function createOrchestration({
   // POST a CP with the given payload, register it. Returns null on API
   // failure (the banner has already been surfaced via reportError).
   async function createControlPoint(
-    payload: { description: string; est_lat: number | null; est_lng: number | null; est_alt: number },
+    payload: { description: string; est_lat: number | null; est_lng: number | null; est_alt: number | null },
   ): Promise<api.ApiControlPoint | null> {
     try {
       const cp = await api.createControlPoint(payload);
@@ -191,7 +191,7 @@ export function createOrchestration({
   async function onCreateCPAndObserve(
     overlay: THREE.Group, u: number, v: number, description: string,
   ): Promise<void> {
-    const cp = await createControlPoint({ description, est_lat: null, est_lng: null, est_alt: 0 });
+    const cp = await createControlPoint({ description, est_lat: null, est_lng: null, est_alt: null });
     if (!cp) return;
     const measurement = await createImageMeasurement(overlay, u, v, cp.id);
     if (!measurement) {
@@ -216,16 +216,13 @@ export function createOrchestration({
   }
 
   async function onCreateCPAtLocation(
-    latlng: LatLng, description: string, estAlt: number | null,
+    latlng: LatLng, description: string,
   ): Promise<void> {
     await createControlPoint({
       description,
       est_lat: latlng.lat,
       est_lng: latlng.lng,
-      // est_alt is NOT NULL in the DB; default to 0 when the DEM lookup
-      // failed so the column always has a value (the user can refine via the
-      // CP page).
-      est_alt: estAlt ?? 0,
+      est_alt: null,
     });
   }
 

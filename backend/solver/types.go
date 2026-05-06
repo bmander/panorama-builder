@@ -42,8 +42,9 @@ type Photo struct {
 	UpdatedAt time.Time
 }
 
-// ControlPoint estimate. EstAlt is always populated (column is NOT NULL since
-// migration 0009; defaults to 0).
+// ControlPoint estimate. EstAlt is always populated in this in-memory form;
+// the DB column may be NULL ("elevation unknown"), in which case the loader
+// seeds 0 here so the solver has a 3D guess to refine.
 type ControlPoint struct {
 	ID        string
 	EstLat    float64

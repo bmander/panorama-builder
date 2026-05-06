@@ -78,16 +78,3 @@ export function tileYToLat(tileY: number, z: number): number {
   return radToDeg(Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))));
 }
 
-// Single-point elevation lookup. Uses the same zoom as terrain.ts's
-// highest-zoom ring so the tile cache is shared. Returns null if the tile
-// fetch fails.
-const ELEVATION_LOOKUP_ZOOM = 11;
-export async function getElevationAt(lat: number, lng: number): Promise<number | null> {
-  const tx = lngToTileX(lng, ELEVATION_LOOKUP_ZOOM);
-  const ty = latToTileY(lat, ELEVATION_LOOKUP_ZOOM);
-  const elev = await fetchTileElevations(ELEVATION_LOOKUP_ZOOM, Math.floor(tx), Math.floor(ty));
-  if (!elev) return null;
-  const px = Math.floor((tx - Math.floor(tx)) * TILE_PX);
-  const py = Math.floor((ty - Math.floor(ty)) * TILE_PX);
-  return elev[py * TILE_PX + px] ?? null;
-}

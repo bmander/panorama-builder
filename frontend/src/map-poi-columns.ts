@@ -6,28 +6,43 @@
 // overlay) gets a line from the marker to the POI's world position — a visible
 // "residual": short = pose fits the CP well, long = poor fit.
 //
+// CPs whose est_alt is null ("elevation unknown") are drawn as vertical lines
+// at (lat,lng) instead of dots — a column reaching far above and below the
+// viewer reminds you that the location is map-anchored but height-free.
+// Observation residual lines aren't drawn for these (no defined endpoint).
+//
 // Always-on-top (depthTest off, renderOrder high) so markers and lines aren't
 // hidden by terrain, photos, or the sun marker.
-//
-// (Filename retained from the original "map-poi columns" implementation; the
-// columns were replaced with point markers + lines.)
 
 import * as THREE from 'three';
 import type { LatLng, ControlPointView } from './types.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
-import { createDotLayer, findHitDot, OVERLAY_RENDER_ORDER } from './dot-layer.js';
+import { createDotLayer, OVERLAY_RENDER_ORDER } from './dot-layer.js';
 import type { Dot } from './dot-layer.js';
+import { norm2 } from './mathx.js';
 
 const MARKER_COLOR = 0x5080ff;
 const MARKER_COLOR_SELECTED = 0xffff66;
 
+// Half-height of the vertical line for a null-altitude CP, in viewer-relative
+// meters. The viewer camera's far plane is 1e6, so 1e4 is well inside it and
+// looks infinite at any practical FOV.
+const COLUMN_HALF_HEIGHT = 1e4;
+
+// Half-height used for screen-space hit testing of the vertical line. Smaller
+// than the rendered span: we just need two points reliably in front of the
+// camera to compute the projected line direction.
+const COLUMN_HIT_HALF_HEIGHT = 100;
+
 export interface ControlPointMarker {
   readonly id: string;
   readonly anchor: LatLng;
-  readonly altitude: number;
+  // null altitude → render as a vertical line at (lat,lng) instead of a dot.
+  readonly altitude: number | null;
   readonly selected: boolean;
   // Scene-graph handles for image measurements linked to this CP. World
-  // positions are resolved during update() via getWorldPosition().
+  // positions are resolved during update() via getWorldPosition(). Ignored
+  // when altitude is null (no defined endpoint to draw a residual to).
   readonly observations: readonly THREE.Object3D[];
 }
 
@@ -98,31 +113,38 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
       return;
     }
 
-    const dotList: Dot[] = lastMarkers.map(m => ({
-      anchor: m.anchor,
-      altitude: m.altitude,
-      color: isHighlighted(m) ? colorSelected : colorDefault,
-    }));
-    dots.update(lastCamLoc, lastCameraHeight, dotList);
-
+    const dotList: Dot[] = [];
     for (const m of lastMarkers) {
+      const highlighted = isHighlighted(m);
+      const color = highlighted ? colorSelected : colorDefault;
+      const lineMaterial = highlighted ? lineMatSel : lineMat;
       const { x, z } = latLngToCameraRelativeMeters(m.anchor, lastCamLoc);
+      if (m.altitude === null) {
+        addLine(lineMaterial, x, -COLUMN_HALF_HEIGHT, z, x, COLUMN_HALF_HEIGHT, z);
+        continue;
+      }
+      dotList.push({ anchor: m.anchor, altitude: m.altitude, color });
       const y = m.altitude - lastCameraHeight;
-      const lineMaterial = isHighlighted(m) ? lineMatSel : lineMat;
       for (const poi of m.observations) {
         poi.getWorldPosition(scratch);
-        const geom = new THREE.BufferGeometry();
-        geom.setAttribute('position', new THREE.Float32BufferAttribute([
-          x, y, z,
-          scratch.x, scratch.y, scratch.z,
-        ], 3));
-        const line = new THREE.Line(geom, lineMaterial);
-        line.renderOrder = OVERLAY_RENDER_ORDER;
-        line.frustumCulled = false;
-        lineGroup.add(line);
+        addLine(lineMaterial, x, y, z, scratch.x, scratch.y, scratch.z);
       }
     }
+    dots.update(lastCamLoc, lastCameraHeight, dotList);
     requestRender();
+  }
+
+  function addLine(
+    mat: THREE.LineBasicMaterial,
+    ax: number, ay: number, az: number,
+    bx: number, by: number, bz: number,
+  ): void {
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.Float32BufferAttribute([ax, ay, az, bx, by, bz], 3));
+    const line = new THREE.Line(geom, mat);
+    line.renderOrder = OVERLAY_RENDER_ORDER;
+    line.frustumCulled = false;
+    lineGroup.add(line);
   }
 
   return {
@@ -144,10 +166,13 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
   };
 }
 
-// Pick the closest control-point marker to an NDC point within `hitRadius`.
-// CPs without an estimate (est_lat/est_lng = null) are excluded by the caller
-// (getStationObservedControlPoints already filters them out). Returns null
-// when nothing is in range or when the marker is behind the camera.
+const _proj = new THREE.Vector3();
+const _projTop = new THREE.Vector3();
+
+// Pick the closest control-point — either a dot at (lat,lng,alt) or a vertical
+// column at (lat,lng) with unknown altitude — to an NDC point within
+// `hitRadius`. CPs with NULL est_lat/est_lng are excluded. Returns null when
+// nothing is in range.
 export function findHitColumn(
   ndc: { x: number; y: number },
   hitRadius: number,
@@ -156,10 +181,34 @@ export function findHitColumn(
   cameraHeight: number,
   controlPoints: readonly ControlPointView[],
 ): { controlPointId: string; latlng: LatLng } | null {
-  const dots = controlPoints
-    .filter((cp): cp is ControlPointView & { estLat: number; estLng: number } =>
-      cp.estLat !== null && cp.estLng !== null)
-    .map(cp => ({ id: cp.id, anchor: { lat: cp.estLat, lng: cp.estLng }, altitude: cp.estAlt }));
-  const hit = findHitDot(ndc, hitRadius, camera, cameraLocation, cameraHeight, dots);
-  return hit ? { controlPointId: hit.id, latlng: hit.anchor } : null;
+  let bestDist = hitRadius;
+  let best: { controlPointId: string; latlng: LatLng } | null = null;
+  for (const cp of controlPoints) {
+    if (cp.estLat === null || cp.estLng === null) continue;
+    const { x, z } = latLngToCameraRelativeMeters({ lat: cp.estLat, lng: cp.estLng }, cameraLocation);
+    let dist: number;
+    if (cp.estAlt !== null) {
+      const y = cp.estAlt - cameraHeight;
+      _proj.set(x, y, z).project(camera);
+      if (_proj.z > 1) continue;
+      dist = norm2(_proj.x - ndc.x, _proj.y - ndc.y);
+    } else {
+      // Skip when either endpoint is behind the camera: project() flips the
+      // sign across the near plane, so the line through the two projected
+      // points no longer represents the visible column.
+      _proj.set(x, -COLUMN_HIT_HALF_HEIGHT, z).project(camera);
+      _projTop.set(x, COLUMN_HIT_HALF_HEIGHT, z).project(camera);
+      if (_proj.z > 1 || _projTop.z > 1) continue;
+      const dx = _projTop.x - _proj.x;
+      const dy = _projTop.y - _proj.y;
+      const len = norm2(dx, dy);
+      if (len === 0) continue;
+      dist = Math.abs(dx * (ndc.y - _proj.y) - dy * (ndc.x - _proj.x)) / len;
+    }
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = { controlPointId: cp.id, latlng: { lat: cp.estLat, lng: cp.estLng } };
+    }
+  }
+  return best;
 }

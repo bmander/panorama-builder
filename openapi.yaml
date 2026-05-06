@@ -644,7 +644,7 @@ components:
         notes: { type: string, description: free-form prose describing the control point in detail }
         est_lat: { type: number, format: double, nullable: true, minimum: -90, maximum: 90 }
         est_lng: { type: number, format: double, nullable: true, minimum: -180, maximum: 180 }
-        est_alt: { type: number, format: double, description: meters above sea level (defaults to 0 when unknown) }
+        est_alt: { type: number, format: double, nullable: true, description: meters above sea level; null when the elevation isn't known }
         started_at: { type: string, format: date-time, nullable: true, description: when the landmark began existing }
         ended_at: { type: string, format: date-time, nullable: true, description: when the landmark ceased to exist }
         lock_est_lat: { type: boolean }
@@ -817,7 +817,7 @@ components:
         notes: { type: string }
         est_lat: { type: number, format: double, nullable: true, minimum: -90, maximum: 90 }
         est_lng: { type: number, format: double, nullable: true, minimum: -180, maximum: 180 }
-        est_alt: { type: number, format: double }
+        est_alt: { type: number, format: double, nullable: true }
         started_at: { type: string, format: date-time, nullable: true }
         ended_at: { type: string, format: date-time, nullable: true }
         lock_est_lat: { type: boolean }

@@ -247,17 +247,14 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     location.assign(stationHref(created.id));
   }
 
-  async function onCreateCPAtLocation(latlng: LatLng, description: string, estAlt: number | null): Promise<void> {
+  async function onCreateCPAtLocation(latlng: LatLng, description: string): Promise<void> {
     let cp: ApiControlPoint;
     try {
       cp = await api.createControlPoint({
         description,
         est_lat: latlng.lat,
         est_lng: latlng.lng,
-        // est_alt is NOT NULL in the DB; default to 0 when the DEM lookup
-        // failed so the column always has a value (the user can refine via the
-        // CP page).
-        est_alt: estAlt ?? 0,
+        est_alt: null,
       });
     } catch (err) {
       console.error('add control point failed:', err);
@@ -291,8 +288,8 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
       // which the index route never opens — so this is just a safety stub.
       return [];
     },
-    onCreateMapAndObserve: async (latlng, description, estAlt) => {
-      await onCreateCPAtLocation(latlng, description, estAlt);
+    onCreateMapAndObserve: async (latlng, description) => {
+      await onCreateCPAtLocation(latlng, description);
       refreshIndexControlPoints();
     },
   });

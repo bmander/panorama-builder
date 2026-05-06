@@ -39,8 +39,8 @@ type ControlPoint struct {
 	// EndedAt when the landmark ceased to exist
 	EndedAt *time.Time `json:"ended_at"`
 
-	// EstAlt meters above sea level (defaults to 0 when unknown)
-	EstAlt float64  `json:"est_alt"`
+	// EstAlt meters above sea level; null when the elevation isn't known
+	EstAlt *float64 `json:"est_alt"`
 	EstLat *float64 `json:"est_lat"`
 	EstLng *float64 `json:"est_lng"`
 

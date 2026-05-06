@@ -4,13 +4,13 @@ export interface AddControlPointPayload {
   readonly description: string;
   readonly estLat: number | null;
   readonly estLng: number | null;
-  readonly estAlt: number;
+  readonly estAlt: number | null;
 }
 
 export interface ControlPointEst {
   readonly lat: number | null;
   readonly lng: number | null;
-  readonly alt: number;
+  readonly alt: number | null;
 }
 
 export interface ControlPointRegistry {
@@ -27,7 +27,7 @@ interface ControlPointEntry {
   description: string;
   estLat: number | null;
   estLng: number | null;
-  estAlt: number;
+  estAlt: number | null;
 }
 
 export interface CreateControlPointRegistryOptions {

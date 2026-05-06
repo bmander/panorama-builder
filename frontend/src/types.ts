@@ -71,7 +71,7 @@ export interface ControlPointView {
   readonly description: string;
   readonly estLat: number | null;
   readonly estLng: number | null;
-  readonly estAlt: number;
+  readonly estAlt: number | null;
   readonly selected: boolean;
 }
 

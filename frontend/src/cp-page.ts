@@ -169,10 +169,11 @@ function attachLatLngEditor(
 
 function attachAltEditor(cp: api.ApiControlPoint, host: HTMLElement): () => void {
   host.title = 'Click to edit';
-  const renderText = (v: number): void => {
-    host.textContent = `${v.toFixed(1)} m`;
+  const renderText = (v: number | null): void => {
+    host.classList.toggle('empty', v === null);
+    host.textContent = v === null ? 'click to set' : `${v.toFixed(1)} m`;
   };
-  return attachInlineEditor<number, HTMLInputElement>({
+  return attachInlineEditor<number | null, HTMLInputElement>({
     host,
     read: () => cp.est_alt,
     render: renderText,
@@ -181,10 +182,11 @@ function attachAltEditor(cp: api.ApiControlPoint, host: HTMLElement): () => void
       el.type = 'number';
       el.className = 'num-edit';
       el.step = 'any';
-      el.value = String(cur);
+      if (cur !== null) el.value = String(cur);
       return el;
     },
     parse: (el) => {
+      if (el.value.trim() === '') return null;
       const n = parseFloat(el.value);
       return Number.isFinite(n) ? n : cp.est_alt;
     },
@@ -192,7 +194,7 @@ function attachAltEditor(cp: api.ApiControlPoint, host: HTMLElement): () => void
       const updated = await api.updateControlPoint(cp.id, { est_alt: next });
       cp.est_alt = updated.est_alt;
     },
-    afterAttach: (el) => { el.select(); },
+    afterAttach: (el) => { host.classList.remove('empty'); el.select(); },
   });
 }
 

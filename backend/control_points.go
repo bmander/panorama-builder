@@ -157,7 +157,7 @@ func (s *Server) putControlPoint(w http.ResponseWriter, r *http.Request) {
 		}
 		b.Set("est_lng", v)
 	}
-	if v, present, err := patch.Float64("est_alt"); present {
+	if v, present, err := patch.NullableFloat64("est_alt"); present {
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return

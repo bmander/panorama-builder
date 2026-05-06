@@ -93,7 +93,8 @@ func (s *Server) loadSingleCPProblem(ctx context.Context, cpID string) (solver.P
 		return solver.Problem{}, false, err
 	}
 	// Seed est_lat/lng if NULL with the mean of the contributing stations.
-	// est_alt is NOT NULL post-migration-0009; default-zero is fine as an alt seed.
+	// NULL est_alt is already seeded to 0 in scanSolverControlPoint, so the
+	// solver always has a 3D guess to start from.
 	if cp.EstLat == 0 && cp.EstLng == 0 {
 		if lat, lng, ok := meanStationLatLng(stations); ok {
 			cp.EstLat = lat
@@ -228,12 +229,14 @@ const cpLoadCols = `id, est_lat, est_lng, est_alt, lock_est_lat, lock_est_lng, l
 
 // scanSolverControlPoint reads a CP row. NULL est_lat / est_lng make the row
 // unsuitable for being either a participant in joint mode (no initial guess)
-// or solved directly; callers filter accordingly. est_alt is NOT NULL since
-// migration 0009 (defaults to 0).
+// or solved directly; callers filter accordingly. NULL est_alt is seeded to 0
+// here so the solver always has a 3D guess; if the user hasn't locked
+// est_alt, the solver will refine it from observations and writeback persists
+// the new value.
 func scanSolverControlPoint(row pgx.Row) (solver.ControlPoint, error) {
 	var cp solver.ControlPoint
-	var lat, lng *float64
-	err := row.Scan(&cp.ID, &lat, &lng, &cp.EstAlt,
+	var lat, lng, alt *float64
+	err := row.Scan(&cp.ID, &lat, &lng, &alt,
 		&cp.Locks.EstLat, &cp.Locks.EstLng, &cp.Locks.EstAlt, &cp.UpdatedAt)
 	if err != nil {
 		return cp, err
@@ -243,6 +246,9 @@ func scanSolverControlPoint(row pgx.Row) (solver.ControlPoint, error) {
 	}
 	if lng != nil {
 		cp.EstLng = *lng
+	}
+	if alt != nil {
+		cp.EstAlt = *alt
 	}
 	return cp, nil
 }
@@ -261,8 +267,8 @@ func loadAllControlPoints(ctx context.Context, db *pgxpool.Pool) ([]solver.Contr
 	nullLoc := map[string]bool{}
 	for rows.Next() {
 		var cp solver.ControlPoint
-		var lat, lng *float64
-		if err := rows.Scan(&cp.ID, &lat, &lng, &cp.EstAlt,
+		var lat, lng, alt *float64
+		if err := rows.Scan(&cp.ID, &lat, &lng, &alt,
 			&cp.Locks.EstLat, &cp.Locks.EstLng, &cp.Locks.EstAlt, &cp.UpdatedAt); err != nil {
 			return nil, nil, err
 		}
@@ -271,6 +277,9 @@ func loadAllControlPoints(ctx context.Context, db *pgxpool.Pool) ([]solver.Contr
 		} else {
 			cp.EstLat = *lat
 			cp.EstLng = *lng
+		}
+		if alt != nil {
+			cp.EstAlt = *alt
 		}
 		out = append(out, cp)
 	}
