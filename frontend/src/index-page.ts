@@ -6,7 +6,7 @@
 import * as api from './api.js';
 import type { ApiControlPoint, ApiHydratedStation, ApiStation } from './api.js';
 import { createMapView } from './map.js';
-import type { MapView } from './map.js';
+import type { MapView, MapViewState } from './map.js';
 import { createSolveModal } from './solve-modal.js';
 import { createStartStationModal } from './start-station-modal.js';
 import { createObservationModal } from './observation-modal.js';
@@ -19,6 +19,51 @@ import type { ControlPointView, LatLng } from './types.js';
 export interface MountIndexPageOptions {
   focusIndexControlPointId: string | null;
   focusIndexStationId: string | null;
+}
+
+// URL query keys for view state. Short to keep shareable links compact.
+const URL_LAT = 'la';
+const URL_LNG = 'lo';
+const URL_ZOOM = 'z';
+const URL_YEAR = 'y';
+
+interface UrlState {
+  view: MapViewState | null;
+  year: number | null;
+}
+
+function parseUrlState(): UrlState {
+  const sp = new URLSearchParams(location.search);
+  const lat = parseFloat(sp.get(URL_LAT) ?? '');
+  const lng = parseFloat(sp.get(URL_LNG) ?? '');
+  const zoom = parseFloat(sp.get(URL_ZOOM) ?? '');
+  const year = parseInt(sp.get(URL_YEAR) ?? '', 10);
+  const haveView =
+    Number.isFinite(lat) && Math.abs(lat) <= 90 &&
+    Number.isFinite(lng) && Math.abs(lng) <= 180 &&
+    Number.isFinite(zoom) && zoom >= 0 && zoom <= 24;
+  return {
+    view: haveView ? { lat, lng, zoom } : null,
+    year: Number.isFinite(year) ? year : null,
+  };
+}
+
+function writeUrlState(patch: Partial<{ view: MapViewState; year: number }>): void {
+  const url = new URL(location.href);
+  const sp = url.searchParams;
+  const desired: [string, string][] = [];
+  if (patch.view) {
+    desired.push([URL_LAT, patch.view.lat.toFixed(5)]);
+    desired.push([URL_LNG, patch.view.lng.toFixed(5)]);
+    desired.push([URL_ZOOM, String(patch.view.zoom)]);
+  }
+  if (patch.year !== undefined) {
+    desired.push([URL_YEAR, String(patch.year)]);
+  }
+  const stale = desired.filter(([k, v]) => sp.get(k) !== v);
+  if (stale.length === 0) return;
+  for (const [k, v] of stale) sp.set(k, v);
+  history.replaceState(null, '', url);
 }
 
 export function mountIndexPage(opts: MountIndexPageOptions): void {
@@ -225,11 +270,18 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   // Show the map container and instantiate Leaflet (the container must be
   // visible before L.map measures it, or tiles won't load at the right size).
   getElement('map-wrap').classList.add('show');
+  const urlState = parseUrlState();
+  const initialDate = new Date();
+  if (urlState.year !== null) initialDate.setFullYear(urlState.year);
   const timeFilter = createTimeFilter({
-    initial: new Date(),
-    onChange: () => { refreshIndexControlPoints(); },
+    initial: initialDate,
+    onChange: (t) => {
+      writeUrlState({ year: t.getFullYear() });
+      refreshIndexControlPoints();
+    },
   });
   timeFilter.setVisible(true);
+  writeUrlState({ year: timeFilter.getTime().getFullYear() });
   const startStationModal = createStartStationModal({
     onSubmit: input => onStartStationHere(input),
   });
@@ -254,6 +306,8 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     onStationMarkerMove: (id, latlng) => { void moveStationTo(id, latlng); },
     onControlPointMove: (id, latlng) => { void moveControlPointTo(id, latlng); },
     onPhotoDroppedOnMap: (latlng, files) => { startStationModal.open(latlng, files); },
+    initialView: urlState.view ?? undefined,
+    onViewChange: (v) => { writeUrlState({ view: v }); },
   });
   const solveModal = createSolveModal({
     onComplete: (result, dryRun) => {

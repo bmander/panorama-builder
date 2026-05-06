@@ -350,6 +350,35 @@ function attachLockToggle(cp: api.ApiControlPoint, elId: string, field: LockFiel
   });
 }
 
+function attachLocationLockToggle(cp: api.ApiControlPoint, elId: string): void {
+  const el = getElement<HTMLInputElement>(elId);
+  // Browser semantics: a click on an indeterminate checkbox commits to checked.
+  const refresh = (): void => {
+    const both = cp.lock_est_lat && cp.lock_est_lng;
+    const neither = !cp.lock_est_lat && !cp.lock_est_lng;
+    el.checked = both;
+    el.indeterminate = !both && !neither;
+  };
+  refresh();
+  el.addEventListener('change', () => {
+    const next = el.checked;
+    el.disabled = true;
+    api.updateControlPoint(cp.id, { lock_est_lat: next, lock_est_lng: next }).then(
+      updated => {
+        cp.lock_est_lat = updated.lock_est_lat;
+        cp.lock_est_lng = updated.lock_est_lng;
+        refresh();
+        el.disabled = false;
+      },
+      (err: unknown) => {
+        console.error('lock update failed:', err);
+        refresh();
+        el.disabled = false;
+      },
+    );
+  });
+}
+
 async function main(): Promise<void> {
   const m = CP_ID_RE.exec(location.pathname);
   const nameEl = getElement('name');
@@ -392,8 +421,7 @@ async function main(): Promise<void> {
   const refreshAlt = attachAltEditor(cp, altEl);
   attachDateEditor(cp, getElement('started_at'), 'started_at');
   attachDateEditor(cp, getElement('ended_at'), 'ended_at');
-  attachLockToggle(cp, 'lock-est-lat', 'lock_est_lat');
-  attachLockToggle(cp, 'lock-est-lng', 'lock_est_lng');
+  attachLocationLockToggle(cp, 'lock-est-location');
   attachLockToggle(cp, 'lock-est-alt', 'lock_est_alt');
 
   let obsCount = 0;

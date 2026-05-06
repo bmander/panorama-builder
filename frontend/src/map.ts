@@ -27,6 +27,12 @@ export interface IndexControlPoint {
   description: string;
 }
 
+export interface MapViewState {
+  lat: number;
+  lng: number;
+  zoom: number;
+}
+
 export interface MapView {
   setStationMarkers(stations: readonly StationMarker[]): void;
   setStationPreview(preview: StationPreview | null): void;
@@ -40,6 +46,7 @@ export interface MapView {
   // Pan/zoom to the named station marker and open its popup. No-op if the
   // marker isn't in the current set.
   focusStationMarker(id: string): boolean;
+  getView(): MapViewState;
 }
 
 export interface CreateMapViewOptions {
@@ -56,7 +63,15 @@ export interface CreateMapViewOptions {
   // Image file(s) dropped on the map — typically opens the start-station
   // modal pre-populated with this location and these files.
   onPhotoDroppedOnMap?: (latlng: LatLng, files: readonly File[]) => void;
+  // Initial center + zoom; defaults to the Seattle waterfront at z=14.
+  initialView?: MapViewState | undefined;
+  // Fired whenever the user pans or zooms (Leaflet's moveend covers both).
+  // Also fires on the initial layout pass, so the URL can be kept in sync
+  // without an explicit first-paint write.
+  onViewChange?: (view: MapViewState) => void;
 }
+
+const DEFAULT_INDEX_VIEW: MapViewState = { lat: 47.607, lng: -122.335, zoom: 14 };
 
 const HIST_ATTR = 'Historical maps via <a href="https://bmander.com/seamap">bmander.com/seamap</a>';
 const histLayer = (year: number, opts: L.TileLayerOptions = {}): L.TileLayer => L.tileLayer(
@@ -165,6 +180,8 @@ export function createMapView({
   onStationMarkerMove,
   onControlPointMove,
   onPhotoDroppedOnMap,
+  initialView = DEFAULT_INDEX_VIEW,
+  onViewChange,
 }: CreateMapViewOptions): MapView {
   const layers: Record<string, L.Layer> = {
     'Sanborn 1884': histLayer(1884),
@@ -179,8 +196,17 @@ export function createMapView({
 
   const baseLayer = layers['Sanborn 1893']!;
   const map = L.map(container, { layers: [baseLayer] })
-    .setView([47.607, -122.335], 14);
+    .setView([initialView.lat, initialView.lng], initialView.zoom);
   L.control.layers(layers, {}, { collapsed: false, position: 'topleft' }).addTo(map);
+
+  const currentView = (): MapViewState => {
+    const c = map.getCenter();
+    return { lat: c.lat, lng: c.lng, zoom: map.getZoom() };
+  };
+  // moveend fires after both pan and zoom (zoom triggers a move). Leaflet
+  // emits one shortly after the initial setView too, so the very first paint
+  // also delivers a state snapshot.
+  map.on('moveend', () => { onViewChange?.(currentView()); });
 
   const CONE_STYLE: L.PolylineOptions = { color: '#ffd84a', weight: 1, fillColor: '#ffd84a', fillOpacity: 0.18 };
   const stationMarkers = new Map<string, { marker: L.Marker; view: StationMarker }>();
@@ -385,6 +411,7 @@ export function createMapView({
       openStationPopup(entry.view);
       return true;
     },
+    getView: currentView,
   };
 
   function openStationPopup(p: StationMarker): void {
