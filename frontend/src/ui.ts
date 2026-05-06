@@ -10,12 +10,26 @@ export interface Hud {
 
 const deg = (r: number): string => radToDeg(r).toFixed(1);
 
+const pad2 = (n: number): string => String(n).padStart(2, '0');
+
+// Format an angle (radians) in DMS, dropping leading zero components.
+function formatDms(rad: number): string {
+  const totalSec = radToDeg(rad) * 3600;
+  const d = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec - d * 3600) / 60);
+  const s = totalSec - d * 3600 - m * 60;
+  if (d > 0) return `${d}°${pad2(m)}'${s.toFixed(2)}"`;
+  if (m > 0) return `${m}'${s.toFixed(2)}"`;
+  return `${s.toFixed(2)}"`;
+}
+
 export function createHud(getSnapshot: () => AzAltSnapshot): Hud {
   const el = getElement('hud');
   function refresh(): void {
     const s = getSnapshot();
     let text = `azimuth ${deg(s.azimuth)}°  altitude ${deg(s.altitude)}°  fov ${s.fov.toFixed(1)}°  height ${s.cameraHeight.toFixed(1)} m`;
     if (s.selectedSizeRad != null) text += `  selected ${deg(s.selectedSizeRad)}°`;
+    if (s.selectedRadPerPixel != null) text += `  ${formatDms(s.selectedRadPerPixel)}/px`;
     el.textContent = text;
   }
   return {

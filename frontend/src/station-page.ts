@@ -20,7 +20,7 @@ import type { StationMarker } from './station-markers.js';
 import { findHitDot } from './dot-layer.js';
 import {
   cpHref, cpLabel, getElement, indexStationHref,
-  overlayData, poiData,
+  meshMat, overlayData, poiData,
 } from './types.js';
 import { vecToAzAlt } from './geo.js';
 import { degToRad } from './mathx.js';
@@ -103,10 +103,19 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   const hud = createHud(() => {
     const { azimuth, altitude } = viewer.getAzAlt();
     const sel = overlays.photos.getSelected();
+    let selectedRadPerPixel: number | null = null;
+    if (sel) {
+      const data = overlayData(sel);
+      const img = meshMat(data.body).map?.image as
+        { naturalWidth?: number; width?: number } | null | undefined;
+      const px = img?.naturalWidth ?? img?.width ?? 0;
+      if (px > 0) selectedRadPerPixel = data.sizeRad / px;
+    }
     return {
       azimuth, altitude,
       fov: viewer.camera.fov,
       selectedSizeRad: sel ? overlayData(sel).sizeRad : null,
+      selectedRadPerPixel,
       cameraHeight: terrain.getCameraHeight(),
     };
   });

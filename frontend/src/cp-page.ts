@@ -198,14 +198,37 @@ function attachAltEditor(cp: api.ApiControlPoint, host: HTMLElement): () => void
 
 type DateField = 'started_at' | 'ended_at';
 
+const LENIENT_DATE_RE =
+  /^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?)?)?$/;
+
+// Accepts a year alone, year-month, year-month-day, or any of those with an
+// HH:MM or HH:MM:SS time appended via space or 'T'. Missing components default
+// to the lowest valid value (Jan 1, 00:00:00). Returns an ISO string in local
+// time, or null when the input doesn't match or rolls over (e.g. Feb 30).
+function parseLenientDateTime(raw: string): string | null {
+  const m = LENIENT_DATE_RE.exec(raw.trim());
+  if (!m) return null;
+  const yr = parseInt(m[1]!, 10);
+  const mo = m[2] ? parseInt(m[2], 10) : 1;
+  const dy = m[3] ? parseInt(m[3], 10) : 1;
+  const hr = m[4] ? parseInt(m[4], 10) : 0;
+  const mn = m[5] ? parseInt(m[5], 10) : 0;
+  const sc = m[6] ? parseInt(m[6], 10) : 0;
+  if (mo < 1 || mo > 12 || dy < 1 || dy > 31) return null;
+  if (hr > 23 || mn > 59 || sc > 59) return null;
+  const d = new Date(yr, mo - 1, dy, hr, mn, sc);
+  if (d.getFullYear() !== yr || d.getMonth() !== mo - 1 || d.getDate() !== dy) return null;
+  return d.toISOString();
+}
+
 function attachDateEditor(cp: api.ApiControlPoint, host: HTMLElement, field: DateField): void {
-  host.title = 'Click to edit';
+  host.title = 'Click to edit (e.g. 1886, 1886-06, 1886-06-15, 1886-06-15 14:30)';
   const renderText = (v: string | null): void => {
     host.classList.toggle('empty', v === null);
     host.textContent = v === null ? 'click to set' : new Date(v).toLocaleString();
   };
-  // Compare in user-visible form: datetime-local truncates seconds, so a stored
-  // ISO with non-zero seconds would otherwise look "changed" on every blur.
+  // Compare in user-visible (minute-precision local) form so a stored ISO
+  // with non-zero seconds doesn't look "changed" on every blur.
   const visible = (v: string | null): string =>
     v === null ? '' : formatLocalDateTime(new Date(v));
 
@@ -215,20 +238,24 @@ function attachDateEditor(cp: api.ApiControlPoint, host: HTMLElement, field: Dat
     render: renderText,
     makeInput: (cur) => {
       const el = document.createElement('input');
-      el.type = 'datetime-local';
+      el.type = 'text';
       el.className = 'date-edit';
-      el.step = '60';
+      el.placeholder = 'YYYY[-MM[-DD[ HH:MM]]]';
       if (cur !== null) el.value = formatLocalDateTime(new Date(cur));
       return el;
     },
-    parse: (el) => el.value === '' ? null : new Date(el.value).toISOString(),
+    parse: (el) => {
+      if (el.value.trim() === '') return null;
+      // Bad input falls back to the read value so equal() short-circuits the save.
+      return parseLenientDateTime(el.value) ?? cp[field];
+    },
     equal: (a, b) => visible(a) === visible(b),
     save: async (next) => {
       const updated = await api.updateControlPoint(cp.id, { [field]: next });
       cp.started_at = updated.started_at;
       cp.ended_at = updated.ended_at;
     },
-    afterAttach: () => { host.classList.remove('empty'); },
+    afterAttach: (el) => { host.classList.remove('empty'); el.select(); },
   });
 }
 

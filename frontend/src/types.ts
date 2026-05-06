@@ -37,6 +37,9 @@ export interface AzAltSnapshot {
   readonly altitude: number;
   readonly fov: number;
   readonly selectedSizeRad: number | null;
+  // Angular subtense per source-image pixel (rad). Null when no photo is
+  // selected or its texture's pixel width isn't yet known.
+  readonly selectedRadPerPixel: number | null;
   readonly cameraHeight: number;
 }
 
