@@ -24,6 +24,7 @@ export interface CreateSettingsPanelOptions {
   sunMarker: SunMarker;
   getCameraLocation: () => LatLng | null;
   onShowAllCPsChange: (value: boolean) => void;
+  onShowNullCpRaysChange: (value: boolean) => void;
 }
 
 const HAZE_SLIDER_EXPONENT = 3;
@@ -33,7 +34,7 @@ function hazeSliderToDensity(v: number): number {
 
 export function createSettingsPanel({
   viewer, terrain, sunMarker,
-  getCameraLocation, onShowAllCPsChange,
+  getCameraLocation, onShowAllCPsChange, onShowNullCpRaysChange,
 }: CreateSettingsPanelOptions): SettingsPanel {
   const terrainModeEl = getElement<HTMLSelectElement>('terrain-mode');
   const sunDateTimeEl = getElement<HTMLInputElement>('sun-datetime');
@@ -43,6 +44,7 @@ export function createSettingsPanel({
   const curvatureToggleEl = getElement<HTMLInputElement>('curvature-toggle');
   const refractionToggleEl = getElement<HTMLInputElement>('refraction-toggle');
   const showAllCPsEl = getElement<HTMLInputElement>('show-all-cps');
+  const showNullCpRaysEl = getElement<HTMLInputElement>('show-null-cp-rays');
 
   sunDateTimeEl.value = formatLocalDateTime(new Date());
 
@@ -89,6 +91,10 @@ export function createSettingsPanel({
 
   showAllCPsEl.addEventListener('change', () => {
     onShowAllCPsChange(showAllCPsEl.checked);
+  });
+
+  showNullCpRaysEl.addEventListener('change', () => {
+    onShowNullCpRaysChange(showNullCpRaysEl.checked);
   });
 
   return {

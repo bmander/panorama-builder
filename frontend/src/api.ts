@@ -26,6 +26,7 @@ export type StationUpdate = Schemas['StationUpdate'];
 export type PhotoUpdate = Schemas['PhotoUpdate'];
 export type ImageMeasurementUpdate = Schemas['ImageMeasurementUpdate'];
 export type ApiControlPointObservations = Schemas['ControlPointObservations'];
+export type ApiControlPointImageObservation = Schemas['ControlPointImageObservation'];
 export type SolveConfig = Schemas['SolveConfig'];
 export type SolveResult = Schemas['SolveResult'];
 export type EntityChange = Schemas['EntityChange'];

@@ -1,9 +1,10 @@
 // Modal opened from the photo-body right-click context menu (image mode) or
 // from the index-map right-click context menu (map mode). Image mode picks
 // an existing CP to anchor a new image measurement to or creates a fresh CP
-// + image measurement. Map mode is always "create CP at this lat/lng"; the
-// CP's elevation starts as null ("unknown") and is set later via the cp-page
-// editor or by running the solver against image observations.
+// + image measurement. Map mode picks a null-location CP to assign this
+// lat/lng to (so previously-floating cross-station CPs get pinned to the
+// map) or creates a new CP at this lat/lng; either way the CP's elevation
+// starts null and is filled in later by the cp-page editor or the solver.
 
 import * as THREE from 'three';
 import { cpLabel, fmtCpLatLng, getElement } from './types.js';
@@ -19,7 +20,8 @@ export interface CreateObservationModalOptions {
   // Image-mode callbacks — only the station route opens with `open(...)`.
   onPickExisting?: (overlay: THREE.Group, u: number, v: number, controlPointId: string) => void;
   onCreateAndObserve?: (overlay: THREE.Group, u: number, v: number, description: string) => Promise<void>;
-  // Map-mode callback — only the index route opens with `openForMap(...)`.
+  // Map-mode callbacks — only the index route opens with `openForMap(...)`.
+  onPickExistingForMap?: (latlng: LatLng, controlPointId: string) => Promise<void>;
   onCreateMapAndObserve?: (latlng: LatLng, description: string) => Promise<void>;
 }
 
@@ -28,7 +30,8 @@ type Pending =
   | { kind: 'map'; latlng: LatLng };
 
 export function createObservationModal({
-  getControlPoints, onPickExisting, onCreateAndObserve, onCreateMapAndObserve,
+  getControlPoints, onPickExisting, onCreateAndObserve,
+  onPickExistingForMap, onCreateMapAndObserve,
 }: CreateObservationModalOptions): ObservationModal {
   const modalEl = getElement('observe-modal');
   const titleEl = getElement('observe-title');
@@ -47,22 +50,35 @@ export function createObservationModal({
     listEl.replaceChildren();
   }
 
-  function filteredCps(): readonly ControlPointView[] {
+  // Map-mode candidates are restricted to null-location CPs because the
+  // user is assigning a location. Image mode lists every CP — picking an
+  // already-located landmark to anchor a new observation is a normal flow.
+  function candidateCps(): readonly ControlPointView[] {
     const cps = getControlPoints();
+    if (pending?.kind === 'map') {
+      return cps.filter(cp => cp.estLat === null || cp.estLng === null);
+    }
+    return cps;
+  }
+
+  function filteredCps(): readonly ControlPointView[] {
+    const candidates = candidateCps();
     const q = descEl.value.trim().toLowerCase();
-    if (!q) return cps;
-    return cps.filter(cp => cp.description.toLowerCase().includes(q));
+    if (!q) return candidates;
+    return candidates.filter(cp => cp.description.toLowerCase().includes(q));
   }
 
   function renderList(): void {
     listEl.replaceChildren();
-    if (pending?.kind !== 'image') return;
+    if (!pending) return;
     const matches = filteredCps();
     if (matches.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'empty';
-      empty.textContent = getControlPoints().length === 0
-        ? 'No control points yet — create one above.'
+      empty.textContent = candidateCps().length === 0
+        ? (pending.kind === 'map'
+            ? 'No null-location control points — type a name above to create one.'
+            : 'No control points yet — create one above.')
         : 'No matches.';
       listEl.appendChild(empty);
       return;
@@ -79,24 +95,33 @@ export function createObservationModal({
       meta.textContent = fmtCpLatLng(cp.estLat, cp.estLng);
       row.append(desc, meta);
       row.addEventListener('click', () => {
-        if (pending?.kind !== 'image' || !onPickExisting) return;
+        if (!pending) return;
         const ctx = pending;
-        close();
-        onPickExisting(ctx.overlay, ctx.u, ctx.v, cp.id);
+        if (ctx.kind === 'image') {
+          if (!onPickExisting) return;
+          close();
+          onPickExisting(ctx.overlay, ctx.u, ctx.v, cp.id);
+        } else {
+          if (!onPickExistingForMap) return;
+          const promise = onPickExistingForMap(ctx.latlng, cp.id);
+          row.classList.add('loading');
+          promise.then(() => { close(); })
+            .catch((err: unknown) => {
+              console.error('pick existing CP for map failed:', err);
+              row.classList.remove('loading');
+            });
+        }
       });
       listEl.appendChild(row);
     }
   }
 
+  // Show Create only when there's a query and no existing match — same in
+  // both modes, so a typed name that exactly matches an existing CP nudges
+  // the user toward picking the row instead of creating a duplicate.
   function updateCreateButton(): void {
-    const q = descEl.value.trim();
     if (!pending) return;
-    if (pending.kind === 'map') {
-      createBtn.hidden = false;
-      createBtn.disabled = !q;
-      return;
-    }
-    // Image mode: show Create only when there's a query and no existing match.
+    const q = descEl.value.trim();
     const showCreate = q.length > 0 && filteredCps().length === 0;
     createBtn.hidden = !showCreate;
     createBtn.disabled = !showCreate;
@@ -117,11 +142,10 @@ export function createObservationModal({
   function openForMap(latlng: LatLng): void {
     pending = { kind: 'map', latlng };
     titleEl.textContent = 'Add control point';
-    descEl.placeholder = 'name';
+    descEl.placeholder = 'pick null-location CP or name a new one…';
     descEl.value = '';
-    // Map mode only creates a CP — no existing-CP picker, no observation row.
-    listEl.hidden = true;
-    listEl.replaceChildren();
+    listEl.hidden = false;
+    renderList();
     updateCreateButton();
     modalEl.hidden = false;
     descEl.focus();
@@ -134,7 +158,7 @@ export function createObservationModal({
   cancelBtn.addEventListener('click', close);
 
   descEl.addEventListener('input', () => {
-    if (pending?.kind === 'image') renderList();
+    renderList();
     updateCreateButton();
   });
   descEl.addEventListener('keydown', e => {

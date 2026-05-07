@@ -473,6 +473,10 @@ export interface components {
              * @description when the landmark ceased to exist
              */
             ended_at: string | null;
+            /** @description when true */
+            started_after: boolean;
+            /** @description when true */
+            ended_before: boolean;
             lock_est_lat: boolean;
             lock_est_lng: boolean;
             lock_est_alt: boolean;
@@ -662,6 +666,8 @@ export interface components {
             started_at?: string | null;
             /** Format: date-time */
             ended_at?: string | null;
+            started_after?: boolean;
+            ended_before?: boolean;
             lock_est_lat?: boolean;
             lock_est_lng?: boolean;
             lock_est_alt?: boolean;

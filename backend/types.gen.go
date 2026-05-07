@@ -39,6 +39,9 @@ type ControlPoint struct {
 	// EndedAt when the landmark ceased to exist
 	EndedAt *time.Time `json:"ended_at"`
 
+	// EndedBefore when true
+	EndedBefore bool `json:"ended_before"`
+
 	// EstAlt meters above sea level; null when the elevation isn't known
 	EstAlt *float64 `json:"est_alt"`
 	EstLat *float64 `json:"est_lat"`
@@ -52,6 +55,9 @@ type ControlPoint struct {
 
 	// Notes free-form prose describing the control point in detail
 	Notes string `json:"notes"`
+
+	// StartedAfter when true
+	StartedAfter bool `json:"started_after"`
 
 	// StartedAt when the landmark began existing
 	StartedAt *time.Time `json:"started_at"`
@@ -92,16 +98,18 @@ type ControlPointObservations struct {
 // fields take their column defaults; on PUT, omitted fields are
 // preserved.
 type ControlPointPatch struct {
-	Description *string    `json:"description,omitempty"`
-	EndedAt     *time.Time `json:"ended_at,omitempty"`
-	EstAlt      *float64   `json:"est_alt,omitempty"`
-	EstLat      *float64   `json:"est_lat,omitempty"`
-	EstLng      *float64   `json:"est_lng,omitempty"`
-	LockEstAlt  *bool      `json:"lock_est_alt,omitempty"`
-	LockEstLat  *bool      `json:"lock_est_lat,omitempty"`
-	LockEstLng  *bool      `json:"lock_est_lng,omitempty"`
-	Notes       *string    `json:"notes,omitempty"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
+	Description  *string    `json:"description,omitempty"`
+	EndedAt      *time.Time `json:"ended_at,omitempty"`
+	EndedBefore  *bool      `json:"ended_before,omitempty"`
+	EstAlt       *float64   `json:"est_alt,omitempty"`
+	EstLat       *float64   `json:"est_lat,omitempty"`
+	EstLng       *float64   `json:"est_lng,omitempty"`
+	LockEstAlt   *bool      `json:"lock_est_alt,omitempty"`
+	LockEstLat   *bool      `json:"lock_est_lat,omitempty"`
+	LockEstLng   *bool      `json:"lock_est_lng,omitempty"`
+	Notes        *string    `json:"notes,omitempty"`
+	StartedAfter *bool      `json:"started_after,omitempty"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
 }
 
 // CreateStationRequest POST body. lat/lng/captured_at are required; other fields default if omitted.

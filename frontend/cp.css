@@ -15,6 +15,9 @@ h1 input.name-edit { font: inherit; color: inherit; background: #000;
 dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px;
      font-size: 12px; margin: 0; }
 dt { color: #aaa; margin: 0; }
+dt.lifespan-label { cursor: pointer; user-select: none; padding: 1px 4px;
+                    margin-left: -4px; border-radius: 3px; }
+dt.lifespan-label:hover { background: rgba(255,255,255,0.06); color: #ddd; }
 dd { margin: 0; display: flex; align-items: baseline; gap: 12px;
      flex-wrap: wrap; }
 dd.empty, .value.empty { color: #888; font-style: italic; }

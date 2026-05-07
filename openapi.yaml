@@ -641,6 +641,8 @@ components:
         - est_alt
         - started_at
         - ended_at
+        - started_after
+        - ended_before
         - lock_est_lat
         - lock_est_lng
         - lock_est_alt
@@ -655,6 +657,8 @@ components:
         est_alt: { type: number, format: double, nullable: true, description: meters above sea level; null when the elevation isn't known }
         started_at: { type: string, format: date-time, nullable: true, description: when the landmark began existing }
         ended_at: { type: string, format: date-time, nullable: true, description: when the landmark ceased to exist }
+        started_after: { type: boolean, description: when true, started_at is a strict lower bound (the landmark started after this date); meaningful only when started_at is set }
+        ended_before: { type: boolean, description: when true, ended_at is a strict upper bound (the landmark ended before this date); meaningful only when ended_at is set }
         lock_est_lat: { type: boolean }
         lock_est_lng: { type: boolean }
         lock_est_alt: { type: boolean }
@@ -836,6 +840,8 @@ components:
         est_alt: { type: number, format: double, nullable: true }
         started_at: { type: string, format: date-time, nullable: true }
         ended_at: { type: string, format: date-time, nullable: true }
+        started_after: { type: boolean }
+        ended_before: { type: boolean }
         lock_est_lat: { type: boolean }
         lock_est_lng: { type: boolean }
         lock_est_alt: { type: boolean }

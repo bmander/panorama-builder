@@ -27,6 +27,7 @@ export interface StationFieldsHandle {
   // The fly-between animation needs the station's display name + altitude
   // before transitioning. Other cache fields (lat/lng/locks) are internal.
   getNameAndAlt: () => { name: string | null; alt: number } | null;
+  getCapturedAt: () => string | null;
 }
 
 export interface CreateStationFieldsOptions {
@@ -159,5 +160,6 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
   return {
     hydrate,
     getNameAndAlt: () => cache && { name: cache.name, alt: cache.alt },
+    getCapturedAt: () => cache?.capturedAt ?? null,
   };
 }

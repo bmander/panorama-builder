@@ -17,13 +17,16 @@ interface InlineEditorOptions<V, El extends EditorEl> {
   enter?: 'enter' | 'modifier-enter';
   equal?: (a: V, b: V) => boolean;
   afterAttach?: (input: El) => void;
+  // Lets sibling UI (e.g. the lifespan label) re-render off the same cp
+  // object after a save commits.
+  onValueChanged?: (() => void) | undefined;
 }
 
 // Returns a refresh() that re-runs render against the current read() — used
 // when an external action (like a solve) mutates the underlying value.
 function attachInlineEditor<V, El extends EditorEl>(opts: InlineEditorOptions<V, El>): () => void {
   const { host, read, render, makeInput, parse, save,
-    enter = 'enter', equal = Object.is, afterAttach } = opts;
+    enter = 'enter', equal = Object.is, afterAttach, onValueChanged } = opts;
   host.classList.add('editable');
   const refresh = (): void => { render(read()); };
   refresh();
@@ -49,7 +52,7 @@ function attachInlineEditor<V, El extends EditorEl>(opts: InlineEditorOptions<V,
       }
       input.disabled = true;
       save(next).then(
-        () => { render(read()); },
+        () => { onValueChanged?.(); render(read()); },
         (err: unknown) => {
           console.error('inline-edit save failed:', err);
           render(read());
@@ -199,6 +202,7 @@ function attachAltEditor(cp: api.ApiControlPoint, host: HTMLElement): () => void
 }
 
 type DateField = 'started_at' | 'ended_at';
+type BoundFlagField = 'started_after' | 'ended_before';
 
 const LENIENT_DATE_RE =
   /^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?)?)?$/;
@@ -223,7 +227,10 @@ function parseLenientDateTime(raw: string): string | null {
   return d.toISOString();
 }
 
-function attachDateEditor(cp: api.ApiControlPoint, host: HTMLElement, field: DateField): void {
+function attachDateEditor(
+  cp: api.ApiControlPoint, host: HTMLElement, field: DateField,
+  onValueChanged?: () => void,
+): void {
   host.title = 'Click to edit (e.g. 1886, 1886-06, 1886-06-15, 1886-06-15 14:30)';
   const renderText = (v: string | null): void => {
     host.classList.toggle('empty', v === null);
@@ -258,7 +265,39 @@ function attachDateEditor(cp: api.ApiControlPoint, host: HTMLElement, field: Dat
       cp.ended_at = updated.ended_at;
     },
     afterAttach: (el) => { host.classList.remove('empty'); el.select(); },
+    onValueChanged,
   });
+}
+
+function attachLifespanLabel(
+  cp: api.ApiControlPoint, labelEl: HTMLElement,
+  dateField: DateField, flagField: BoundFlagField,
+): () => void {
+  const verb = dateField === 'started_at' ? 'started' : 'ended';
+  const boundWord = flagField === 'started_after' ? 'after' : 'before';
+  labelEl.title = `Click to toggle between "${verb} at" and "${verb} ${boundWord}"`;
+  const refresh = (): void => {
+    if (cp[dateField] === null) {
+      labelEl.textContent = verb;
+      return;
+    }
+    labelEl.textContent = cp[flagField] ? `${verb} ${boundWord}` : `${verb} at`;
+  };
+  refresh();
+  let inflight = false;
+  labelEl.addEventListener('click', () => {
+    if (inflight) return;
+    inflight = true;
+    const next = !cp[flagField];
+    api.updateControlPoint(cp.id, { [flagField]: next }).then(
+      updated => { cp[flagField] = updated[flagField]; },
+      (err: unknown) => { console.error('lifespan flag toggle failed:', err); },
+    ).finally(() => {
+      inflight = false;
+      refresh();
+    });
+  });
+  return refresh;
 }
 
 function attachSolveButton(
@@ -448,8 +487,12 @@ async function main(): Promise<void> {
   const refreshLat = attachLatLngEditor(cp, latEl, 'est_lat', refreshMapLink);
   const refreshLng = attachLatLngEditor(cp, lngEl, 'est_lng', refreshMapLink);
   const refreshAlt = attachAltEditor(cp, altEl);
-  attachDateEditor(cp, getElement('started_at'), 'started_at');
-  attachDateEditor(cp, getElement('ended_at'), 'ended_at');
+  const refreshStartedLabel = attachLifespanLabel(
+    cp, getElement('started_at_label'), 'started_at', 'started_after');
+  const refreshEndedLabel = attachLifespanLabel(
+    cp, getElement('ended_at_label'), 'ended_at', 'ended_before');
+  attachDateEditor(cp, getElement('started_at'), 'started_at', refreshStartedLabel);
+  attachDateEditor(cp, getElement('ended_at'), 'ended_at', refreshEndedLabel);
   attachLocationLockToggle(cp, 'lock-est-location');
   attachLockToggle(cp, 'lock-est-alt', 'lock_est_alt');
 

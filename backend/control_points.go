@@ -10,12 +10,14 @@ import (
 )
 
 const controlPointCols = `id, description, notes, est_lat, est_lng, est_alt, started_at, ended_at,
+	started_after, ended_before,
 	lock_est_lat, lock_est_lng, lock_est_alt, created_at, updated_at`
 
 func scanControlPoint(row pgx.Row) (ControlPoint, error) {
 	var cp ControlPoint
 	err := row.Scan(&cp.ID, &cp.Description, &cp.Notes, &cp.EstLat, &cp.EstLng, &cp.EstAlt,
 		&cp.StartedAt, &cp.EndedAt,
+		&cp.StartedAfter, &cp.EndedBefore,
 		&cp.LockEstLat, &cp.LockEstLng, &cp.LockEstAlt,
 		&cp.CreatedAt, &cp.UpdatedAt)
 	return cp, err
@@ -40,12 +42,15 @@ func (s *Server) postControlPoint(w http.ResponseWriter, r *http.Request) {
 	}
 	id := newID()
 	q := `INSERT INTO control_points (id, description, notes, est_lat, est_lng, est_alt, started_at, ended_at,
+		started_after, ended_before,
 		lock_est_lat, lock_est_lng, lock_est_alt)
 	      VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
-		COALESCE($9, false), COALESCE($10, false), COALESCE($11, false))
+		COALESCE($9, false), COALESCE($10, false),
+		COALESCE($11, false), COALESCE($12, false), COALESCE($13, false))
 	      RETURNING ` + controlPointCols
 	cp, err := scanControlPoint(s.db.QueryRow(r.Context(), q, id, desc, notes,
 		req.EstLat, req.EstLng, req.EstAlt, req.StartedAt, req.EndedAt,
+		req.StartedAfter, req.EndedBefore,
 		req.LockEstLat, req.LockEstLng, req.LockEstAlt))
 	if err != nil {
 		writeErrorFromDB(w, err)
@@ -173,7 +178,7 @@ func (s *Server) putControlPoint(w http.ResponseWriter, r *http.Request) {
 			b.Set(key, v)
 		}
 	}
-	for _, key := range []string{"lock_est_lat", "lock_est_lng", "lock_est_alt"} {
+	for _, key := range []string{"started_after", "ended_before", "lock_est_lat", "lock_est_lng", "lock_est_alt"} {
 		if v, present, err := patch.Bool(key); present {
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())

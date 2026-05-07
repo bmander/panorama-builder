@@ -4,6 +4,7 @@ import { degToRad, dot3, norm2, norm3, radToDeg } from './mathx.js';
 import { cpHref } from './types.js';
 import type { Cone, LatLng } from './types.js';
 import { TILE_PX, fetchTileElevations, tileYToLat } from './dem.js';
+import { NULL_CP_RAY_CSS, NULL_CP_RAY_LENGTH_M } from './null-cp-rays.js';
 
 export interface StationMarker {
   id: string;
@@ -19,6 +20,10 @@ export interface StationPreview {
   // CP IDs observed by this station — turns the matching index dots green
   // while the preview is active.
   observedCpIds: ReadonlySet<string>;
+  // Compass bearings (CW from N, degrees) of rays emitted by this station's
+  // observations of null-location CPs — drawn as 5km purple polylines so the
+  // user can see how this station's rays would converge with others.
+  nullCpRayBearingsDeg: readonly number[];
 }
 
 export interface IndexControlPoint {
@@ -209,10 +214,12 @@ export function createMapView({
   map.on('moveend', () => { onViewChange?.(currentView()); });
 
   const CONE_STYLE: L.PolylineOptions = { color: '#ffd84a', weight: 1, fillColor: '#ffd84a', fillOpacity: 0.18 };
+  const NULL_RAY_STYLE: L.PolylineOptions = { color: NULL_CP_RAY_CSS, weight: 2, opacity: 0.85 };
   const stationMarkers = new Map<string, { marker: L.Marker; view: StationMarker }>();
   // Preview overlay drawn when a station marker is clicked.
   let stationPreview: StationPreview | null = null;
   const previewConeLayers: L.Polygon[] = [];
+  const previewRayLayers: L.Polyline[] = [];
   let indexControlPoints: readonly IndexControlPoint[] = [];
   const indexCpDots = new Map<string, L.Marker>();
   const CP_ICON = L.divIcon({
@@ -240,6 +247,7 @@ export function createMapView({
 
   function redrawStationPreview(): void {
     while (previewConeLayers.length) map.removeLayer(previewConeLayers.pop()!);
+    while (previewRayLayers.length) map.removeLayer(previewRayLayers.pop()!);
     if (!stationPreview) return;
     const distM = screenDiagonalMeters();
     const origin = stationPreview.origin;
@@ -252,6 +260,14 @@ export function createMapView({
         [ptR.lat, ptR.lng],
       ], CONE_STYLE).addTo(map);
       previewConeLayers.push(poly);
+    }
+    for (const bearingDeg of stationPreview.nullCpRayBearingsDeg) {
+      const end = destination(origin, bearingDeg, NULL_CP_RAY_LENGTH_M);
+      const line = L.polyline([
+        [origin.lat, origin.lng],
+        [end.lat, end.lng],
+      ], NULL_RAY_STYLE).addTo(map);
+      previewRayLayers.push(line);
     }
   }
 

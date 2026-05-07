@@ -15,6 +15,8 @@ import { createTerrainView } from './terrain.js';
 import { createSunMarker } from './sun-marker.js';
 import { createControlPointColumns, findHitColumn } from './map-poi-columns.js';
 import type { ControlPointColumn } from './map-poi-columns.js';
+import { createNullCpRays } from './null-cp-rays.js';
+import type { NullCpRay } from './null-cp-rays.js';
 import { createStationMarkers } from './station-markers.js';
 import type { StationMarker } from './station-markers.js';
 import { findHitDot } from './dot-layer.js';
@@ -90,6 +92,10 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     scene: viewer.scene,
     requestRender: () => { viewer.requestRender(); },
   });
+  const nullCpRays = createNullCpRays({
+    scene: viewer.scene,
+    requestRender: () => { viewer.requestRender(); },
+  });
   let otherStations: StationMarker[] = [];
   const baker = createBaker({
     renderer: viewer.renderer,
@@ -98,6 +104,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       overlays.setVisualsVisible(visible);
       cpColumns.setVisible(visible);
       stationDots.setVisible(visible);
+      nullCpRays.setVisible(visible);
     },
   });
   const hud = createHud(() => {
@@ -131,6 +138,13 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   // just those observed by this station. Toggled from the settings panel.
   let showAllCPs = false;
 
+  // When true, draw 5km purple rays from every observation of any null-
+  // location CP — see null-cp-rays.ts. Observations are fetched per-CP via
+  // /control-points/{id}/observations and cached for the page session.
+  let showNullCpRays = false;
+  const nullCpObsCache = new Map<string, api.ApiControlPointImageObservation[]>();
+  const nullCpObsInflight = new Set<string>();
+
   // CPs visible in the photo viewer. Same set drives column rendering and
   // the matcher hit-test, so what you see is what you can click.
   function getVisibleControlPoints(): ControlPointView[] {
@@ -143,6 +157,61 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       if (im.controlPointId) observed.add(im.controlPointId);
     }
     return all.filter(cp => observed.has(cp.id));
+  }
+
+  function refreshNullCpRays(): void {
+    const cameraHeight = terrain.getCameraHeight();
+    if (!showNullCpRays) {
+      nullCpRays.update(stationLocation, cameraHeight, []);
+      return;
+    }
+    const cps = overlays.controlPoints.list();
+    const nullIds = new Set<string>();
+    for (const cp of cps) {
+      if (cp.estLat === null || cp.estLng === null) nullIds.add(cp.id);
+    }
+    // Drop cache entries whose CP gained a location since last refresh.
+    for (const id of [...nullCpObsCache.keys()]) {
+      if (!nullIds.has(id)) nullCpObsCache.delete(id);
+    }
+    // Fetch any null CPs we haven't seen yet.
+    for (const id of nullIds) {
+      if (nullCpObsCache.has(id) || nullCpObsInflight.has(id)) continue;
+      nullCpObsInflight.add(id);
+      api.listControlPointObservations(id).then(result => {
+        nullCpObsCache.set(id, result.image_measurements);
+        refreshNullCpRays();
+      }).catch((err: unknown) => {
+        console.error('listControlPointObservations failed:', err);
+      }).finally(() => {
+        nullCpObsInflight.delete(id);
+      });
+    }
+    // Look up other stations' altitudes by id. The current station isn't in
+    // otherStations (it's filtered out before render); a self-observation
+    // takes cameraHeight so its ray starts at the viewer's eye.
+    const altById = new Map<string, number>();
+    for (const st of otherStations) altById.set(st.id, st.altitude);
+    const rays: NullCpRay[] = [];
+    for (const id of nullIds) {
+      const obs = nullCpObsCache.get(id);
+      if (!obs) continue;
+      for (const o of obs) {
+        rays.push({
+          fromLat: o.station_lat,
+          fromLng: o.station_lng,
+          fromAlt: altById.get(o.station_id) ?? cameraHeight,
+          photoAz: o.photo_az,
+          photoTilt: o.photo_tilt,
+          photoRoll: o.photo_roll,
+          sizeRad: o.size_rad,
+          aspect: o.aspect,
+          u: o.u,
+          v: o.v,
+        });
+      }
+    }
+    nullCpRays.update(stationLocation, cameraHeight, rays);
   }
 
   function refreshControlPointColumns(): void {
@@ -163,6 +232,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     }));
     cpColumns.update(stationLocation, terrain.getCameraHeight(), markers);
     stationDots.update(stationLocation, terrain.getCameraHeight(), otherStations);
+    refreshNullCpRays();
   }
 
   function applyCameraLocation(loc: LatLng): void {
@@ -212,6 +282,10 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     onShowAllCPsChange: value => {
       showAllCPs = value;
       refreshControlPointColumns();
+    },
+    onShowNullCpRaysChange: value => {
+      showNullCpRays = value;
+      refreshNullCpRays();
     },
   });
 
@@ -317,6 +391,32 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         label: 'Add observation here',
         onClick: () => { void handlers.onMatchImageMeasurement(body.overlay, body.u, body.v, cpId); },
       });
+    }
+    const stationDate = stationFields.getCapturedAt();
+    if (stationDate !== null) {
+      const dateLabel = new Date(stationDate).toLocaleDateString();
+      items.push(
+        {
+          label: `Started after ${dateLabel}`,
+          onClick: () => {
+            api.updateControlPoint(cpId, { started_at: stationDate, started_after: true })
+              .catch((err: unknown) => {
+                console.error('set started_after failed:', err);
+                alert('Update failed — see console.');
+              });
+          },
+        },
+        {
+          label: `Ended before ${dateLabel}`,
+          onClick: () => {
+            api.updateControlPoint(cpId, { ended_at: stationDate, ended_before: true })
+              .catch((err: unknown) => {
+                console.error('set ended_before failed:', err);
+                alert('Update failed — see console.');
+              });
+          },
+        },
+      );
     }
     contextMenu.open(sx, sy, items, header);
   }
