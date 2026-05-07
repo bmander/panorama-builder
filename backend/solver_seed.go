@@ -23,14 +23,17 @@ func meanStationLatLng(stations []solver.Station) (lat, lng float64, ok bool) {
 // distinct contributing stations are dropped — a single ray can't constrain
 // a 3D position. Observations referencing dropped CPs are removed too,
 // otherwise the solver's CP-index lookup would silently point at the wrong
-// row.
+// row. The third return value lists CP IDs that were seeded (i.e. survived
+// the ≥2-station filter); the joint orchestrator runs a per-CP refinement
+// for each so the joint phase starts from triangulated guesses rather than
+// the centroid.
 func seedNullLocationCPs(
 	cps []solver.ControlPoint, nullLoc map[string]bool,
 	obs []solver.Observation,
 	photos []solver.Photo, stations []solver.Station,
-) ([]solver.ControlPoint, []solver.Observation) {
+) ([]solver.ControlPoint, []solver.Observation, []string) {
 	if len(nullLoc) == 0 {
-		return cps, obs
+		return cps, obs, nil
 	}
 
 	photoStation := make(map[string]string, len(photos))
@@ -82,6 +85,7 @@ func seedNullLocationCPs(
 	}
 
 	keptCPs := make([]solver.ControlPoint, 0, len(cps))
+	seeded := make([]string, 0, len(seedLat))
 	for _, cp := range cps {
 		if drop[cp.ID] {
 			continue
@@ -89,6 +93,7 @@ func seedNullLocationCPs(
 		if nullLoc[cp.ID] {
 			cp.EstLat = seedLat[cp.ID]
 			cp.EstLng = seedLng[cp.ID]
+			seeded = append(seeded, cp.ID)
 		}
 		keptCPs = append(keptCPs, cp)
 	}
@@ -101,5 +106,5 @@ func seedNullLocationCPs(
 		keptObs = append(keptObs, o)
 	}
 
-	return keptCPs, keptObs
+	return keptCPs, keptObs, seeded
 }

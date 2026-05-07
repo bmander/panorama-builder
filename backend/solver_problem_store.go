@@ -12,41 +12,44 @@ import (
 )
 
 // loadProblem reads everything in scope. Returns exists=false when the focus
-// entity (single-station / single-CP) is missing.
-func (s *Server) loadProblem(ctx context.Context, cfg solver.Config) (solver.Problem, bool, error) {
+// entity (single-station / single-CP) is missing. seededCPIDs is non-empty
+// only for ModeJoint and lists the CPs that came from the DB with NULL
+// est_lat/est_lng and survived the ≥2-station seeding filter; the joint
+// orchestrator runs a per-CP refinement on each before the joint solve.
+func (s *Server) loadProblem(ctx context.Context, cfg solver.Config) (solver.Problem, []string, bool, error) {
 	switch cfg.Mode {
 	case solver.ModeJoint:
-		p, err := s.loadJointProblem(ctx)
-		return p, true, err
+		p, seeded, err := s.loadJointProblem(ctx)
+		return p, seeded, true, err
 	case solver.ModeSingleStation:
 		p, ok, err := s.loadSingleStationProblem(ctx, cfg.FocusID)
-		return p, ok, err
+		return p, nil, ok, err
 	case solver.ModeSingleControlPoint:
 		p, ok, err := s.loadSingleCPProblem(ctx, cfg.FocusID)
-		return p, ok, err
+		return p, nil, ok, err
 	}
-	return solver.Problem{}, false, fmt.Errorf("unknown solve mode")
+	return solver.Problem{}, nil, false, fmt.Errorf("unknown solve mode")
 }
 
-func (s *Server) loadJointProblem(ctx context.Context) (solver.Problem, error) {
+func (s *Server) loadJointProblem(ctx context.Context) (solver.Problem, []string, error) {
 	stations, err := loadAllStations(ctx, s.db)
 	if err != nil {
-		return solver.Problem{}, err
+		return solver.Problem{}, nil, err
 	}
 	photos, err := loadAllPhotos(ctx, s.db)
 	if err != nil {
-		return solver.Problem{}, err
+		return solver.Problem{}, nil, err
 	}
 	cps, nullLoc, err := loadAllControlPoints(ctx, s.db)
 	if err != nil {
-		return solver.Problem{}, err
+		return solver.Problem{}, nil, err
 	}
 	obs, err := loadAllObservations(ctx, s.db)
 	if err != nil {
-		return solver.Problem{}, err
+		return solver.Problem{}, nil, err
 	}
-	cps, obs = seedNullLocationCPs(cps, nullLoc, obs, photos, stations)
-	return solver.Problem{Stations: stations, Photos: photos, ControlPoints: cps, Observations: obs}, nil
+	cps, obs, seeded := seedNullLocationCPs(cps, nullLoc, obs, photos, stations)
+	return solver.Problem{Stations: stations, Photos: photos, ControlPoints: cps, Observations: obs}, seeded, nil
 }
 
 func (s *Server) loadSingleStationProblem(ctx context.Context, stationID string) (solver.Problem, bool, error) {
@@ -160,13 +163,15 @@ func loadStationsByIDs(ctx context.Context, db *pgxpool.Pool, ids []string) ([]s
 }
 
 const photoLoadCols = `id, station_id, aspect, photo_az, photo_tilt, photo_roll, size_rad,
-	lock_photo_az, lock_photo_tilt, lock_photo_roll, lock_size_rad, updated_at`
+	lock_photo_az, lock_photo_tilt, lock_photo_roll, lock_size_rad,
+	dist_k1, dist_k2, lock_dist_k1, lock_dist_k2, updated_at`
 
 func scanSolverPhoto(row pgx.Row) (solver.Photo, error) {
 	var p solver.Photo
 	err := row.Scan(&p.ID, &p.StationID, &p.Pose.Aspect, &p.Pose.PhotoAz, &p.Pose.PhotoTilt,
 		&p.Pose.PhotoRoll, &p.Pose.SizeRad,
 		&p.Locks.PhotoAz, &p.Locks.PhotoTilt, &p.Locks.PhotoRoll, &p.Locks.SizeRad,
+		&p.Pose.K1, &p.Pose.K2, &p.Locks.K1, &p.Locks.K2,
 		&p.UpdatedAt)
 	return p, err
 }

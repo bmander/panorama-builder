@@ -73,7 +73,7 @@ func (s *Server) postSolveJointStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	prob, err := s.loadJointProblem(ctx)
+	prob, seededCPIDs, err := s.loadJointProblem(ctx)
 	if err != nil {
 		log.Printf("solver load: %v", err)
 		sendError("load failed")
@@ -109,7 +109,7 @@ func (s *Server) postSolveJointStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	res, err := solver.Solve(prob, cfg)
+	res, err := solver.SolveJointWithSeed(prob, seededCPIDs, cfg)
 	if err != nil {
 		sendError(err.Error())
 		return

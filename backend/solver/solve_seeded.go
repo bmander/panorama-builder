@@ -1,0 +1,149 @@
+package solver
+
+import "math"
+
+type cpSnap struct{ lat, lng, alt float64 }
+
+// SolveJointWithSeed runs a single-CP pre-solve for each id in seededCPIDs
+// (locking everything else via ModeSingleControlPoint), mutates problem to
+// the refined positions, then runs ModeJoint Solve. The returned Changes
+// always carries the pre-pre-solve value as Before for each seeded CP, so
+// pre-solve work is persisted even when the joint phase makes no further
+// adjustment. OnIteration / ShouldStop on cfg are forwarded only to the
+// joint phase.
+func SolveJointWithSeed(problem Problem, seededCPIDs []string, cfg Config) (Result, error) {
+	if len(seededCPIDs) == 0 {
+		cfg.Mode = ModeJoint
+		return Solve(problem, cfg)
+	}
+
+	cpIdx := make(map[string]int, len(problem.ControlPoints))
+	for i, cp := range problem.ControlPoints {
+		cpIdx[cp.ID] = i
+	}
+
+	snap := make(map[string]cpSnap, len(seededCPIDs))
+	for _, id := range seededCPIDs {
+		if i, ok := cpIdx[id]; ok {
+			cp := problem.ControlPoints[i]
+			snap[id] = cpSnap{lat: cp.EstLat, lng: cp.EstLng, alt: cp.EstAlt}
+		}
+	}
+
+	preCfg := cfg
+	preCfg.Mode = ModeSingleControlPoint
+	preCfg.OnIteration = nil
+	preCfg.ShouldStop = nil
+	for id := range snap {
+		preCfg.FocusID = id
+		r, err := Solve(problem, preCfg)
+		// Insufficient observations or per-CP divergence: skip and let the
+		// joint phase try with the centroid seed still in place.
+		if err != nil || r.Diverged {
+			continue
+		}
+		applyCPAfter(&problem.ControlPoints[cpIdx[id]], r.Changes)
+	}
+
+	cfg.Mode = ModeJoint
+	res, err := Solve(problem, cfg)
+	if err != nil {
+		return res, err
+	}
+
+	// Solve currently flags Diverged whenever bestState == initialState,
+	// including the legitimate case where the input was already at the
+	// optimum. After pre-solve, joint may have nothing left to do — undo
+	// the spurious flag so the caller's writeback persists pre-solve work.
+	if res.Diverged && res.Iterations == 0 &&
+		res.InitialResidualRMS == res.FinalResidualRMS &&
+		hasSeededMovement(problem, cpIdx, snap) {
+		res.Diverged = false
+		res.Converged = true
+	}
+
+	res.Changes = mergeSeededCPChanges(res.Changes, problem, cpIdx, snap)
+	return res, nil
+}
+
+func hasSeededMovement(problem Problem, cpIdx map[string]int, snap map[string]cpSnap) bool {
+	for id, s := range snap {
+		cp := problem.ControlPoints[cpIdx[id]]
+		if cp.EstLat != s.lat || cp.EstLng != s.lng || cp.EstAlt != s.alt {
+			return true
+		}
+	}
+	return false
+}
+
+func applyCPAfter(cp *ControlPoint, changes []EntityChange) {
+	for _, c := range changes {
+		if c.Kind != "control_point" || c.ID != cp.ID {
+			continue
+		}
+		if v, ok := c.After["est_lat"]; ok {
+			cp.EstLat = v
+		}
+		if v, ok := c.After["est_lng"]; ok {
+			cp.EstLng = v
+		}
+		if v, ok := c.After["est_alt"]; ok {
+			cp.EstAlt = v
+		}
+	}
+}
+
+// mergeSeededCPChanges replaces joint-phase control_point entries for any
+// seeded CP with a synthetic entry whose Before is the pre-pre-solve value.
+// Per-axis emission matches composeChanges' fdEpsPosM threshold (in ENU
+// meters, with cos(lat) for longitude) so a seeded CP whose pre-solve and
+// joint phase both produced no movement leaves the DB row untouched.
+func mergeSeededCPChanges(jointChanges []EntityChange, problem Problem, cpIdx map[string]int, snap map[string]cpSnap) []EntityChange {
+	out := make([]EntityChange, 0, len(jointChanges)+len(snap))
+	for _, c := range jointChanges {
+		if c.Kind == "control_point" {
+			if _, seeded := snap[c.ID]; seeded {
+				continue
+			}
+		}
+		out = append(out, c)
+	}
+	cosLat0 := math.Cos(gaugeLatFor(problem) * math.Pi / 180)
+	const epsLatDeg = fdEpsPosM / MPerDegLat
+	for id, s := range snap {
+		cp := problem.ControlPoints[cpIdx[id]]
+		before := map[string]float64{}
+		after := map[string]float64{}
+		if math.Abs(cp.EstLat-s.lat) > epsLatDeg {
+			before["est_lat"] = s.lat
+			after["est_lat"] = cp.EstLat
+		}
+		if math.Abs(cp.EstLng-s.lng) > epsLatDeg/cosLat0 {
+			before["est_lng"] = s.lng
+			after["est_lng"] = cp.EstLng
+		}
+		if math.Abs(cp.EstAlt-s.alt) > fdEpsPosM {
+			before["est_alt"] = s.alt
+			after["est_alt"] = cp.EstAlt
+		}
+		if len(after) == 0 {
+			continue
+		}
+		out = append(out, EntityChange{Kind: "control_point", ID: id, Before: before, After: after})
+	}
+	return out
+}
+
+// gaugeLatFor mirrors buildContext's gauge selection just enough to scale
+// the longitude threshold consistently with composeChanges.
+func gaugeLatFor(problem Problem) float64 {
+	for _, s := range problem.Stations {
+		if s.Locks.Lat && s.Locks.Lng {
+			return s.Lat
+		}
+	}
+	if len(problem.Stations) > 0 {
+		return problem.Stations[0].Lat
+	}
+	return 0
+}

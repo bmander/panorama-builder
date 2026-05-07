@@ -81,7 +81,7 @@ func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg solver.Con
 	defer s.solveMu.Unlock()
 
 	ctx := r.Context()
-	prob, exists, err := s.loadProblem(ctx, cfg)
+	prob, seededCPIDs, exists, err := s.loadProblem(ctx, cfg)
 	if err != nil {
 		log.Printf("solver load: %v", err)
 		writeError(w, http.StatusInternalServerError, "load failed")
@@ -92,7 +92,12 @@ func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg solver.Con
 		return
 	}
 
-	res, err := solver.Solve(prob, cfg)
+	var res solver.Result
+	if cfg.Mode == solver.ModeJoint {
+		res, err = solver.SolveJointWithSeed(prob, seededCPIDs, cfg)
+	} else {
+		res, err = solver.Solve(prob, cfg)
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, solver.ErrUnderconstrainedGauge):
