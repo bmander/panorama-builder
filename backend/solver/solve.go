@@ -27,6 +27,11 @@ var (
 const (
 	fdEpsAngleRad = 1e-5
 	fdEpsPosM     = 1e-3
+	// fdEpsK perturbs Brown-Conrady k1/k2 for the numerical Jacobian. k is
+	// dimensionless and typical recovered magnitudes sit in [1e-3, 5e-1];
+	// 1e-4 yields a residual change of the same order as the angle FD
+	// (∂residual/∂k ~ r² with r² ~ 0.01–0.25 across the image).
+	fdEpsK        = 1e-4
 	minCosEl      = 1e-6 // floor on cos(el_target) so the polar singularity stays bounded
 	rankDefRel    = 1e-9 // column-norm threshold (relative to max) to flag a free param as unobservable
 	lmRel         = 1e-6 // relative LM damping: λ = lmRel * max(diag(JᵀJ))
@@ -40,6 +45,11 @@ type slot struct {
 	id    string
 	name  string  // e.g. "lat", "photo_az", "est_alt", "east", "north", "up"
 	scale float64 // FD ε; also used as the "did this change" threshold for diff emission
+	// regWeight (Tikhonov λ) adds a residual row of λ·value pulling the slot
+	// toward zero. Zero ⇒ no regularization. Currently only used for k1/k2
+	// where the parameter is weakly observable on narrow-FOV photos and the
+	// solver otherwise wanders into degenerate large-magnitude minima.
+	regWeight float64
 }
 
 // solveContext bundles everything the inner GN loop needs. Working values
@@ -62,6 +72,7 @@ type solveContext struct {
 
 	obs        []Observation // observations in scope for this mode
 	slots      []slot        // free parameters (post mode + lock filtering)
+	regCount   int           // count of slots with regWeight > 0; cached for residual sizing
 	autoLocked []string      // slot.kind:slot.id:slot.name for columns frozen mid-solve
 }
 
@@ -277,6 +288,11 @@ func buildContext(problem Problem, cfg Config) (*solveContext, error) {
 	if err := c.scopeAndSlots(); err != nil {
 		return nil, err
 	}
+	for _, s := range c.slots {
+		if s.regWeight > 0 {
+			c.regCount++
+		}
+	}
 
 	return c, nil
 }
@@ -390,6 +406,12 @@ func (c *solveContext) appendPhotoSlots(photos []Photo) {
 		if !p.Locks.SizeRad {
 			c.slots = append(c.slots, slot{kind: "photo", id: p.ID, name: "size_rad", scale: fdEpsAngleRad})
 		}
+		if !p.Locks.K1 {
+			c.slots = append(c.slots, slot{kind: "photo", id: p.ID, name: "dist_k1", scale: fdEpsK, regWeight: c.cfg.KRegLambda})
+		}
+		if !p.Locks.K2 {
+			c.slots = append(c.slots, slot{kind: "photo", id: p.ID, name: "dist_k2", scale: fdEpsK, regWeight: c.cfg.KRegLambda})
+		}
 	}
 }
 
@@ -418,6 +440,10 @@ func (c *solveContext) writeSlot(k int, v float64) {
 			p.PhotoRoll = v
 		case "size_rad":
 			p.SizeRad = clampSize(v)
+		case "dist_k1":
+			p.K1 = v
+		case "dist_k2":
+			p.K2 = v
 		}
 		c.photoPose[idx] = p
 	case "control_point":
@@ -458,6 +484,10 @@ func (c *solveContext) readSlot(k int) float64 {
 			return p.PhotoRoll
 		case "size_rad":
 			return p.SizeRad
+		case "dist_k1":
+			return p.K1
+		case "dist_k2":
+			return p.K2
 		}
 	case "control_point":
 		idx := c.cpIdx[s.id]
@@ -487,13 +517,19 @@ func (c *solveContext) applyState(state []float64) {
 	}
 }
 
-// computeResiduals returns the 2D angular residual vector. For each
-// observation: az-row = WrapPi(az_pred − az_target) · cos(el_target);
+// computeResiduals returns the residual vector: 2 angular rows per
+// observation followed by one Tikhonov row per regularized slot.
+//
+// Observation rows: az-row = WrapPi(az_pred − az_target) · cos(el_target),
 // el-row = el_pred − el_target. The cos(el) weight on the az row makes the
 // pair a true tangent-plane angular distance — 1° at the horizon weighs
 // more arc-length than 1° near the zenith.
+//
+// Regularization rows: λ·p, pulling the slot value toward zero. Adds λ²
+// to that slot's diagonal of JᵀJ and −λ²·p to its gradient — equivalent
+// to a Gaussian N(0, 1/λ) prior on the parameter.
 func (c *solveContext) computeResiduals() []float64 {
-	r := make([]float64, 2*len(c.obs))
+	r := make([]float64, 2*len(c.obs)+c.regCount)
 	for k, o := range c.obs {
 		pIdx := c.photoIdx[o.PhotoID]
 		pose := c.photoPose[pIdx]
@@ -519,13 +555,21 @@ func (c *solveContext) computeResiduals() []float64 {
 		r[2*k] = WrapPi(azPred-azTgt) * cosEl
 		r[2*k+1] = elPred - elTgt
 	}
+	regIdx := 2 * len(c.obs)
+	for k, s := range c.slots {
+		if s.regWeight == 0 {
+			continue
+		}
+		r[regIdx] = s.regWeight * c.readSlot(k)
+		regIdx++
+	}
 	return r
 }
 
 // jacobian builds the m×n finite-difference Jacobian. Central difference
 // per slot, perturbing by slot.scale.
 func (c *solveContext) jacobian(_ []float64) *mat.Dense {
-	m := 2 * len(c.obs)
+	m := 2*len(c.obs) + c.regCount
 	n := len(c.slots)
 	J := mat.NewDense(m, n, nil)
 	for k := range c.slots {

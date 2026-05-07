@@ -36,10 +36,14 @@ export function createPhotoParamsModal(
   const rollEl = getElement<HTMLInputElement>('photo-params-roll');
   const fovEl = getElement<HTMLInputElement>('photo-params-fov');
   const aspectEl = getElement<HTMLInputElement>('photo-params-aspect');
+  const k1El = getElement<HTMLInputElement>('photo-params-k1');
+  const k2El = getElement<HTMLInputElement>('photo-params-k2');
   const azLockEl = getElement<HTMLInputElement>('photo-params-az-lock');
   const tiltLockEl = getElement<HTMLInputElement>('photo-params-tilt-lock');
   const rollLockEl = getElement<HTMLInputElement>('photo-params-roll-lock');
   const fovLockEl = getElement<HTMLInputElement>('photo-params-fov-lock');
+  const k1LockEl = getElement<HTMLInputElement>('photo-params-k1-lock');
+  const k2LockEl = getElement<HTMLInputElement>('photo-params-k2-lock');
 
   let pending: THREE.Group | null = null;
   let beforeSnapshot: PhotoSnapshot | null = null;
@@ -60,10 +64,14 @@ export function createPhotoParamsModal(
     rollEl.value = deg(pose.photoRoll).toFixed(2);
     fovEl.value = deg(pose.sizeRad).toFixed(2);
     aspectEl.value = pose.aspect.toFixed(4);
+    k1El.value = pose.k1.toFixed(4);
+    k2El.value = pose.k2.toFixed(4);
     azLockEl.checked = locks.lockPhotoAz;
     tiltLockEl.checked = locks.lockPhotoTilt;
     rollLockEl.checked = locks.lockPhotoRoll;
     fovLockEl.checked = locks.lockSizeRad;
+    k1LockEl.checked = locks.lockDistK1;
+    k2LockEl.checked = locks.lockDistK2;
     saveBtn.disabled = false;
     modalEl.hidden = false;
     azEl.focus();
@@ -89,10 +97,14 @@ export function createPhotoParamsModal(
     const tiltDeg = readNumber(tiltEl);
     const rollDeg = readNumber(rollEl);
     const fovDeg = readNumber(fovEl);
+    const k1 = readNumber(k1El);
+    const k2 = readNumber(k2El);
     if (azDeg === null) { azEl.focus(); return; }
     if (tiltDeg === null) { tiltEl.focus(); return; }
     if (rollDeg === null) { rollEl.focus(); return; }
     if (fovDeg === null) { fovEl.focus(); return; }
+    if (k1 === null) { k1El.focus(); return; }
+    if (k2 === null) { k2El.focus(); return; }
 
     const data = overlayData(overlay);
     const photoId = data.id;
@@ -103,11 +115,15 @@ export function createPhotoParamsModal(
       sizeRad: clamp(rad(fovDeg), SIZE_MIN, SIZE_MAX),
       aspect: data.aspect,
       opacity: overlays.photos.getOpacity(overlay),
+      distK1: k1,
+      distK2: k2,
       locks: {
         lockPhotoAz: azLockEl.checked,
         lockPhotoTilt: tiltLockEl.checked,
         lockPhotoRoll: rollLockEl.checked,
         lockSizeRad: fovLockEl.checked,
+        lockDistK1: k1LockEl.checked,
+        lockDistK2: k2LockEl.checked,
       },
     };
 

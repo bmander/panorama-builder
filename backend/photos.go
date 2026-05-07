@@ -15,6 +15,7 @@ import (
 const photoCols = `id, station_id, blob_path, mime_type, size_bytes, aspect,
 		photo_az, photo_tilt, photo_roll, size_rad, opacity,
 		lock_photo_az, lock_photo_tilt, lock_photo_roll, lock_size_rad,
+		dist_k1, dist_k2, lock_dist_k1, lock_dist_k2,
 		created_at, updated_at`
 
 func scanPhoto(row pgx.Row) (Photo, error) {
@@ -22,6 +23,7 @@ func scanPhoto(row pgx.Row) (Photo, error) {
 	err := row.Scan(&p.ID, &p.StationID, &p.BlobPath, &p.MimeType, &p.SizeBytes,
 		&p.Aspect, &p.PhotoAz, &p.PhotoTilt, &p.PhotoRoll, &p.SizeRad, &p.Opacity,
 		&p.LockPhotoAz, &p.LockPhotoTilt, &p.LockPhotoRoll, &p.LockSizeRad,
+		&p.DistK1, &p.DistK2, &p.LockDistK1, &p.LockDistK2,
 		&p.CreatedAt, &p.UpdatedAt)
 	return p, err
 }
@@ -49,13 +51,16 @@ func (s *Server) postPhoto(w http.ResponseWriter, r *http.Request) {
 		sizeRad = 0.5236 // ~30 degrees
 	}
 	q := `INSERT INTO photos (id, station_id, aspect, photo_az, photo_tilt, photo_roll, size_rad, opacity,
-			lock_photo_az, lock_photo_tilt, lock_photo_roll, lock_size_rad)
+			lock_photo_az, lock_photo_tilt, lock_photo_roll, lock_size_rad,
+			dist_k1, dist_k2, lock_dist_k1, lock_dist_k2)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
-			COALESCE($9, false), COALESCE($10, false), COALESCE($11, false), COALESCE($12, false))
+			COALESCE($9, false), COALESCE($10, false), COALESCE($11, false), COALESCE($12, false),
+			COALESCE($13, 0), COALESCE($14, 0), COALESCE($15, true), COALESCE($16, true))
 		RETURNING ` + photoCols
 	p, err := scanPhoto(s.db.QueryRow(r.Context(), q, id, stationID, req.Aspect,
 		req.PhotoAz, req.PhotoTilt, req.PhotoRoll, sizeRad, opacity,
-		req.LockPhotoAz, req.LockPhotoTilt, req.LockPhotoRoll, req.LockSizeRad))
+		req.LockPhotoAz, req.LockPhotoTilt, req.LockPhotoRoll, req.LockSizeRad,
+		req.DistK1, req.DistK2, req.LockDistK1, req.LockDistK2))
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -94,7 +99,7 @@ func (s *Server) putPhoto(w http.ResponseWriter, r *http.Request) {
 		}
 		b.Set("aspect", v)
 	}
-	for _, key := range []string{"photo_az", "photo_tilt", "photo_roll"} {
+	for _, key := range []string{"photo_az", "photo_tilt", "photo_roll", "dist_k1", "dist_k2"} {
 		if v, present, err := patch.Float64(key); present {
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
@@ -117,7 +122,10 @@ func (s *Server) putPhoto(w http.ResponseWriter, r *http.Request) {
 		}
 		b.Set("opacity", v)
 	}
-	for _, key := range []string{"lock_photo_az", "lock_photo_tilt", "lock_photo_roll", "lock_size_rad"} {
+	for _, key := range []string{
+		"lock_photo_az", "lock_photo_tilt", "lock_photo_roll", "lock_size_rad",
+		"lock_dist_k1", "lock_dist_k2",
+	} {
 		if v, present, err := patch.Bool(key); present {
 			if err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())

@@ -35,7 +35,6 @@ export function createObservationModal({
   const closeBtn = getElement<HTMLButtonElement>('observe-close');
   const cancelBtn = getElement<HTMLButtonElement>('observe-cancel');
   const createBtn = getElement<HTMLButtonElement>('observe-create');
-  const descLabelEl = getElement('observe-desc-label');
   const descEl = getElement<HTMLInputElement>('observe-new-desc');
   const listEl = getElement('observe-cp-list');
 
@@ -48,17 +47,27 @@ export function createObservationModal({
     listEl.replaceChildren();
   }
 
+  function filteredCps(): readonly ControlPointView[] {
+    const cps = getControlPoints();
+    const q = descEl.value.trim().toLowerCase();
+    if (!q) return cps;
+    return cps.filter(cp => cp.description.toLowerCase().includes(q));
+  }
+
   function renderList(): void {
     listEl.replaceChildren();
-    const cps = getControlPoints();
-    if (cps.length === 0) {
+    if (pending?.kind !== 'image') return;
+    const matches = filteredCps();
+    if (matches.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'empty';
-      empty.textContent = 'No control points yet — create one below.';
+      empty.textContent = getControlPoints().length === 0
+        ? 'No control points yet — create one above.'
+        : 'No matches.';
       listEl.appendChild(empty);
       return;
     }
-    for (const cp of cps) {
+    for (const cp of matches) {
       const row = document.createElement('div');
       row.className = 'cp-row';
       const desc = document.createElement('span');
@@ -79,14 +88,28 @@ export function createObservationModal({
     }
   }
 
+  function updateCreateButton(): void {
+    const q = descEl.value.trim();
+    if (!pending) return;
+    if (pending.kind === 'map') {
+      createBtn.hidden = false;
+      createBtn.disabled = !q;
+      return;
+    }
+    // Image mode: show Create only when there's a query and no existing match.
+    const showCreate = q.length > 0 && filteredCps().length === 0;
+    createBtn.hidden = !showCreate;
+    createBtn.disabled = !showCreate;
+  }
+
   function open(overlay: THREE.Group, u: number, v: number): void {
     pending = { kind: 'image', overlay, u, v };
     titleEl.textContent = 'Add observation';
-    descLabelEl.textContent = 'Or create a new control point';
+    descEl.placeholder = 'search or create…';
     descEl.value = '';
-    createBtn.disabled = false;
     listEl.hidden = false;
     renderList();
+    updateCreateButton();
     modalEl.hidden = false;
     descEl.focus();
   }
@@ -94,12 +117,12 @@ export function createObservationModal({
   function openForMap(latlng: LatLng): void {
     pending = { kind: 'map', latlng };
     titleEl.textContent = 'Add control point';
-    descLabelEl.textContent = 'Name';
+    descEl.placeholder = 'name';
     descEl.value = '';
-    createBtn.disabled = false;
     // Map mode only creates a CP — no existing-CP picker, no observation row.
     listEl.hidden = true;
     listEl.replaceChildren();
+    updateCreateButton();
     modalEl.hidden = false;
     descEl.focus();
   }
@@ -109,6 +132,17 @@ export function createObservationModal({
   });
   closeBtn.addEventListener('click', close);
   cancelBtn.addEventListener('click', close);
+
+  descEl.addEventListener('input', () => {
+    if (pending?.kind === 'image') renderList();
+    updateCreateButton();
+  });
+  descEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !createBtn.hidden && !createBtn.disabled) {
+      e.preventDefault();
+      createBtn.click();
+    }
+  });
 
   createBtn.addEventListener('click', () => {
     if (!pending) return;

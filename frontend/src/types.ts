@@ -29,6 +29,9 @@ export interface Pose {
   readonly aspect: number;
   readonly camLat: number;
   readonly camLng: number;
+  // Brown-Conrady radial distortion coefficients. 0 = pure pinhole.
+  readonly k1: number;
+  readonly k2: number;
 }
 
 // Snapshot for the HUD readout.
@@ -94,11 +97,16 @@ export interface OverlayUserData {
   // 0 means the photo's local +Y is in the world's vertical plane through the
   // overlay center.
   photoRoll: number;
-  // Solver locks. Mirror lock_photo_* / lock_size_rad on the API.
+  // Solver locks. Mirror lock_photo_* / lock_size_rad / lock_dist_k* on the API.
   lockPhotoAz: boolean;
   lockPhotoTilt: boolean;
   lockPhotoRoll: boolean;
   lockSizeRad: boolean;
+  // Brown-Conrady radial distortion coefficients (zero by default; locked).
+  distK1: number;
+  distK2: number;
+  lockDistK1: boolean;
+  lockDistK2: boolean;
   body: THREE.Mesh;
   outline?: THREE.LineSegments;
   // HUD-style action handles that appear at the photo's upper-right when
@@ -116,6 +124,8 @@ export interface PhotoLocks {
   readonly lockPhotoTilt: boolean;
   readonly lockPhotoRoll: boolean;
   readonly lockSizeRad: boolean;
+  readonly lockDistK1: boolean;
+  readonly lockDistK2: boolean;
 }
 
 export interface POIUserData {

@@ -579,6 +579,10 @@ components:
         - lock_photo_tilt
         - lock_photo_roll
         - lock_size_rad
+        - dist_k1
+        - dist_k2
+        - lock_dist_k1
+        - lock_dist_k2
         - created_at
         - updated_at
       properties:
@@ -597,6 +601,10 @@ components:
         lock_photo_tilt: { type: boolean }
         lock_photo_roll: { type: boolean }
         lock_size_rad: { type: boolean }
+        dist_k1: { type: number, format: double, description: Brown-Conrady radial distortion coefficient k1; 0 = no distortion }
+        dist_k2: { type: number, format: double, description: Brown-Conrady radial distortion coefficient k2; 0 = no distortion }
+        lock_dist_k1: { type: boolean, description: locked at zero by default; unlock to let the solver fit it }
+        lock_dist_k2: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -749,7 +757,7 @@ components:
       type: object
       description: |
         POST body for `POST /stations/{id}/photos`. Pose fields are
-        required; opacity / lock_* default if omitted.
+        required; opacity / lock_* / dist_k* default if omitted.
       required: [aspect, photo_az, photo_tilt, photo_roll, size_rad]
       properties:
         aspect: { type: number, format: double }
@@ -762,6 +770,10 @@ components:
         lock_photo_tilt: { type: boolean }
         lock_photo_roll: { type: boolean }
         lock_size_rad: { type: boolean }
+        dist_k1: { type: number, format: double, description: defaults to 0 when omitted }
+        dist_k2: { type: number, format: double }
+        lock_dist_k1: { type: boolean, description: defaults to true when omitted }
+        lock_dist_k2: { type: boolean }
 
     PhotoUpdate:
       type: object
@@ -779,6 +791,10 @@ components:
         lock_photo_tilt: { type: boolean }
         lock_photo_roll: { type: boolean }
         lock_size_rad: { type: boolean }
+        dist_k1: { type: number, format: double }
+        dist_k2: { type: number, format: double }
+        lock_dist_k1: { type: boolean }
+        lock_dist_k2: { type: boolean }
 
     ImageMeasurementPatch:
       type: object

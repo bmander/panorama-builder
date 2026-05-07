@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { ImageMeasurementBearing, Role } from './types.js';
 import { overlayData, poiData } from './types.js';
-import { DEFAULT_SIZE_RAD, azFromLocal, widthFromSizeRad } from './overlay-photos.js';
+import { DEFAULT_SIZE_RAD, OVERLAY_R, azFromLocal, widthFromSizeRad } from './overlay-photos.js';
 
 export const ROLE_POI = 'poi' satisfies Role;
 
@@ -13,6 +13,36 @@ const POI_WIDTH_FRACTION = 0.054;
 const POI_REFERENCE_WIDTH = widthFromSizeRad(DEFAULT_SIZE_RAD);
 
 const POI_GEOM = new THREE.PlaneGeometry(2, 2);
+
+// Inverse Brown-Conrady for POI placement: given the user's clicked
+// (observed/distorted) source pixel (u, v), find the position on the
+// ideal-angle quad where that pixel will end up after the fragment
+// shader's *forward* texture-sample warp. Solving f·(xt, yt) = (xtObs,
+// ytObs) by fixed-point iteration. Tan-space r² matches both the solver's
+// ProjectPOI and the photo's fragment shader — without that, a fitted k1
+// has inconsistent magnitude between solver and visual paths.
+function undistortUV(
+  u: number, v: number, k1: number, k2: number, w: number, h: number,
+): { u: number; v: number } {
+  if (k1 === 0 && k2 === 0) return { u, v };
+  const cxObs = u - 0.5;
+  const cyObs = v - 0.5;
+  const xtObs = cxObs * w / OVERLAY_R;
+  const ytObs = cyObs * h / OVERLAY_R;
+  let xt = xtObs;
+  let yt = ytObs;
+  for (let i = 0; i < 5; i++) {
+    const r2 = xt * xt + yt * yt;
+    const f = 1 + k1 * r2 + k2 * r2 * r2;
+    if (f === 0) break;
+    xt = xtObs / f;
+    yt = ytObs / f;
+  }
+  return {
+    u: xt * OVERLAY_R / w + 0.5,
+    v: yt * OVERLAY_R / h + 0.5,
+  };
+}
 
 function makePoiMaterial(): THREE.ShaderMaterial {
   const material = new THREE.ShaderMaterial({
@@ -125,8 +155,12 @@ export function createMeasurementStore(
   const currentPoiRadius = (): number =>
     POI_REFERENCE_WIDTH * POI_WIDTH_FRACTION * poiFovScale;
 
-  const placePoi = (poi: THREE.Mesh, u: number, v: number, w: number, h: number): void => {
-    poi.position.set((u - 0.5) * w, (v - 0.5) * h, 0);
+  const placePoi = (
+    poi: THREE.Mesh, u: number, v: number, w: number, h: number,
+    k1: number, k2: number,
+  ): void => {
+    const d = undistortUV(u, v, k1, k2, w, h);
+    poi.position.set((d.u - 0.5) * w, (d.v - 0.5) * h, 0);
     poi.scale.setScalar(currentPoiRadius());
   };
 
@@ -155,7 +189,7 @@ export function createMeasurementStore(
       const data = overlayData(o);
       const pois = data.pois ?? (data.pois = []);
       pois.push(measurement);
-      placePoi(measurement, u, v, data.body.scale.x, data.body.scale.y);
+      placePoi(measurement, u, v, data.body.scale.x, data.body.scale.y, data.distK1, data.distK2);
       store.setSelected(measurement);
       notify();
       return measurement;
@@ -165,7 +199,7 @@ export function createMeasurementStore(
       pData.uv.u = u;
       pData.uv.v = v;
       const data = overlayData(pData.parentOverlay);
-      placePoi(measurement, u, v, data.body.scale.x, data.body.scale.y);
+      placePoi(measurement, u, v, data.body.scale.x, data.body.scale.y, data.distK1, data.distK2);
       notify();
     },
     setControlPoint(measurement, controlPointId) {
@@ -260,7 +294,7 @@ export function createMeasurementStore(
       if (!data.pois) return;
       for (const poi of data.pois) {
         const { u, v } = poiData(poi).uv;
-        placePoi(poi, u, v, w, h);
+        placePoi(poi, u, v, w, h, data.distK1, data.distK2);
       }
     },
     disposePoisOn(o) {

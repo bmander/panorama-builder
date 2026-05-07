@@ -21,7 +21,7 @@ var updateTargets = map[string]struct {
 	cols  map[string]bool
 }{
 	"station":       {"stations", map[string]bool{"lat": true, "lng": true, "alt": true}},
-	"photo":         {"photos", map[string]bool{"photo_az": true, "photo_tilt": true, "photo_roll": true, "size_rad": true}},
+	"photo":         {"photos", map[string]bool{"photo_az": true, "photo_tilt": true, "photo_roll": true, "size_rad": true, "dist_k1": true, "dist_k2": true}},
 	"control_point": {"control_points", map[string]bool{"est_lat": true, "est_lng": true, "est_alt": true}},
 }
 

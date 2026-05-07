@@ -408,6 +408,19 @@ export interface components {
             lock_photo_tilt: boolean;
             lock_photo_roll: boolean;
             lock_size_rad: boolean;
+            /**
+             * Format: double
+             * @description Brown-Conrady radial distortion coefficient k1; 0 = no distortion
+             */
+            dist_k1: number;
+            /**
+             * Format: double
+             * @description Brown-Conrady radial distortion coefficient k2; 0 = no distortion
+             */
+            dist_k2: number;
+            /** @description locked at zero by default; unlock to let the solver fit it */
+            lock_dist_k1: boolean;
+            lock_dist_k2: boolean;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -549,7 +562,7 @@ export interface components {
         };
         /**
          * @description POST body for `POST /stations/{id}/photos`. Pose fields are
-         *     required; opacity / lock_* default if omitted.
+         *     required; opacity / lock_* / dist_k* default if omitted.
          */
         PhotoPosePatch: {
             /** Format: double */
@@ -569,6 +582,16 @@ export interface components {
             lock_photo_tilt?: boolean;
             lock_photo_roll?: boolean;
             lock_size_rad?: boolean;
+            /**
+             * Format: double
+             * @description defaults to 0 when omitted
+             */
+            dist_k1?: number;
+            /** Format: double */
+            dist_k2?: number;
+            /** @description defaults to true when omitted */
+            lock_dist_k1?: boolean;
+            lock_dist_k2?: boolean;
         };
         /**
          * @description Partial-update body for PUT /photos/{id}. Every field is
@@ -591,6 +614,12 @@ export interface components {
             lock_photo_tilt?: boolean;
             lock_photo_roll?: boolean;
             lock_size_rad?: boolean;
+            /** Format: double */
+            dist_k1?: number;
+            /** Format: double */
+            dist_k2?: number;
+            lock_dist_k1?: boolean;
+            lock_dist_k2?: boolean;
         };
         /**
          * @description POST body for `POST /photos/{id}/image-measurements`. u/v

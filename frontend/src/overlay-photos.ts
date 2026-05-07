@@ -30,6 +30,63 @@ const ACTION_HANDLE_GEOM = new THREE.PlaneGeometry(1, 1);
 
 export const widthFromSizeRad = (sr: number): number => 2 * OVERLAY_R * Math.tan(sr / 2);
 
+// Build a per-photo MeshBasicMaterial that applies forward Brown-Conrady
+// radial distortion to its texture-sample UV. Each material owns its own
+// uK1/uK2/uW/uAspect uniforms (mutated by applyPose / applySize); the
+// compiled program is shared across all photos via customProgramCacheKey.
+// When uK1 = uK2 = 0 the shader path is a numerical no-op.
+//
+// Distortion is applied in *tan-space* normalized image coords
+// (x = (u-0.5)·W, y = (v-0.5)·W/aspect, where W = 2·tan(sizeRad/2)) to match
+// the solver's ProjectPOI; otherwise the units of k1/k2 the solver fits would
+// not match the shader's, and a solve would make residuals worse.
+interface DistortionUniforms {
+  uK1: { value: number };
+  uK2: { value: number };
+  uW: { value: number };
+  uAspect: { value: number };
+}
+
+function makeDistortionMaterial(tex: THREE.Texture, aspect: number): THREE.MeshBasicMaterial {
+  const uniforms: DistortionUniforms = {
+    uK1: { value: 0 }, uK2: { value: 0 },
+    uW: { value: 2 * Math.tan(DEFAULT_SIZE_RAD / 2) },
+    uAspect: { value: aspect },
+  };
+  const material = new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, side: THREE.DoubleSide, depthTest: false,
+  });
+  material.onBeforeCompile = (shader): void => {
+    shader.uniforms.uK1 = uniforms.uK1;
+    shader.uniforms.uK2 = uniforms.uK2;
+    shader.uniforms.uW = uniforms.uW;
+    shader.uniforms.uAspect = uniforms.uAspect;
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <common>',
+      `#include <common>
+       uniform float uK1;
+       uniform float uK2;
+       uniform float uW;
+       uniform float uAspect;`,
+    ).replace(
+      '#include <map_fragment>',
+      `#ifdef USE_MAP
+        vec2 _photoC = vMapUv - 0.5;
+        // Distortion model lives in tan-space (x = c.x * uW, y = c.y * uW / uAspect),
+        // matching the solver's ProjectPOI undistortion.
+        vec2 _photoXY = vec2(_photoC.x * uW, _photoC.y * uW / uAspect);
+        float _photoR2 = dot(_photoXY, _photoXY);
+        float _photoF = 1.0 + uK1 * _photoR2 + uK2 * _photoR2 * _photoR2;
+        vec4 sampledDiffuseColor = texture2D(map, _photoC * _photoF + 0.5);
+        diffuseColor *= sampledDiffuseColor;
+       #endif`,
+    );
+  };
+  material.customProgramCacheKey = (): string => 'photo-distortion';
+  (material.userData as { distortionUniforms: DistortionUniforms }).distortionUniforms = uniforms;
+  return material;
+}
+
 export function dirFromAzAlt(az: number, alt: number): THREE.Vector3 {
   const v = new THREE.Vector3(0, 0, -1);
   v.applyAxisAngle(new THREE.Vector3(1, 0, 0), alt);
@@ -192,7 +249,7 @@ export function createPhotoStore(
     const o = new THREE.Group();
     const body = new THREE.Mesh(
       new THREE.PlaneGeometry(1, 1),
-      new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide, depthTest: false }),
+      makeDistortionMaterial(tex, aspect),
     );
     (body.userData as { role: Role }).role = ROLE_BODY;
     o.add(body);
@@ -217,10 +274,30 @@ export function createPhotoStore(
     data.lockPhotoTilt = false;
     data.lockPhotoRoll = false;
     data.lockSizeRad = false;
+    data.distK1 = 0;
+    data.distK2 = 0;
+    data.lockDistK1 = true;
+    data.lockDistK2 = true;
     data.body = body;
     data.outline = outline;
     applySize(o);
     return o;
+  }
+
+  // Sync the photo body's distortion uniforms with the overlay's current
+  // pose. uW changes with sizeRad (so applySize calls this too); uK1/uK2
+  // change with the user's distortion edits or solver writeback.
+  function applyDistortionUniforms(o: THREE.Group): void {
+    const data = overlayData(o);
+    const mat = data.body.material as THREE.MeshBasicMaterial & {
+      userData: { distortionUniforms?: DistortionUniforms };
+    };
+    const u = mat.userData.distortionUniforms;
+    if (!u) return;
+    u.uK1.value = data.distK1;
+    u.uK2.value = data.distK2;
+    u.uW.value = 2 * Math.tan(data.sizeRad / 2);
+    u.uAspect.value = data.aspect;
   }
 
   function applyOverlayDecoration(o: THREE.Group): void {
@@ -234,6 +311,7 @@ export function createPhotoStore(
     const h = w / data.aspect;
     data.body.scale.set(w, h, 1);
     if (data.outline) data.outline.scale.set(w, h, 1);
+    applyDistortionUniforms(o);
     layoutPoisOn(o, w, h);
     if (data.dragHandle && data.rotateHandle && data.fovHandle) {
       const r = w * ACTION_HANDLE_FRACTION;
@@ -427,6 +505,8 @@ export function createPhotoStore(
         lockPhotoTilt: d.lockPhotoTilt,
         lockPhotoRoll: d.lockPhotoRoll,
         lockSizeRad: d.lockSizeRad,
+        lockDistK1: d.lockDistK1,
+        lockDistK2: d.lockDistK2,
       };
     },
     setLocks(o, locks) {
@@ -435,6 +515,8 @@ export function createPhotoStore(
       d.lockPhotoTilt = locks.lockPhotoTilt;
       d.lockPhotoRoll = locks.lockPhotoRoll;
       d.lockSizeRad = locks.lockSizeRad;
+      d.lockDistK1 = locks.lockDistK1;
+      d.lockDistK2 = locks.lockDistK2;
     },
     extractPose(o, camLoc) {
       const { az, alt } = posToAzAlt(o);
@@ -447,13 +529,17 @@ export function createPhotoStore(
         aspect: data.aspect,
         camLat: camLoc?.lat ?? 0,
         camLng: camLoc?.lng ?? 0,
+        k1: data.distK1,
+        k2: data.distK2,
       };
     },
     applyPose(o, pose) {
       overlayData(o).photoRoll = pose.photoRoll;
       placeAt(o, dirFromAzAlt(pose.photoAz, pose.photoTilt), pose.photoRoll);
       overlayData(o).sizeRad = clamp(pose.sizeRad, SIZE_MIN, SIZE_MAX);
-      applySize(o);
+      overlayData(o).distK1 = pose.k1;
+      overlayData(o).distK2 = pose.k2;
+      applySize(o); // also re-syncs distortion uniforms (uW + uK1/uK2)
       notify();
     },
     getCones() {

@@ -20,14 +20,15 @@ func clampTilt(t float64) float64 {
 }
 
 // ProjectPOI returns the viewer-frame (az, el) direction of image-plane
-// point (u, v) for a photo with the given pose.
+// point (u, v) for a photo with the given pose. (u, v) is interpreted as
+// the *observed* (distorted) pixel; when pose.K1/K2 are nonzero the function
+// inverts Brown-Conrady to recover the corresponding undistorted direction.
 //
-// This is a 1:1 port of frontend/src/solver.ts:projectPOI; the parity test
-// pins them together at 1e-12. See that function for the derivation; in
-// summary: build the photo's center direction from (az, alt), construct the
-// pre-roll local-X / local-Y plane axes via cross products, apply photoRoll
-// in the plane, then project (u-0.5, v-0.5) on a unit-radius photo plane
-// (W = 2·tan(sizeRad/2)) and convert the resulting world direction to az/el.
+// Build the photo's center direction from (az, alt), construct the pre-roll
+// local-X / local-Y plane axes via cross products, apply photoRoll in the
+// plane, project (u-0.5, v-0.5) on a unit-radius photo plane
+// (W = 2·tan(sizeRad/2)), undistort, then convert the resulting world
+// direction to az/el.
 func ProjectPOI(pose Pose, u, v float64) (az, el float64) {
 	azP := pose.PhotoAz
 	altP := clampTilt(pose.PhotoTilt)
@@ -73,6 +74,24 @@ func ProjectPOI(pose Pose, u, v float64) (az, el float64) {
 	H := W / aspect
 	dx := (u - 0.5) * W
 	dy := (v - 0.5) * H
+
+	// Brown-Conrady inverse via fixed-point iteration: given distorted
+	// (dx, dy), find the undistorted (x, y) such that (x, y)·(1+k1·r²+k2·r⁴)
+	// = (dx, dy). Skipped (no-op) when both coefficients are zero.
+	if pose.K1 != 0 || pose.K2 != 0 {
+		xd, yd := dx, dy
+		x, y := xd, yd
+		for i := 0; i < 5; i++ {
+			r2 := x*x + y*y
+			f := 1 + pose.K1*r2 + pose.K2*r2*r2
+			if f == 0 {
+				break
+			}
+			x = xd / f
+			y = yd / f
+		}
+		dx, dy = x, y
+	}
 
 	px := cx + dx*localXx + dy*localYx
 	py := cy + dx*localXy + dy*localYy

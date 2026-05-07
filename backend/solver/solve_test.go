@@ -445,3 +445,81 @@ func TestSolveRankDeficientColumnAutoLocks(t *testing.T) {
 		}
 	}
 }
+
+func TestSolveRecoversK1K2(t *testing.T) {
+	// One station + one wide-FOV photo + 5 CPs spread across the image plane
+	// at different radii from the optical axis. The photo's true pose has
+	// non-zero K1, K2 (Brown-Conrady radial distortion). Pose, station, and
+	// CPs are all locked so the only free parameters are K1 and K2; the
+	// solver must recover them from the radial residual pattern.
+	const trueK1, trueK2 = -0.12, 0.04
+	// CP positions in (east, north, up) meters from the gauge. Mix of radii
+	// from photo center (PhotoAz = 0, looking due north) so r² varies enough
+	// to constrain K1 and K2 separately.
+	cpPositions := [][3]float64{
+		{0, 250, 0},     // near image center
+		{120, 250, 0},   // off-axis right
+		{-120, 250, 30}, // off-axis left + up
+		{60, 250, -40},  // mid-radius below
+		{-90, 260, 50},  // far corner
+	}
+	cps := make([]synth.TrueCP, len(cpPositions))
+	visibility := make([][]int, len(cpPositions))
+	for i, p := range cpPositions {
+		lat, lng, alt := solver.ENUToLatLngAlt(p[0], p[1], p[2], gaugeLat, gaugeLng, 0)
+		cps[i] = synth.TrueCP{
+			ID: cpID(i), EstLat: lat, EstLng: lng, EstAlt: alt,
+			Locks: solver.CPLocks{EstLat: true, EstLng: true, EstAlt: true},
+		}
+		visibility[i] = []int{0}
+	}
+	w := synth.World{
+		Stations: []synth.TrueStation{fullyLocked("st1", gaugeLat, gaugeLng)},
+		Photos: []synth.TruePhoto{
+			{
+				ID: "p1", StationID: "st1",
+				Pose: solver.Pose{
+					PhotoAz: 0, PhotoTilt: 0, PhotoRoll: 0,
+					SizeRad: 2 * math.Pi / 3, Aspect: 1.5,
+					K1: trueK1, K2: trueK2,
+				},
+				Locks: solver.PhotoLocks{
+					PhotoAz: true, PhotoTilt: true, PhotoRoll: true, SizeRad: true,
+				},
+			},
+		},
+		ControlPoints: cps,
+		VisibleIn:     visibility,
+	}
+	prob, err := synth.Build(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Perturb K1, K2 well away from the truth so the solver has work to do.
+	prob.Photos[0].Pose.K1 = 0
+	prob.Photos[0].Pose.K2 = 0
+
+	// Disable Tikhonov regularization on k1/k2 — this test validates the
+	// ideal-data recovery, where any nonzero λ would bias the recovered
+	// values toward zero by the expected JᵀJ/(JᵀJ+λ²) shrinkage factor.
+	res, err := solver.Solve(prob, solver.Config{
+		Mode: solver.ModeSingleStation, FocusID: "st1",
+		KRegLambda: -1,
+	})
+	if err != nil {
+		t.Fatalf("solve: %v", err)
+	}
+	if res.Diverged {
+		t.Fatalf("should not diverge: %+v", res)
+	}
+	if len(res.Changes) != 1 || res.Changes[0].Kind != "photo" || res.Changes[0].ID != "p1" {
+		t.Fatalf("expected one photo change for p1; got %+v", res.Changes)
+	}
+	got := res.Changes[0].After
+	if math.Abs(got["dist_k1"]-trueK1) > 1e-3 {
+		t.Errorf("dist_k1: got %v want %v", got["dist_k1"], trueK1)
+	}
+	if math.Abs(got["dist_k2"]-trueK2) > 1e-3 {
+		t.Errorf("dist_k2: got %v want %v", got["dist_k2"], trueK2)
+	}
+}

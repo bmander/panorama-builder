@@ -27,6 +27,8 @@ export interface PhotoSnapshot {
   readonly sizeRad: number;
   readonly aspect: number;
   readonly opacity: number;
+  readonly distK1: number;
+  readonly distK2: number;
   readonly locks: PhotoLocks;
 }
 
@@ -59,10 +61,13 @@ function photoSnapshotsEqual(a: PhotoSnapshot, b: PhotoSnapshot): boolean {
   return a.photoAz === b.photoAz && a.photoTilt === b.photoTilt
     && a.photoRoll === b.photoRoll && a.sizeRad === b.sizeRad
     && a.aspect === b.aspect && a.opacity === b.opacity
+    && a.distK1 === b.distK1 && a.distK2 === b.distK2
     && a.locks.lockPhotoAz === b.locks.lockPhotoAz
     && a.locks.lockPhotoTilt === b.locks.lockPhotoTilt
     && a.locks.lockPhotoRoll === b.locks.lockPhotoRoll
-    && a.locks.lockSizeRad === b.locks.lockSizeRad;
+    && a.locks.lockSizeRad === b.locks.lockSizeRad
+    && a.locks.lockDistK1 === b.locks.lockDistK1
+    && a.locks.lockDistK2 === b.locks.lockDistK2;
 }
 
 export function snapshotPhoto(overlays: OverlayManager, id: string): PhotoSnapshot | null {
@@ -76,6 +81,8 @@ export function snapshotPhoto(overlays: OverlayManager, id: string): PhotoSnapsh
     sizeRad: pose.sizeRad,
     aspect: pose.aspect,
     opacity: overlays.photos.getOpacity(o),
+    distK1: pose.k1,
+    distK2: pose.k2,
     locks: overlays.photos.getLocks(o),
   };
 }
@@ -108,6 +115,10 @@ export function applyPhotoSnapshot(
     lock_photo_tilt: snap.locks.lockPhotoTilt,
     lock_photo_roll: snap.locks.lockPhotoRoll,
     lock_size_rad: snap.locks.lockSizeRad,
+    dist_k1: snap.distK1,
+    dist_k2: snap.distK2,
+    lock_dist_k1: snap.locks.lockDistK1,
+    lock_dist_k2: snap.locks.lockDistK2,
   };
   return api.updatePhoto(id, patch).then(() => {
     sync.registerPhoto(id, {
@@ -117,12 +128,15 @@ export function applyPhotoSnapshot(
       photo_roll: snap.photoRoll,
       size_rad: snap.sizeRad,
       opacity: snap.opacity,
+      dist_k1: snap.distK1,
+      dist_k2: snap.distK2,
     });
     overlays.withBatch(() => {
       overlays.photos.applyPose(o, {
         photoAz: snap.photoAz, photoTilt: snap.photoTilt,
         photoRoll: snap.photoRoll, sizeRad: snap.sizeRad,
         aspect: snap.aspect, camLat: 0, camLng: 0,
+        k1: snap.distK1, k2: snap.distK2,
       });
       overlays.photos.setLocks(o, snap.locks);
       overlays.photos.setOpacity(o, snap.opacity);

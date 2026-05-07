@@ -10,17 +10,22 @@ import "time"
 // Pose is the orientation + FOV of a photo in the panorama frame. Lat/lng
 // of the camera are not part of Pose because ProjectPOI does not need them
 // (it returns a direction in viewer-local coords). Lat/lng live on Station.
+//
+// K1, K2 are Brown-Conrady radial distortion coefficients applied in the
+// normalized image-plane coordinates of the photo (zero = pure pinhole).
 type Pose struct {
 	PhotoAz   float64
 	PhotoTilt float64
 	PhotoRoll float64
 	SizeRad   float64
 	Aspect    float64
+	K1        float64
+	K2        float64
 }
 
 type StationLocks struct{ Lat, Lng, Alt bool }
 
-type PhotoLocks struct{ PhotoAz, PhotoTilt, PhotoRoll, SizeRad bool }
+type PhotoLocks struct{ PhotoAz, PhotoTilt, PhotoRoll, SizeRad, K1, K2 bool }
 
 type CPLocks struct{ EstLat, EstLng, EstAlt bool }
 
@@ -118,6 +123,13 @@ type Config struct {
 	// the two outcomes externally; the solver itself only knows "should I
 	// stop early."
 	ShouldStop func() bool
+	// KRegLambda is the Tikhonov regularization weight applied to dist_k1 /
+	// dist_k2 slots. Zero ⇒ no regularization. Default 0.05 — strong enough
+	// to keep weakly-observed coefficients from running away to large
+	// magnitudes on narrow-FOV photos while leaving well-constrained fits
+	// (lots of corner-spread observations) essentially untouched. Pass a
+	// negative value to opt out entirely.
+	KRegLambda float64
 }
 
 func (c Config) withDefaults() Config {
@@ -138,6 +150,11 @@ func (c Config) withDefaults() Config {
 	}
 	if c.RelImproveWindow == 0 {
 		c.RelImproveWindow = 3
+	}
+	if c.KRegLambda == 0 {
+		c.KRegLambda = 0.05
+	} else if c.KRegLambda < 0 {
+		c.KRegLambda = 0
 	}
 	return c
 }

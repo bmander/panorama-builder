@@ -141,7 +141,8 @@ export function createOrchestration({
       sync.reportError('upload photo', err);
       return;
     }
-    sync.registerPhoto(photo.id, pose);
+    // Newly created photos always start at the DB defaults (k1=k2=0, locked).
+    sync.registerPhoto(photo.id, { ...pose, dist_k1: 0, dist_k2: 0 });
     overlays.photos.add(tex, aspect, dir, { id: photo.id });
     revokeUrl();
   }

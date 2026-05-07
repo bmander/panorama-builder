@@ -69,11 +69,10 @@
         <span id="observe-title">Add observation</span>
         <button type="button" id="observe-close" class="btn">✕</button>
       </div>
-      <div id="observe-cp-list" class="cp-list"></div>
       <div class="modal-field">
-        <span id="observe-desc-label">Or create a new control point</span>
-        <input type="text" id="observe-new-desc" placeholder="name" maxlength="200" required>
+        <input type="text" id="observe-new-desc" maxlength="200" required>
       </div>
+      <div id="observe-cp-list" class="cp-list"></div>
       <div class="modal-actions">
         <button type="button" id="observe-cancel" class="btn">Cancel</button>
         <button type="button" id="observe-create" class="btn">Create</button>
@@ -109,6 +108,16 @@
       <div class="modal-field photo-params-row">
         <span>Aspect</span>
         <input type="text" id="photo-params-aspect" readonly>
+      </div>
+      <div class="modal-field photo-params-row">
+        <span>k1 (radial)</span>
+        <input type="number" id="photo-params-k1" step="0.001">
+        <label class="lock-check"><input type="checkbox" id="photo-params-k1-lock"> lock</label>
+      </div>
+      <div class="modal-field photo-params-row">
+        <span>k2 (radial)</span>
+        <input type="number" id="photo-params-k2" step="0.001">
+        <label class="lock-check"><input type="checkbox" id="photo-params-k2-lock"> lock</label>
       </div>
       <div class="modal-actions">
         <button type="button" id="photo-params-cancel" class="btn">Cancel</button>

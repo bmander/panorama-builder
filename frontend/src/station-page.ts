@@ -403,14 +403,17 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         overlays.photos.applyPose(o, {
           photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
           sizeRad: p.size_rad, aspect: p.aspect, camLat: data.station.lat, camLng: data.station.lng,
+          k1: p.dist_k1, k2: p.dist_k2,
         });
         overlays.photos.setLocks(o, {
           lockPhotoAz: p.lock_photo_az, lockPhotoTilt: p.lock_photo_tilt,
           lockPhotoRoll: p.lock_photo_roll, lockSizeRad: p.lock_size_rad,
+          lockDistK1: p.lock_dist_k1, lockDistK2: p.lock_dist_k2,
         });
         sync.registerPhoto(p.id, {
           aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,
           photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
+          dist_k1: p.dist_k1, dist_k2: p.dist_k2,
         });
       }
       for (const cp of data.control_points) {
@@ -467,15 +470,18 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         overlays.photos.applyPose(o, {
           photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
           sizeRad: p.size_rad, aspect: p.aspect, camLat: loc.lat, camLng: loc.lng,
+          k1: p.dist_k1, k2: p.dist_k2,
         });
         overlays.photos.setOpacity(o, p.opacity);
         overlays.photos.setLocks(o, {
           lockPhotoAz: p.lock_photo_az, lockPhotoTilt: p.lock_photo_tilt,
           lockPhotoRoll: p.lock_photo_roll, lockSizeRad: p.lock_size_rad,
+          lockDistK1: p.lock_dist_k1, lockDistK2: p.lock_dist_k2,
         });
         sync.registerPhoto(p.id, {
           aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,
           photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
+          dist_k1: p.dist_k1, dist_k2: p.dist_k2,
         });
         loader.load(
           api.photoBlobUrl(p.id),

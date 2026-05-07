@@ -195,8 +195,18 @@ type Photo struct {
 	BlobPath  *string   `json:"blob_path"`
 	CreatedAt time.Time `json:"created_at"`
 
+	// DistK1 Brown-Conrady radial distortion coefficient k1; 0 = no distortion
+	DistK1 float64 `json:"dist_k1"`
+
+	// DistK2 Brown-Conrady radial distortion coefficient k2; 0 = no distortion
+	DistK2 float64 `json:"dist_k2"`
+
 	// ID 13-character base32 server-assigned id
-	ID            ID      `json:"id"`
+	ID ID `json:"id"`
+
+	// LockDistK1 locked at zero by default; unlock to let the solver fit it
+	LockDistK1    bool    `json:"lock_dist_k1"`
+	LockDistK2    bool    `json:"lock_dist_k2"`
 	LockPhotoAz   bool    `json:"lock_photo_az"`
 	LockPhotoRoll bool    `json:"lock_photo_roll"`
 	LockPhotoTilt bool    `json:"lock_photo_tilt"`
@@ -223,9 +233,17 @@ type Photo struct {
 }
 
 // PhotoPosePatch POST body for `POST /stations/{id}/photos`. Pose fields are
-// required; opacity / lock_* default if omitted.
+// required; opacity / lock_* / dist_k* default if omitted.
 type PhotoPosePatch struct {
 	Aspect float64 `json:"aspect"`
+
+	// DistK1 defaults to 0 when omitted
+	DistK1 *float64 `json:"dist_k1,omitempty"`
+	DistK2 *float64 `json:"dist_k2,omitempty"`
+
+	// LockDistK1 defaults to true when omitted
+	LockDistK1 *bool `json:"lock_dist_k1,omitempty"`
+	LockDistK2 *bool `json:"lock_dist_k2,omitempty"`
 
 	// LockPhotoAz defaults to false when omitted
 	LockPhotoAz   *bool    `json:"lock_photo_az,omitempty"`
@@ -243,6 +261,10 @@ type PhotoPosePatch struct {
 // optional; only keys present in the body are written.
 type PhotoUpdate struct {
 	Aspect        *float64 `json:"aspect,omitempty"`
+	DistK1        *float64 `json:"dist_k1,omitempty"`
+	DistK2        *float64 `json:"dist_k2,omitempty"`
+	LockDistK1    *bool    `json:"lock_dist_k1,omitempty"`
+	LockDistK2    *bool    `json:"lock_dist_k2,omitempty"`
 	LockPhotoAz   *bool    `json:"lock_photo_az,omitempty"`
 	LockPhotoRoll *bool    `json:"lock_photo_roll,omitempty"`
 	LockPhotoTilt *bool    `json:"lock_photo_tilt,omitempty"`
