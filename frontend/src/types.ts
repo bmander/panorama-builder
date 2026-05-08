@@ -67,6 +67,46 @@ export interface ImageMeasurementBearing {
   readonly selected: boolean;
 }
 
+// Lifespan bounds for a control point. Either bound being null means
+// "open-ended". The *_after / *_before flags flip the matching bound to
+// strict (the landmark started/ended outside that timestamp, not on it).
+export interface CPLifespan {
+  readonly startedAt: string | null;
+  readonly endedAt: string | null;
+  readonly startedAfter: boolean;
+  readonly endedBefore: boolean;
+}
+
+// Map the API's snake_case lifespan fields to our camelCase CPLifespan.
+// Structural input — avoids importing api-types into this module.
+export function cpLifespanFromApi(cp: {
+  readonly started_at: string | null;
+  readonly ended_at: string | null;
+  readonly started_after: boolean;
+  readonly ended_before: boolean;
+}): CPLifespan {
+  return {
+    startedAt: cp.started_at,
+    endedAt: cp.ended_at,
+    startedAfter: cp.started_after,
+    endedBefore: cp.ended_before,
+  };
+}
+
+// True when the lifespan window contains timestamp `ms`. Both bounds null
+// means "always extant".
+export function isExtantAt(span: CPLifespan, ms: number): boolean {
+  if (span.startedAt !== null) {
+    const t = new Date(span.startedAt).getTime();
+    if (span.startedAfter ? ms <= t : ms < t) return false;
+  }
+  if (span.endedAt !== null) {
+    const t = new Date(span.endedAt).getTime();
+    if (span.endedBefore ? ms >= t : ms > t) return false;
+  }
+  return true;
+}
+
 // Control point: a real-world landmark with a latent location, observed by
 // image measurements across photos / stations.
 export interface ControlPointView {
@@ -75,6 +115,10 @@ export interface ControlPointView {
   readonly estLat: number | null;
   readonly estLng: number | null;
   readonly estAlt: number | null;
+  readonly startedAt: string | null;
+  readonly endedAt: string | null;
+  readonly startedAfter: boolean;
+  readonly endedBefore: boolean;
   readonly selected: boolean;
 }
 

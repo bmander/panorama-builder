@@ -14,7 +14,7 @@ import { createTimeFilter } from './time-filter.js';
 import { DEFAULT_SIZE_RAD } from './overlay.js';
 import { nullCpRayBearingDeg } from './null-cp-rays.js';
 import { readAspectRatio } from './handlers.js';
-import { getElement, stationHref } from './types.js';
+import { cpLifespanFromApi, getElement, isExtantAt, stationHref } from './types.js';
 import type { ControlPointView, LatLng } from './types.js';
 
 export interface MountIndexPageOptions {
@@ -75,29 +75,12 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   // share with, so a flat Map is enough.
   const cpsById = new Map<string, ApiControlPoint>();
 
-  // A CP is extant at time t when t falls within [started_at, ended_at].
-  // Either bound being null means "unknown / open-ended", which always
-  // satisfies that side — so a CP with both nulls always passes. The
-  // started_after / ended_before flags flip the matching bound to strict
-  // (the landmark started/ended outside that timestamp, not on it).
-  function isExtantAt(cp: ApiControlPoint, ms: number): boolean {
-    if (cp.started_at !== null) {
-      const t = new Date(cp.started_at).getTime();
-      if (cp.started_after ? ms <= t : ms < t) return false;
-    }
-    if (cp.ended_at !== null) {
-      const t = new Date(cp.ended_at).getTime();
-      if (cp.ended_before ? ms >= t : ms > t) return false;
-    }
-    return true;
-  }
-
   function refreshIndexControlPoints(): void {
     const filterMs = timeFilter.getTime().getTime();
     const dots = [];
     for (const cp of cpsById.values()) {
       if (cp.est_lat === null || cp.est_lng === null) continue;
-      if (!isExtantAt(cp, filterMs)) continue;
+      if (!isExtantAt(cpLifespanFromApi(cp), filterMs)) continue;
       dots.push({
         id: cp.id,
         latlng: { lat: cp.est_lat, lng: cp.est_lng },
@@ -314,6 +297,7 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
         out.push({
           id: cp.id, description: cp.description,
           estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,
+          ...cpLifespanFromApi(cp),
           selected: false,
         });
       }

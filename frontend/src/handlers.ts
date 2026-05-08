@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import * as api from './api.js';
 import { DEFAULT_SIZE_RAD } from './overlay.js';
-import { overlayData, stationHref } from './types.js';
+import { cpLifespanFromApi, overlayData, stationHref } from './types.js';
 import type { LatLng } from './types.js';
 import type { OverlayManager } from './overlay.js';
 import type { SyncManager } from './sync.js';
@@ -171,6 +171,7 @@ export function createOrchestration({
     });
     overlays.controlPoints.add(cp.id, {
       description: cp.description, estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,
+      ...cpLifespanFromApi(cp),
     });
   }
 

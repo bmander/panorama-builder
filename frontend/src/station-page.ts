@@ -21,7 +21,7 @@ import { createStationMarkers } from './station-markers.js';
 import type { StationMarker } from './station-markers.js';
 import { findHitDot } from './dot-layer.js';
 import {
-  cpHref, cpLabel, getElement, indexStationHref,
+  cpHref, cpLabel, cpLifespanFromApi, getElement, indexStationHref, isExtantAt,
   meshMat, overlayData, poiData,
 } from './types.js';
 import { vecToAzAlt } from './geo.js';
@@ -147,10 +147,17 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
 
   // CPs visible in the photo viewer. Same set drives column rendering and
   // the matcher hit-test, so what you see is what you can click.
+  // Lifespan filter applies in both modes: a CP that didn't exist when the
+  // photographer was here shouldn't render even if some image measurement
+  // happens to reference it.
   function getVisibleControlPoints(): ControlPointView[] {
-    const all = overlays.controlPoints.list().filter(cp =>
-      cp.estLat !== null && cp.estLng !== null,
-    );
+    const capturedAt = stationFields.getCapturedAt();
+    const capturedMs = capturedAt !== null ? new Date(capturedAt).getTime() : null;
+    const all = overlays.controlPoints.list().filter(cp => {
+      if (cp.estLat === null || cp.estLng === null) return false;
+      if (capturedMs !== null && !isExtantAt(cp, capturedMs)) return false;
+      return true;
+    });
     if (showAllCPs) return all;
     const observed = new Set<string>();
     for (const im of overlays.measurements.list()) {
@@ -248,6 +255,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     if (overlays.controlPoints.getById(cp.id) !== null) return;
     overlays.controlPoints.add(cp.id, {
       description: cp.description, estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,
+      ...cpLifespanFromApi(cp),
     });
     sync.registerControlPoint(cp.id, {
       description: cp.description, est_lat: cp.est_lat, est_lng: cp.est_lng, est_alt: cp.est_alt,
@@ -261,6 +269,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     if (overlays.controlPoints.getById(cp.id) === null) {
       overlays.controlPoints.add(cp.id, {
         description: cp.description, estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,
+        ...cpLifespanFromApi(cp),
       });
       return;
     }
@@ -269,6 +278,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       overlays.controlPoints.setEst(cp.id, {
         lat: cp.est_lat, lng: cp.est_lng, alt: cp.est_alt,
       });
+      overlays.controlPoints.setLifespan(cp.id, cpLifespanFromApi(cp));
     });
   }
 
@@ -399,6 +409,13 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         {
           label: `Started after ${dateLabel}`,
           onClick: () => {
+            const current = overlays.controlPoints.getById(cpId);
+            if (current) {
+              overlays.controlPoints.setLifespan(cpId, {
+                startedAt: stationDate, startedAfter: true,
+                endedAt: current.endedAt, endedBefore: current.endedBefore,
+              });
+            }
             api.updateControlPoint(cpId, { started_at: stationDate, started_after: true })
               .catch((err: unknown) => {
                 console.error('set started_after failed:', err);
@@ -409,6 +426,13 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         {
           label: `Ended before ${dateLabel}`,
           onClick: () => {
+            const current = overlays.controlPoints.getById(cpId);
+            if (current) {
+              overlays.controlPoints.setLifespan(cpId, {
+                startedAt: current.startedAt, startedAfter: current.startedAfter,
+                endedAt: stationDate, endedBefore: true,
+              });
+            }
             api.updateControlPoint(cpId, { ended_at: stationDate, ended_before: true })
               .catch((err: unknown) => {
                 console.error('set ended_before failed:', err);

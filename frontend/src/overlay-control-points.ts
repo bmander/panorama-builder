@@ -1,10 +1,14 @@
-import type { ControlPointView } from './types.js';
+import type { CPLifespan, ControlPointView } from './types.js';
 
 export interface AddControlPointPayload {
   readonly description: string;
   readonly estLat: number | null;
   readonly estLng: number | null;
   readonly estAlt: number | null;
+  readonly startedAt: string | null;
+  readonly endedAt: string | null;
+  readonly startedAfter: boolean;
+  readonly endedBefore: boolean;
 }
 
 export interface ControlPointEst {
@@ -19,6 +23,7 @@ export interface ControlPointRegistry {
   getById(id: string): ControlPointView | null;
   setEst(id: string, est: ControlPointEst): void;
   setDescription(id: string, description: string): void;
+  setLifespan(id: string, span: CPLifespan): void;
   remove(id: string): void;
 }
 
@@ -28,6 +33,10 @@ interface ControlPointEntry {
   estLat: number | null;
   estLng: number | null;
   estAlt: number | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  startedAfter: boolean;
+  endedBefore: boolean;
 }
 
 export interface CreateControlPointRegistryOptions {
@@ -48,6 +57,10 @@ export function createControlPointRegistry(
     estLat: cp.estLat,
     estLng: cp.estLng,
     estAlt: cp.estAlt,
+    startedAt: cp.startedAt,
+    endedAt: cp.endedAt,
+    startedAfter: cp.startedAfter,
+    endedBefore: cp.endedBefore,
     selected: cp.id === selectedId,
   });
 
@@ -59,6 +72,10 @@ export function createControlPointRegistry(
         estLat: payload.estLat,
         estLng: payload.estLng,
         estAlt: payload.estAlt,
+        startedAt: payload.startedAt,
+        endedAt: payload.endedAt,
+        startedAfter: payload.startedAfter,
+        endedBefore: payload.endedBefore,
       });
       notify();
     },
@@ -84,6 +101,17 @@ export function createControlPointRegistry(
       const cp = entries.find(c => c.id === id);
       if (!cp || cp.description === description) return;
       cp.description = description;
+      notify();
+    },
+    setLifespan(id, span) {
+      const cp = entries.find(c => c.id === id);
+      if (!cp) return;
+      if (cp.startedAt === span.startedAt && cp.endedAt === span.endedAt
+        && cp.startedAfter === span.startedAfter && cp.endedBefore === span.endedBefore) return;
+      cp.startedAt = span.startedAt;
+      cp.endedAt = span.endedAt;
+      cp.startedAfter = span.startedAfter;
+      cp.endedBefore = span.endedBefore;
       notify();
     },
     remove(id) {
