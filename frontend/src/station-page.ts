@@ -15,12 +15,11 @@ import { createTerrainView } from './terrain.js';
 import { createSunMarker } from './sun-marker.js';
 import { createControlPointColumns, findHitColumn } from './map-poi-columns.js';
 import type { ControlPointColumn } from './map-poi-columns.js';
-import { createNullCpRays } from './null-cp-rays.js';
-import type { NullCpRay } from './null-cp-rays.js';
+import { createObservationRays } from './observation-rays.js';
+import type { ObservationRay } from './observation-rays.js';
 import { createStationMarkers } from './station-markers.js';
 import type { StationMarker } from './station-markers.js';
 import { createStationCones } from './station-cones.js';
-import type { StationCone } from './station-cones.js';
 import { findHitDot } from './dot-layer.js';
 import {
   cpHref, cpLabel, cpLifespanFromApi, getElement, indexStationHref, isExtantAt,
@@ -94,7 +93,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     scene: viewer.scene,
     requestRender: () => { viewer.requestRender(); },
   });
-  const nullCpRays = createNullCpRays({
+  const observationRays = createObservationRays({
     scene: viewer.scene,
     requestRender: () => { viewer.requestRender(); },
   });
@@ -103,7 +102,8 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     requestRender: () => { viewer.requestRender(); },
   });
   let otherStations: StationMarker[] = [];
-  let otherStationCones: StationCone[] = [];
+  let otherCameras: OtherCamera[] = [];
+  let selectedStationId: string | null = null;
   const baker = createBaker({
     renderer: viewer.renderer,
     scene: viewer.scene,
@@ -111,7 +111,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       overlays.setVisualsVisible(visible);
       cpColumns.setVisible(visible);
       stationDots.setVisible(visible);
-      nullCpRays.setVisible(visible);
+      observationRays.setVisible(visible);
       stationCones.setVisible(visible);
     },
   });
@@ -146,12 +146,28 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   // just those observed by this station. Toggled from the settings panel.
   let showAllCPs = false;
 
-  // When true, draw 5km purple rays from every observation of any null-
-  // location CP — see null-cp-rays.ts. Observations are fetched per-CP via
-  // /control-points/{id}/observations and cached for the page session.
-  let showNullCpRays = false;
-  const nullCpObsCache = new Map<string, api.ApiControlPointImageObservation[]>();
-  const nullCpObsInflight = new Set<string>();
+  // Hydrated per-photo data for every other station. Populated once via a
+  // batch of api.getStation calls; used to render frustum cones and to
+  // build observation rays for the currently-selected camera.
+  interface OtherCameraMeasurement {
+    readonly id: string;
+    readonly u: number;
+    readonly v: number;
+    readonly controlPointId: string | null;
+  }
+  interface OtherCamera {
+    readonly stationId: string;
+    readonly photoId: string;
+    readonly fromLat: number;
+    readonly fromLng: number;
+    readonly fromAlt: number;
+    readonly photoAz: number;
+    readonly photoTilt: number;
+    readonly photoRoll: number;
+    readonly sizeRad: number;
+    readonly aspect: number;
+    readonly measurements: readonly OtherCameraMeasurement[];
+  }
 
   // CPs visible in the photo viewer. Same set drives column rendering and
   // the matcher hit-test, so what you see is what you can click.
@@ -174,59 +190,41 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     return all.filter(cp => observed.has(cp.id));
   }
 
-  function refreshNullCpRays(): void {
-    const cameraHeight = terrain.getCameraHeight();
-    if (!showNullCpRays) {
-      nullCpRays.update(stationLocation, cameraHeight, []);
-      return;
-    }
-    const cps = overlays.controlPoints.list();
-    const nullIds = new Set<string>();
-    for (const cp of cps) {
-      if (cp.estLat === null || cp.estLng === null) nullIds.add(cp.id);
-    }
-    // Drop cache entries whose CP gained a location since last refresh.
-    for (const id of [...nullCpObsCache.keys()]) {
-      if (!nullIds.has(id)) nullCpObsCache.delete(id);
-    }
-    // Fetch any null CPs we haven't seen yet.
-    for (const id of nullIds) {
-      if (nullCpObsCache.has(id) || nullCpObsInflight.has(id)) continue;
-      nullCpObsInflight.add(id);
-      api.listControlPointObservations(id).then(result => {
-        nullCpObsCache.set(id, result.image_measurements);
-        refreshNullCpRays();
-      }).catch((err: unknown) => {
-        console.error('listControlPointObservations failed:', err);
-      }).finally(() => {
-        nullCpObsInflight.delete(id);
-      });
-    }
-    // Look up other stations' altitudes by id. The current station isn't in
-    // otherStations (it's filtered out before render); a self-observation
-    // takes cameraHeight so its ray starts at the viewer's eye.
-    const altById = new Map<string, number>();
-    for (const st of otherStations) altById.set(st.id, st.altitude);
-    const rays: NullCpRay[] = [];
-    for (const id of nullIds) {
-      const obs = nullCpObsCache.get(id);
-      if (!obs) continue;
-      for (const o of obs) {
-        rays.push({
-          fromLat: o.station_lat,
-          fromLng: o.station_lng,
-          fromAlt: altById.get(o.station_id) ?? cameraHeight,
-          photoAz: o.photo_az,
-          photoTilt: o.photo_tilt,
-          photoRoll: o.photo_roll,
-          sizeRad: o.size_rad,
-          aspect: o.aspect,
-          u: o.u,
-          v: o.v,
+  // Reused empty array so the no-op guard inside observationRays.update
+  // catches refreshes when nothing is selected (the common case).
+  const EMPTY_RAYS: readonly ObservationRay[] = [];
+
+  // Built fresh when there's a selection; per-CP location and selected
+  // station id can both change between calls, and the ray count is small
+  // (~measurements on one station's photos) so per-call allocation is
+  // negligible.
+  function buildObservationRays(): readonly ObservationRay[] {
+    if (selectedStationId === null) return EMPTY_RAYS;
+    const out: ObservationRay[] = [];
+    for (const cam of otherCameras) {
+      if (cam.stationId !== selectedStationId) continue;
+      for (const im of cam.measurements) {
+        const cp = im.controlPointId ? overlays.controlPoints.getById(im.controlPointId) : null;
+        const estLat = cp?.estLat ?? null;
+        const estLng = cp?.estLng ?? null;
+        if (estLat === null || estLng === null) {
+          out.push({
+            kind: 'null',
+            fromLat: cam.fromLat, fromLng: cam.fromLng, fromAlt: cam.fromAlt,
+            photoAz: cam.photoAz, photoTilt: cam.photoTilt, photoRoll: cam.photoRoll,
+            sizeRad: cam.sizeRad, aspect: cam.aspect,
+            u: im.u, v: im.v,
+          });
+          continue;
+        }
+        out.push({
+          kind: 'located',
+          fromLat: cam.fromLat, fromLng: cam.fromLng, fromAlt: cam.fromAlt,
+          toLat: estLat, toLng: estLng, toAlt: cp?.estAlt ?? null,
         });
       }
     }
-    nullCpRays.update(stationLocation, cameraHeight, rays);
+    return out;
   }
 
   function refreshControlPointColumns(): void {
@@ -245,10 +243,11 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       selected: cp.selected,
       observations: handlesByCpId.get(cp.id) ?? [],
     }));
-    cpColumns.update(stationLocation, terrain.getCameraHeight(), markers);
-    stationDots.update(stationLocation, terrain.getCameraHeight(), otherStations);
-    stationCones.update(stationLocation, terrain.getCameraHeight(), otherStationCones);
-    refreshNullCpRays();
+    const cameraHeight = terrain.getCameraHeight();
+    cpColumns.update(stationLocation, cameraHeight, markers);
+    stationDots.update(stationLocation, cameraHeight, otherStations);
+    stationCones.update(stationLocation, cameraHeight, otherCameras, selectedStationId);
+    observationRays.update(stationLocation, cameraHeight, buildObservationRays());
   }
 
   function applyCameraLocation(loc: LatLng): void {
@@ -301,10 +300,6 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     onShowAllCPsChange: value => {
       showAllCPs = value;
       refreshControlPointColumns();
-    },
-    onShowNullCpRaysChange: value => {
-      showNullCpRays = value;
-      refreshNullCpRays();
     },
   });
 
@@ -497,11 +492,20 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         terrain.getCameraHeight(), otherStations);
     },
     onStationClick: (id, sx, sy) => {
+      if (selectedStationId !== id) {
+        selectedStationId = id;
+        refreshControlPointColumns();
+      }
       const st = otherStations.find(s => s.id === id);
       const header = st?.name ?? `Untitled ${id.slice(0, 6)}`;
       contextMenu.open(sx, sy, [
         { label: 'Go to camera →', onClick: () => { void stationNavigation.flyToStation(id); } },
       ], header);
+    },
+    onDeselectStation: () => {
+      if (selectedStationId === null) return;
+      selectedStationId = null;
+      refreshControlPointColumns();
     },
     onCPClick: (cpId, sx, sy, body) => { openCpContextMenu(cpId, sx, sy, body); },
     undoManager,
@@ -659,14 +663,29 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         .filter(st => st.id !== id)
         .map(st => ({ id: st.id, name: st.name, anchor: { lat: st.lat, lng: st.lng }, altitude: st.alt }));
       refreshControlPointColumns();
-      // Non-blocking: dots already render without the cone data.
+      // Non-blocking: dots already render without the per-photo data.
       void Promise.all(otherStations.map(s => api.getStation(s.id)))
         .then(hydrated => {
-          otherStationCones = hydrated.flatMap(d => d.photos.map(p => ({
-            fromLat: d.station.lat, fromLng: d.station.lng, fromAlt: d.station.alt,
-            photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
-            sizeRad: p.size_rad, aspect: p.aspect,
-          })));
+          const cams: OtherCamera[] = [];
+          for (const d of hydrated) {
+            const measByPhotoId = new Map<string, OtherCameraMeasurement[]>();
+            for (const im of d.image_measurements) {
+              const arr = measByPhotoId.get(im.photo_id) ?? [];
+              arr.push({ id: im.id, u: im.u, v: im.v, controlPointId: im.control_point_id });
+              measByPhotoId.set(im.photo_id, arr);
+            }
+            for (const p of d.photos) {
+              cams.push({
+                stationId: d.station.id,
+                photoId: p.id,
+                fromLat: d.station.lat, fromLng: d.station.lng, fromAlt: d.station.alt,
+                photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
+                sizeRad: p.size_rad, aspect: p.aspect,
+                measurements: measByPhotoId.get(p.id) ?? [],
+              });
+            }
+          }
+          otherCameras = cams;
           refreshControlPointColumns();
         })
         .catch((err: unknown) => { console.error('fetch other-station photos failed:', err); });

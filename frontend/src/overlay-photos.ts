@@ -94,6 +94,22 @@ export function dirFromAzAlt(az: number, alt: number): THREE.Vector3 {
   return v;
 }
 
+// Shared scratch Object3D positioned at OVERLAY_R in the photo's pointing
+// direction with -Z facing the origin (Object3D.lookAt's non-camera path
+// swaps eye/target, so the matrix's +Z column ends up pointing back at
+// the origin — callers that want the camera's forward vector negate it).
+// The pixel-to-world transform used by null-cp-rays / observation-rays
+// relies on the photo plane sitting at OVERLAY_R; station-cones reads
+// only the basis vectors so the radius is irrelevant there.
+const _poseScratch = new THREE.Object3D();
+export function buildPoseObject(az: number, tilt: number, roll: number): THREE.Object3D {
+  _poseScratch.position.copy(dirFromAzAlt(az, tilt)).normalize().multiplyScalar(OVERLAY_R);
+  _poseScratch.lookAt(0, 0, 0);
+  if (roll !== 0) _poseScratch.rotateZ(roll);
+  _poseScratch.updateMatrixWorld();
+  return _poseScratch;
+}
+
 function posToAzAlt(o: THREE.Object3D): { az: number; alt: number } {
   return vecToAzAlt(o.position.x, o.position.y, o.position.z);
 }

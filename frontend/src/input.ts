@@ -79,9 +79,13 @@ export interface AttachInputOptions {
   onImagePOIContextMenu?: (poi: THREE.Mesh, screenX: number, screenY: number) => void;
   // Left-click on an other-station green dot. Hit-test is owned by the host
   // (it has the camera + dot list in scope); the host hands back the station
-  // id so the click callback can open the station menu.
+  // id so the click callback can open the station menu and (optionally)
+  // select the station for ray rendering.
   findStationAtNDC?: (ndc: { x: number; y: number }) => { id: string } | null;
   onStationClick?: (id: string, screenX: number, screenY: number) => void;
+  // Fired on body / empty-space clicks. Host clears any persistent
+  // station selection (camera-observation rays, highlighted cones).
+  onDeselectStation?: () => void;
   // Left-click on a control-point dot. The host receives the CP id plus an
   // optional body hit at the same NDC so the menu can offer "add observation
   // here" anchored to the photo behind the marker.
@@ -95,7 +99,7 @@ export interface AttachInputOptions {
   undoManager?: UndoManager;
 }
 
-export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu, findStationAtNDC, onStationClick, onCPClick, undoManager }: AttachInputOptions): void {
+export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu, findStationAtNDC, onStationClick, onDeselectStation, onCPClick, undoManager }: AttachInputOptions): void {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -287,11 +291,13 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
       else if (bodyHit?.uv) {
         const o = bodyHit.object.parent as THREE.Group;
         if (selected !== o) { overlays.photos.setSelected(o); onChange(); }
+        onDeselectStation?.();
         mode = { type: 'pan' };
       }
-      // 5. Empty space → deselect the photo too + pan.
+      // 5. Empty space → deselect the photo and any selected station, then pan.
       else {
         if (selected) { overlays.photos.setSelected(null); onChange(); }
+        onDeselectStation?.();
         mode = { type: 'pan' };
       }
     }
