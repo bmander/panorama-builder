@@ -74,6 +74,27 @@ type solveContext struct {
 	slots      []slot        // free parameters (post mode + lock filtering)
 	regCount   int           // count of slots with regWeight > 0; cached for residual sizing
 	autoLocked []string      // slot.kind:slot.id:slot.name for columns frozen mid-solve
+
+	// Sparsity index: slotObs[k] = obs indices whose 2-row block depends on
+	// slot k; slotRegRow[k] = the slot's Tikhonov row (or -1). Built once in
+	// buildContext and constant for the rest of the solve, which is what
+	// lets jacobian() reuse a single mat.Dense across iterations without
+	// re-zeroing — every cell we don't write here, we never write.
+	slotObs       [][]int
+	slotRegRow    []int
+	obsStationIdx []int
+	obsPhotoIdx   []int
+	obsCPIdx      []int
+
+	// Per-iteration scratch reused across Solve()'s GN loop so the inner
+	// loop allocates nothing. rBuf holds the accepted residual vector; the
+	// line-search swaps it with rTrialBuf on accept so the previously
+	// accepted vector stays valid during trial evaluation.
+	rBuf      []float64
+	rTrialBuf []float64
+	jacMat    *mat.Dense // m × n; cells outside slotObs[k]∪{slotRegRow[k]} stay at zero forever
+	colBuf    []float64  // n*m; live-column snapshot for solveNormalEquations
+	colSlices [][]float64
 }
 
 // Solve runs Gauss-Newton with Levenberg-Marquardt damping over the in-scope
@@ -100,7 +121,8 @@ func Solve(problem Problem, cfg Config) (Result, error) {
 	state := c.readState()
 	initialState := append([]float64(nil), state...)
 
-	r := c.computeResiduals()
+	c.rBuf = c.computeResidualsInto(c.rBuf)
+	r := c.rBuf
 	initialNorm := norm(r)
 	prevNorm := initialNorm
 	bestState := append([]float64(nil), state...)
@@ -122,7 +144,7 @@ func Solve(problem Problem, cfg Config) (Result, error) {
 			break
 		}
 
-		J := c.jacobian(r)
+		J := c.jacobian()
 
 		// Detect rank-deficient columns and exclude from the linear system.
 		live := c.detectLiveColumns(J)
@@ -130,23 +152,28 @@ func Solve(problem Problem, cfg Config) (Result, error) {
 			break
 		}
 
-		dx, ok := solveNormalEquations(J, r, live, len(c.slots))
+		dx, ok := c.solveNormalEquations(J, r, live)
 		if !ok {
 			break
 		}
 
-		// Backtracking line search.
+		// Backtracking line search. Reuse the trial state and trial residual
+		// buffers across attempts and iterations to avoid alloc churn.
 		oldNorm := prevNorm
 		alpha := 1.0
 		accepted := false
 		var stepNorm float64
+		if cap(c.rTrialBuf) < c.residualSize() {
+			c.rTrialBuf = make([]float64, c.residualSize())
+		}
+		trial := make([]float64, len(state))
 		for attempt := 0; attempt < maxBacktracks; attempt++ {
-			trial := make([]float64, len(state))
 			for k := range state {
 				trial[k] = state[k] + alpha*dx[k]
 			}
 			c.applyState(trial)
-			rTrial := c.computeResiduals()
+			c.rTrialBuf = c.computeResidualsInto(c.rTrialBuf)
+			rTrial := c.rTrialBuf
 			normTrial := norm(rTrial)
 			if !math.IsNaN(normTrial) && !math.IsInf(normTrial, 0) && normTrial < prevNorm {
 				// Re-read state in case clamping (size_rad) shrunk the step.
@@ -156,7 +183,11 @@ func Solve(problem Problem, cfg Config) (Result, error) {
 					stepSq += (alpha * dx[k]) * (alpha * dx[k])
 				}
 				stepNorm = math.Sqrt(stepSq)
-				r = rTrial
+				// Swap r and rTrialBuf so subsequent iterations see the
+				// accepted residual via rBuf and a fresh scratch lives in
+				// rTrialBuf.
+				c.rBuf, c.rTrialBuf = rTrial, c.rBuf
+				r = c.rBuf
 				prevNorm = normTrial
 				accepted = true
 				break
@@ -294,7 +325,60 @@ func buildContext(problem Problem, cfg Config) (*solveContext, error) {
 		}
 	}
 
+	c.buildSparsity()
+
 	return c, nil
+}
+
+// buildSparsity precomputes, for each slot, the residual rows it touches.
+// Run once after slots and obs are finalized; the patterns are static for the
+// rest of the solve.
+func (c *solveContext) buildSparsity() {
+	c.obsStationIdx = make([]int, len(c.obs))
+	c.obsPhotoIdx = make([]int, len(c.obs))
+	c.obsCPIdx = make([]int, len(c.obs))
+
+	obsByStation := make(map[string][]int, len(c.stationIdx))
+	obsByPhoto := make(map[string][]int, len(c.photoIdx))
+	obsByCP := make(map[string][]int, len(c.cpIdx))
+	for k, o := range c.obs {
+		pIdx := c.photoIdx[o.PhotoID]
+		stID := c.problem.Photos[pIdx].StationID
+		c.obsStationIdx[k] = c.stationIdx[stID]
+		c.obsPhotoIdx[k] = pIdx
+		c.obsCPIdx[k] = c.cpIdx[o.ControlPointID]
+		obsByPhoto[o.PhotoID] = append(obsByPhoto[o.PhotoID], k)
+		obsByCP[o.ControlPointID] = append(obsByCP[o.ControlPointID], k)
+		obsByStation[stID] = append(obsByStation[stID], k)
+	}
+
+	c.slotObs = make([][]int, len(c.slots))
+	c.slotRegRow = make([]int, len(c.slots))
+	regRow := 2 * len(c.obs)
+	for k, s := range c.slots {
+		switch s.kind {
+		case "station":
+			c.slotObs[k] = obsByStation[s.id]
+		case "photo":
+			c.slotObs[k] = obsByPhoto[s.id]
+		case "control_point":
+			c.slotObs[k] = obsByCP[s.id]
+		}
+		if s.regWeight > 0 {
+			c.slotRegRow[k] = regRow
+			regRow++
+		} else {
+			c.slotRegRow[k] = -1
+		}
+	}
+
+	m := c.residualSize()
+	n := len(c.slots)
+	if m > 0 && n > 0 {
+		c.jacMat = mat.NewDense(m, n, nil)
+		c.colBuf = make([]float64, n*m)
+		c.colSlices = make([][]float64, n)
+	}
 }
 
 func pickGaugeStation(stations []Station) (*Station, int) {
@@ -517,72 +601,111 @@ func (c *solveContext) applyState(state []float64) {
 	}
 }
 
-// computeResiduals returns the residual vector: 2 angular rows per
-// observation followed by one Tikhonov row per regularized slot.
+// computeOneObsResidual returns the (az, el) residual rows for a single
+// observation. Uses cached entity indices (obsStationIdx/PhotoIdx/CPIdx) so
+// the inner FD loop never touches the per-ID maps.
 //
-// Observation rows: az-row = WrapPi(az_pred − az_target) · cos(el_target),
-// el-row = el_pred − el_target. The cos(el) weight on the az row makes the
-// pair a true tangent-plane angular distance — 1° at the horizon weighs
-// more arc-length than 1° near the zenith.
-//
-// Regularization rows: λ·p, pulling the slot value toward zero. Adds λ²
-// to that slot's diagonal of JᵀJ and −λ²·p to its gradient — equivalent
-// to a Gaussian N(0, 1/λ) prior on the parameter.
-func (c *solveContext) computeResiduals() []float64 {
-	r := make([]float64, 2*len(c.obs)+c.regCount)
-	for k, o := range c.obs {
-		pIdx := c.photoIdx[o.PhotoID]
-		pose := c.photoPose[pIdx]
-		stID := c.problem.Photos[pIdx].StationID
-		sIdx := c.stationIdx[stID]
-		cpIdx := c.cpIdx[o.ControlPointID]
+// az-row = WrapPi(az_pred − az_target) · cos(el_target),
+// el-row = el_pred − el_target. The cos(el) weight makes 1° at the horizon
+// weigh more arc-length than 1° near the zenith.
+func (c *solveContext) computeOneObsResidual(k int) (float64, float64) {
+	o := c.obs[k]
+	pIdx := c.obsPhotoIdx[k]
+	pose := c.photoPose[pIdx]
+	sIdx := c.obsStationIdx[k]
+	cpIdx := c.obsCPIdx[k]
 
-		dE := c.cpENU[cpIdx][0] - c.stationENU[sIdx][0]
-		dN := c.cpENU[cpIdx][1] - c.stationENU[sIdx][1]
-		dU := c.cpENU[cpIdx][2] - c.stationENU[sIdx][2]
+	dE := c.cpENU[cpIdx][0] - c.stationENU[sIdx][0]
+	dN := c.cpENU[cpIdx][1] - c.stationENU[sIdx][1]
+	dU := c.cpENU[cpIdx][2] - c.stationENU[sIdx][2]
 
-		azPred, elPred := ProjectPOI(pose, o.U, o.V)
-		azTgt, elTgt := BearingENU(dE, dN, dU)
+	azPred, elPred := ProjectPOI(pose, o.U, o.V)
+	azTgt, elTgt := BearingENU(dE, dN, dU)
 
-		cosEl := math.Cos(elTgt)
-		if math.Abs(cosEl) < minCosEl {
-			cosEl = math.Copysign(minCosEl, cosEl)
-			if cosEl == 0 {
-				cosEl = minCosEl
-			}
+	cosEl := math.Cos(elTgt)
+	if math.Abs(cosEl) < minCosEl {
+		cosEl = math.Copysign(minCosEl, cosEl)
+		if cosEl == 0 {
+			cosEl = minCosEl
 		}
+	}
 
-		r[2*k] = WrapPi(azPred-azTgt) * cosEl
-		r[2*k+1] = elPred - elTgt
+	return WrapPi(azPred-azTgt) * cosEl, elPred - elTgt
+}
+
+// residualSize returns the number of residual rows: 2 angular rows per
+// observation plus one Tikhonov row per regularized slot.
+func (c *solveContext) residualSize() int { return 2*len(c.obs) + c.regCount }
+
+// computeResidualsInto writes the residual vector into dst (resizing if
+// needed). Returns the populated slice. See computeOneObsResidual for the
+// per-observation rows; reg rows are λ·p, pulling each regularized slot
+// toward zero (equivalent to an N(0, 1/λ) Gaussian prior).
+func (c *solveContext) computeResidualsInto(dst []float64) []float64 {
+	m := c.residualSize()
+	if cap(dst) < m {
+		dst = make([]float64, m)
+	} else {
+		dst = dst[:m]
+	}
+	for k := range c.obs {
+		az, el := c.computeOneObsResidual(k)
+		dst[2*k] = az
+		dst[2*k+1] = el
 	}
 	regIdx := 2 * len(c.obs)
 	for k, s := range c.slots {
 		if s.regWeight == 0 {
 			continue
 		}
-		r[regIdx] = s.regWeight * c.readSlot(k)
+		dst[regIdx] = s.regWeight * c.readSlot(k)
 		regIdx++
 	}
-	return r
+	return dst
 }
 
-// jacobian builds the m×n finite-difference Jacobian. Central difference
-// per slot, perturbing by slot.scale.
-func (c *solveContext) jacobian(_ []float64) *mat.Dense {
-	m := 2*len(c.obs) + c.regCount
-	n := len(c.slots)
-	J := mat.NewDense(m, n, nil)
+// jacobian builds the m×n finite-difference Jacobian using central
+// differences. Sparsity makes this cheap: each slot only touches the rows
+// listed in slotObs[k] (plus its own reg row, if any), so untouched cells
+// in c.jacMat stay at the zero they were initialized to in buildSparsity
+// — that is the invariant that makes the per-iteration reuse safe.
+func (c *solveContext) jacobian() *mat.Dense {
+	J := c.jacMat
+	raw := J.RawMatrix()
+	data := raw.Data
+	stride := raw.Stride
+
 	for k := range c.slots {
-		orig := c.readSlot(k)
+		affected := c.slotObs[k]
+		regRow := c.slotRegRow[k]
+		regWeight := c.slots[k].regWeight
 		eps := c.slots[k].scale
+		inv2eps := 1.0 / (2 * eps)
+		orig := c.readSlot(k)
+
 		c.writeSlot(k, orig+eps)
-		rp := c.computeResiduals()
-		c.writeSlot(k, orig-eps)
-		rn := c.computeResiduals()
-		c.writeSlot(k, orig)
-		for i := 0; i < m; i++ {
-			J.Set(i, k, (rp[i]-rn[i])/(2*eps))
+		for _, obsIdx := range affected {
+			az, el := c.computeOneObsResidual(obsIdx)
+			data[(2*obsIdx)*stride+k] = az
+			data[(2*obsIdx+1)*stride+k] = el
 		}
+
+		c.writeSlot(k, orig-eps)
+		for _, obsIdx := range affected {
+			az, el := c.computeOneObsResidual(obsIdx)
+			i0 := (2*obsIdx)*stride + k
+			i1 := (2*obsIdx+1)*stride + k
+			data[i0] = (data[i0] - az) * inv2eps
+			data[i1] = (data[i1] - el) * inv2eps
+		}
+		// Reg-row derivative is exact: r_reg = regWeight·param ⇒ ∂/∂param =
+		// regWeight. Reg slots (k1/k2) aren't subject to clampSize, so the FD
+		// column is identically the analytic value.
+		if regRow >= 0 {
+			data[regRow*stride+k] = regWeight
+		}
+
+		c.writeSlot(k, orig)
 	}
 	return J
 }
@@ -591,16 +714,18 @@ func (c *solveContext) jacobian(_ []float64) *mat.Dense {
 // real signal (L2 norm ≥ rankDefRel · max-column-norm). Columns below the
 // threshold are pinned for this run and recorded in c.autoLocked.
 func (c *solveContext) detectLiveColumns(J *mat.Dense) []int {
-	_, n := J.Dims()
+	m, n := J.Dims()
 	if n == 0 {
 		return nil
 	}
+	raw := J.RawMatrix()
+	data, stride := raw.Data, raw.Stride
 	norms := make([]float64, n)
 	maxNorm := 0.0
 	for k := 0; k < n; k++ {
 		s := 0.0
-		col := mat.Col(nil, k, J)
-		for _, v := range col {
+		for i := 0; i < m; i++ {
+			v := data[i*stride+k]
 			s += v * v
 		}
 		norms[k] = math.Sqrt(s)
@@ -624,23 +749,35 @@ func (c *solveContext) detectLiveColumns(J *mat.Dense) []int {
 }
 
 // solveNormalEquations forms (JᵀJ + λI) Δx = −Jᵀr on the live subset and
-// returns Δx in the full slot space (zeros on dropped columns).
-func solveNormalEquations(J *mat.Dense, r []float64, live []int, n int) ([]float64, bool) {
+// returns Δx in the full slot space (zeros on dropped columns). Snapshots
+// each live column into a contiguous slice (reusing c.colBuf / c.colSlices
+// across iterations) so the JᵀJ accumulation is a flat dot product rather
+// than nn²/2 mat.Col allocations.
+func (c *solveContext) solveNormalEquations(J *mat.Dense, r []float64, live []int) ([]float64, bool) {
 	nn := len(live)
 	if nn == 0 {
 		return nil, false
 	}
 	m, _ := J.Dims()
+	raw := J.RawMatrix()
+	data, stride := raw.Data, raw.Stride
+
+	cols := c.colSlices[:nn]
+	for a, ka := range live {
+		col := c.colBuf[a*m : (a+1)*m]
+		for i := 0; i < m; i++ {
+			col[i] = data[i*stride+ka]
+		}
+		cols[a] = col
+	}
 
 	JtJ := mat.NewDense(nn, nn, nil)
 	Jtr := mat.NewVecDense(nn, nil)
 
 	for a := 0; a < nn; a++ {
-		ka := live[a]
-		colA := mat.Col(nil, ka, J)
+		colA := cols[a]
 		for b := a; b < nn; b++ {
-			kb := live[b]
-			colB := mat.Col(nil, kb, J)
+			colB := cols[b]
 			s := 0.0
 			for i := 0; i < m; i++ {
 				s += colA[i] * colB[i]
@@ -676,7 +813,7 @@ func solveNormalEquations(J *mat.Dense, r []float64, live []int, n int) ([]float
 		return nil, false
 	}
 
-	dx := make([]float64, n)
+	dx := make([]float64, len(c.slots))
 	for a, ka := range live {
 		dx[ka] = dxLive.AtVec(a)
 	}
