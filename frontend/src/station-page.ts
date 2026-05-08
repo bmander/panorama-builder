@@ -573,6 +573,10 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     getStationCache: stationFields.getNameAndAlt,
     getOtherStations: () => otherStations,
     setOtherStations: (s) => { otherStations = [...s]; },
+    onFlyFrame: (loc, alt) => {
+      stationCones.update(loc, alt, otherCameras, selectedStationId);
+      observationRays.update(loc, alt, buildObservationRays());
+    },
   });
 
   // --- Hydrate + bootstrap -----------------------------------------------

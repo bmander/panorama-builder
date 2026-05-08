@@ -39,6 +39,11 @@ export interface StationNavigationDeps {
   getStationCache: () => { name: string | null; alt: number } | null;
   getOtherStations: () => readonly StationMarker[];
   setOtherStations: (stations: readonly StationMarker[]) => void;
+  // Fired per frame during the fly tween. Hosts use it to update any
+  // world-space overlays whose positions track the camera location
+  // (cones, observation rays, …) — without it those overlays freeze in
+  // their pre-fly positions and visually detach from the moving world.
+  onFlyFrame?: (loc: LatLng, alt: number) => void;
 }
 
 export interface StationNavigation {
@@ -51,6 +56,7 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
     currentStationId,
     getStationLocation, setStationLocation, getStationCache,
     getOtherStations, setOtherStations,
+    onFlyFrame,
   } = deps;
 
   let flyInProgress = false;
@@ -121,13 +127,21 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
           terrain.setCameraHeight(alt);
           viewer.setAzAlt(srcAz + azDelta * k, srcAlt + (dstAlt - srcAlt) * k);
           viewer.setFov(srcFov + (dstFov - srcFov) * k);
-          // Only the green station dots track the moving camera. CP markers
-          // are hidden above; building their per-frame markers list is wasted
-          // work (and would also rebuild the line geometry).
+          // CP markers are hidden above; the dots / cones / rays are pure
+          // world-space and track the moving camera per frame. Visual
+          // quirk at k=1: the destination's cone apex / ray origins
+          // coincide with the camera at world (0,0,0), so the GPU clips
+          // those line segments at the near plane and they emerge from a
+          // small starburst near image center instead of one converging
+          // point. We accept this — landing slightly back of the lens to
+          // hide it would put the camera at a non-station position.
           stationDots.update(loc, alt, getOtherStations());
+          onFlyFrame?.(loc, alt);
           viewer.requestRender();
+          // Defer resolve by one rAF so the viewer's continuous render loop
+          // paints the k=1 state before location.assign tears the page down.
           if (tau < 1) requestAnimationFrame(step);
-          else resolve();
+          else requestAnimationFrame(() => { resolve(); });
         }
         requestAnimationFrame(step);
       });
