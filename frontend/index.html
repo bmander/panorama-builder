@@ -171,13 +171,7 @@
     <div class="settings-row station-pos">
       <label class="settings-inline" title="When the photographer's camera was set up at this site. Used by the index-map time filter to decide which CPs were extant at the time of capture.">captured at <input type="datetime-local" id="station-captured-at" step="60"></label>
     </div>
-    <label class="settings-inline">Terrain
-      <select id="terrain-mode">
-        <option value="off">off</option>
-        <option value="wireframe">wireframe</option>
-        <option value="shaded">shaded</option>
-      </select>
-    </label>
+    <label class="settings-check"><input type="checkbox" id="terrain-toggle" checked> Terrain</label>
     <label class="settings-inline">Sun <input type="datetime-local" id="sun-datetime" step="60"></label>
     <label class="settings-inline" id="overlay-opacity-row">Photo opacity
       <input type="range" id="overlay-opacity" min="0" max="100" value="100" step="1">

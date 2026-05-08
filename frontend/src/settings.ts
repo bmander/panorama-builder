@@ -11,7 +11,7 @@ import { solarAzAlt } from './solar.js';
 import { formatLocalDateTime, getElement } from './types.js';
 import type { LatLng } from './types.js';
 import type { Viewer } from './viewer.js';
-import type { TerrainView, TerrainMode } from './terrain.js';
+import type { TerrainView } from './terrain.js';
 import type { SunMarker } from './sun-marker.js';
 
 export interface SettingsPanel {
@@ -35,7 +35,7 @@ export function createSettingsPanel({
   viewer, terrain, sunMarker,
   getCameraLocation, onShowAllCPsChange,
 }: CreateSettingsPanelOptions): SettingsPanel {
-  const terrainModeEl = getElement<HTMLSelectElement>('terrain-mode');
+  const terrainToggleEl = getElement<HTMLInputElement>('terrain-toggle');
   const sunDateTimeEl = getElement<HTMLInputElement>('sun-datetime');
   const settingsBtnEl = getElement<HTMLButtonElement>('settings-btn');
   const settingsPanelEl = getElement('settings-panel');
@@ -61,8 +61,10 @@ export function createSettingsPanel({
   }
   refreshRefractionAvailability();
 
-  terrainModeEl.addEventListener('change', () => {
-    terrain.setMode(terrainModeEl.value as TerrainMode);
+  // Apply the checkbox's initial (HTML default = on) state, then listen.
+  terrain.setMode(terrainToggleEl.checked ? 'shaded' : 'off');
+  terrainToggleEl.addEventListener('change', () => {
+    terrain.setMode(terrainToggleEl.checked ? 'shaded' : 'off');
   });
 
   sunDateTimeEl.addEventListener('change', () => {
