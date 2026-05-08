@@ -33,6 +33,13 @@ type Server struct {
 }
 
 func main() {
+	// Force every time.Time we touch (incl. those scanned from TIMESTAMPTZ
+	// by pgx) into UTC for JSON serialization. Otherwise the Go runtime's
+	// host TZ leaks: pre-1883 Pacific instants come back with the LMT
+	// offset -07:52:58, which JSON-encodes truncated to -07:52, silently
+	// shifting the instant by 58s on every round-trip.
+	time.Local = time.UTC
+
 	listenAddr := envDefault("LISTEN_ADDR", ":8080")
 	dbURL := envDefault("DATABASE_URL",
 		"postgres://panorama:panorama@localhost:5432/panorama?sslmode=disable")
