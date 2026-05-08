@@ -14,7 +14,7 @@
 import * as THREE from 'three';
 import { latLngToCameraRelativeMeters } from './geo.js';
 import { dirFromAzAlt, OVERLAY_R, widthFromSizeRad } from './overlay-photos.js';
-import { OVERLAY_RENDER_ORDER } from './dot-layer.js';
+import { clearLineGroup, makeOverlayLineSegments } from './overlay-lines.js';
 import { radToDeg } from './mathx.js';
 import type { LatLng } from './types.js';
 
@@ -88,17 +88,8 @@ export function createNullCpRays(opts: CreateNullCpRaysOptions): NullCpRays {
   let lastCameraHeight = 0;
   let lastRays: readonly NullCpRay[] = [];
 
-  function clearGeom(): void {
-    for (const child of group.children) {
-      if (child instanceof THREE.LineSegments) {
-        (child.geometry as THREE.BufferGeometry).dispose();
-      }
-    }
-    group.clear();
-  }
-
   function rebuild(): void {
-    clearGeom();
+    clearLineGroup(group);
     if (lastCamLoc === null || lastRays.length === 0) {
       requestRender();
       return;
@@ -130,17 +121,13 @@ export function createNullCpRays(opts: CreateNullCpRaysOptions): NullCpRays {
       positions[i++] = sy + localPos.y * RAY_LENGTH_M;
       positions[i++] = sz + localPos.z * RAY_LENGTH_M;
     }
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const segs = new THREE.LineSegments(geom, mat);
-    segs.renderOrder = OVERLAY_RENDER_ORDER;
-    segs.frustumCulled = false;
-    group.add(segs);
+    group.add(makeOverlayLineSegments(positions, mat));
     requestRender();
   }
 
   return {
     update(camLoc, cameraHeight, rays) {
+      if (camLoc === lastCamLoc && cameraHeight === lastCameraHeight && rays === lastRays) return;
       lastCamLoc = camLoc;
       lastCameraHeight = cameraHeight;
       lastRays = rays;

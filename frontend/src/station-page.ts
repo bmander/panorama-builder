@@ -19,6 +19,8 @@ import { createNullCpRays } from './null-cp-rays.js';
 import type { NullCpRay } from './null-cp-rays.js';
 import { createStationMarkers } from './station-markers.js';
 import type { StationMarker } from './station-markers.js';
+import { createStationCones } from './station-cones.js';
+import type { StationCone } from './station-cones.js';
 import { findHitDot } from './dot-layer.js';
 import {
   cpHref, cpLabel, cpLifespanFromApi, getElement, indexStationHref, isExtantAt,
@@ -96,7 +98,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     scene: viewer.scene,
     requestRender: () => { viewer.requestRender(); },
   });
+  const stationCones = createStationCones({
+    scene: viewer.scene,
+    requestRender: () => { viewer.requestRender(); },
+  });
   let otherStations: StationMarker[] = [];
+  let otherStationCones: StationCone[] = [];
   const baker = createBaker({
     renderer: viewer.renderer,
     scene: viewer.scene,
@@ -105,6 +112,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       cpColumns.setVisible(visible);
       stationDots.setVisible(visible);
       nullCpRays.setVisible(visible);
+      stationCones.setVisible(visible);
     },
   });
   const hud = createHud(() => {
@@ -239,6 +247,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     }));
     cpColumns.update(stationLocation, terrain.getCameraHeight(), markers);
     stationDots.update(stationLocation, terrain.getCameraHeight(), otherStations);
+    stationCones.update(stationLocation, terrain.getCameraHeight(), otherStationCones);
     refreshNullCpRays();
   }
 
@@ -650,6 +659,17 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         .filter(st => st.id !== id)
         .map(st => ({ id: st.id, name: st.name, anchor: { lat: st.lat, lng: st.lng }, altitude: st.alt }));
       refreshControlPointColumns();
+      // Non-blocking: dots already render without the cone data.
+      void Promise.all(otherStations.map(s => api.getStation(s.id)))
+        .then(hydrated => {
+          otherStationCones = hydrated.flatMap(d => d.photos.map(p => ({
+            fromLat: d.station.lat, fromLng: d.station.lng, fromAlt: d.station.alt,
+            photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
+            sizeRad: p.size_rad, aspect: p.aspect,
+          })));
+          refreshControlPointColumns();
+        })
+        .catch((err: unknown) => { console.error('fetch other-station photos failed:', err); });
     } else {
       console.error('list stations failed:', stationsRes.reason);
     }

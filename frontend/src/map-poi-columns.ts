@@ -17,8 +17,9 @@
 import * as THREE from 'three';
 import type { LatLng, ControlPointView } from './types.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
-import { createDotLayer, OVERLAY_RENDER_ORDER } from './dot-layer.js';
+import { createDotLayer } from './dot-layer.js';
 import type { Dot } from './dot-layer.js';
+import { clearLineGroup, makeOverlayLine } from './overlay-lines.js';
 import { norm2 } from './mathx.js';
 
 const MARKER_COLOR = 0x5080ff;
@@ -94,19 +95,10 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
     return m.selected || m.id === hoveredId;
   }
 
-  function clearLines(): void {
-    for (const child of lineGroup.children) {
-      if (child instanceof THREE.Line) {
-        (child.geometry as THREE.BufferGeometry).dispose();
-      }
-    }
-    lineGroup.clear();
-  }
-
   const scratch = new THREE.Vector3();
 
   function rebuild(): void {
-    clearLines();
+    clearLineGroup(lineGroup);
     if (lastCamLoc === null || lastMarkers.length === 0) {
       dots.update(null, 0, []);
       requestRender();
@@ -139,12 +131,7 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
     ax: number, ay: number, az: number,
     bx: number, by: number, bz: number,
   ): void {
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.Float32BufferAttribute([ax, ay, az, bx, by, bz], 3));
-    const line = new THREE.Line(geom, mat);
-    line.renderOrder = OVERLAY_RENDER_ORDER;
-    line.frustumCulled = false;
-    lineGroup.add(line);
+    lineGroup.add(makeOverlayLine([ax, ay, az, bx, by, bz], mat));
   }
 
   return {
