@@ -854,6 +854,7 @@ components:
         max_iters: { type: integer, minimum: 1, maximum: 10000, description: GN iteration cap (synchronous default 30, streaming default 1000) }
         residual_tol_rad: { type: number, format: double, description: per-residual-RMS convergence threshold, default 1e-4 }
         rel_improve_tol: { type: number, format: double, description: per-iteration fractional reduction in residual RMS below which the run is considered converged (default 1e-4); push smaller for tighter convergence at the cost of more iterations }
+        k_reg_lambda: { type: number, format: double, description: Tikhonov regularization weight on photo dist_k1 / dist_k2 lens-distortion slots (default 0.05; pass any negative value to disable, leave omitted to use the default) }
         dry_run:
           type: boolean
           description: |

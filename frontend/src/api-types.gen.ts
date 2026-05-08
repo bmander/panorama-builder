@@ -687,6 +687,11 @@ export interface components {
              */
             rel_improve_tol?: number;
             /**
+             * Format: double
+             * @description Tikhonov regularization weight on photo dist_k1 / dist_k2 lens-distortion slots (default 0.05; pass any negative value to disable
+             */
+            k_reg_lambda?: number;
+            /**
              * @description When true, run the solver but skip the DB writeback. The response
              *     still carries iterations, residuals, auto_locked_columns, and the
              *     diff that would have been applied. Useful for diagnosis.

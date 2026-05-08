@@ -137,6 +137,9 @@
       <label class="modal-field" title="Per-iteration fractional reduction in residual RMS below which the run is considered converged. Push smaller (e.g. 1e-6) for tighter convergence at the cost of more iterations. Default 1e-4 = stop when each iteration improves by less than 0.01%.">Convergence tolerance (relative)
         <input type="text" id="solve-rel-improve-tol" value="1e-4">
       </label>
+      <label class="modal-field" title="Tikhonov regularization weight on each photo's dist_k1 / dist_k2 lens-distortion slots. Pulls weakly-observed coefficients toward zero so they don't run away on narrow-FOV photos. Higher = stronger pull. 0 falls back to the default 0.05; enter a negative number to disable.">k1/k2 regularization (λ)
+        <input type="text" id="solve-k-reg-lambda" value="0.05">
+      </label>
       <label class="settings-check"><input type="checkbox" id="solve-dry-run"> Dry run (don't write to DB)</label>
       <div id="solve-progress" hidden>
         <div id="solve-status"></div>

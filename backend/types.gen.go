@@ -291,6 +291,9 @@ type SolveConfig struct {
 	// diff that would have been applied. Useful for diagnosis.
 	DryRun *bool `json:"dry_run,omitempty"`
 
+	// KRegLambda Tikhonov regularization weight on photo dist_k1 / dist_k2 lens-distortion slots (default 0.05; pass any negative value to disable
+	KRegLambda *float64 `json:"k_reg_lambda,omitempty"`
+
 	// MaxIters GN iteration cap (synchronous default 30
 	MaxIters *int `json:"max_iters,omitempty"`
 
