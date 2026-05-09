@@ -489,6 +489,30 @@ paths:
               schema: { $ref: '#/components/schemas/ControlPointObservations' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /control-points/{id}/visible-photos:
+    parameters:
+      - $ref: '#/components/parameters/ControlPointId'
+    get:
+      tags: [control-points]
+      summary: List photos whose viewshed should contain this control point
+      description: |
+        Returns photos where the CP's estimated location falls inside the
+        photo's horizontal field of view AND the station's capture time
+        falls inside the CP's lifespan AND no image measurement for this
+        CP exists yet on the photo. The result is the inverse of the
+        observations list — candidate photos still missing a measurement.
+
+        Returns an empty list (200) when the CP has no estimated
+        location; the caller decides how to render that state.
+      operationId: listControlPointVisiblePhotos
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ControlPointVisiblePhotos' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
   parameters:
     StationId:
@@ -705,6 +729,33 @@ components:
         image_measurements:
           type: array
           items: { $ref: '#/components/schemas/ControlPointImageObservation' }
+
+    ControlPointVisiblePhoto:
+      type: object
+      description: |
+        A photo whose horizontal viewshed contains the CP's estimated
+        location and whose station capture time overlaps the CP's
+        lifespan, but which has no image measurement linking to the CP
+        yet. Pose and station coordinates used for the server-side
+        viewshed test are intentionally not exposed.
+      required:
+        - photo_id
+        - station_id
+        - station_name
+        - station_captured_at
+      properties:
+        photo_id: { $ref: '#/components/schemas/Id' }
+        station_id: { $ref: '#/components/schemas/Id' }
+        station_name: { type: string, nullable: true }
+        station_captured_at: { type: string, format: date-time }
+
+    ControlPointVisiblePhotos:
+      type: object
+      required: [photos]
+      properties:
+        photos:
+          type: array
+          items: { $ref: '#/components/schemas/ControlPointVisiblePhoto' }
 
     HydratedStation:
       type: object

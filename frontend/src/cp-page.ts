@@ -272,6 +272,7 @@ function attachDateEditor(
 function attachLifespanLabel(
   cp: api.ApiControlPoint, labelEl: HTMLElement,
   dateField: DateField, flagField: BoundFlagField,
+  onValueChanged?: () => void,
 ): () => void {
   const verb = dateField === 'started_at' ? 'started' : 'ended';
   const boundWord = flagField === 'started_after' ? 'after' : 'before';
@@ -290,7 +291,7 @@ function attachLifespanLabel(
     inflight = true;
     const next = !cp[flagField];
     api.updateControlPoint(cp.id, { [flagField]: next }).then(
-      updated => { cp[flagField] = updated[flagField]; },
+      updated => { cp[flagField] = updated[flagField]; onValueChanged?.(); },
       (err: unknown) => { console.error('lifespan flag toggle failed:', err); },
     ).finally(() => {
       inflight = false;
@@ -399,6 +400,42 @@ function renderObservations(obs: api.ApiControlPointObservations): void {
   }
 }
 
+function renderVisiblePhotosEmpty(text: string): void {
+  const list = getElement('visible-photos');
+  list.replaceChildren();
+  const li = document.createElement('li');
+  li.className = 'empty';
+  li.textContent = text;
+  list.appendChild(li);
+}
+
+function renderVisiblePhotos(
+  cp: api.ApiControlPoint, payload: api.ApiControlPointVisiblePhotos,
+): void {
+  if (cp.est_lat === null || cp.est_lng === null) {
+    renderVisiblePhotosEmpty('Estimate a location to see candidate photos.');
+    return;
+  }
+  if (payload.photos.length === 0) {
+    renderVisiblePhotosEmpty('no candidate photos');
+    return;
+  }
+  const list = getElement('visible-photos');
+  list.replaceChildren();
+  for (const p of payload.photos) {
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    const a = document.createElement('a');
+    a.href = stationHref(p.station_id);
+    a.textContent = stationLabel(p.station_id, p.station_name);
+    const captured = document.createElement('span');
+    captured.className = 'captured-at';
+    captured.textContent = new Date(p.station_captured_at).toLocaleString();
+    meta.append(captured, ' in ', a);
+    appendObservationItem(list, 'image', meta);
+  }
+}
+
 type LockField = 'lock_est_lat' | 'lock_est_lng' | 'lock_est_alt';
 
 function attachLockToggle(cp: api.ApiControlPoint, elId: string, field: LockField): void {
@@ -463,9 +500,10 @@ async function main(): Promise<void> {
   idEl.textContent = id;
   nameEl.textContent = 'Loading…';
 
-  const [cpResult, obsResult] = await Promise.allSettled([
+  const [cpResult, obsResult, visResult] = await Promise.allSettled([
     api.getControlPoint(id),
     api.listControlPointObservations(id),
+    api.listControlPointVisiblePhotos(id),
   ]);
 
   if (cpResult.status === 'rejected') {
@@ -482,19 +520,47 @@ async function main(): Promise<void> {
   };
   refreshMapLink();
 
+  // Many editor callbacks fire `refreshVisiblePhotos` and the user may edit
+  // faster than the request round-trips; the seq counter prevents an earlier
+  // slow response from overwriting a later one's render.
+  let visSeq = 0;
+  const refreshVisiblePhotos = (): void => {
+    const my = ++visSeq;
+    api.listControlPointVisiblePhotos(id).then(
+      payload => { if (my === visSeq) renderVisiblePhotos(cp, payload); },
+      (err: unknown) => {
+        if (my !== visSeq) return;
+        console.error('visible-photos fetch failed:', err);
+        renderVisiblePhotosEmpty('Failed to load candidate photos.');
+      },
+    );
+  };
+  const onLocationChanged = (): void => { refreshMapLink(); refreshVisiblePhotos(); };
+
   attachNameEditor(cp, nameEl);
   attachNotesEditor(cp, getElement('notes'));
-  const refreshLat = attachLatLngEditor(cp, latEl, 'est_lat', refreshMapLink);
-  const refreshLng = attachLatLngEditor(cp, lngEl, 'est_lng', refreshMapLink);
+  const refreshLat = attachLatLngEditor(cp, latEl, 'est_lat', onLocationChanged);
+  const refreshLng = attachLatLngEditor(cp, lngEl, 'est_lng', onLocationChanged);
   const refreshAlt = attachAltEditor(cp, altEl);
   const refreshStartedLabel = attachLifespanLabel(
-    cp, getElement('started_at_label'), 'started_at', 'started_after');
+    cp, getElement('started_at_label'), 'started_at', 'started_after',
+    refreshVisiblePhotos);
   const refreshEndedLabel = attachLifespanLabel(
-    cp, getElement('ended_at_label'), 'ended_at', 'ended_before');
-  attachDateEditor(cp, getElement('started_at'), 'started_at', refreshStartedLabel);
-  attachDateEditor(cp, getElement('ended_at'), 'ended_at', refreshEndedLabel);
+    cp, getElement('ended_at_label'), 'ended_at', 'ended_before',
+    refreshVisiblePhotos);
+  attachDateEditor(cp, getElement('started_at'), 'started_at',
+    () => { refreshStartedLabel(); refreshVisiblePhotos(); });
+  attachDateEditor(cp, getElement('ended_at'), 'ended_at',
+    () => { refreshEndedLabel(); refreshVisiblePhotos(); });
   attachLocationLockToggle(cp, 'lock-est-location');
   attachLockToggle(cp, 'lock-est-alt', 'lock_est_alt');
+
+  if (visResult.status === 'fulfilled') {
+    renderVisiblePhotos(cp, visResult.value);
+  } else {
+    console.error('visible-photos fetch failed:', visResult.reason);
+    renderVisiblePhotosEmpty('Failed to load candidate photos.');
+  }
 
   let obsCount = 0;
   if (obsResult.status === 'fulfilled') {
@@ -509,6 +575,7 @@ async function main(): Promise<void> {
       refreshLng();
       refreshAlt();
       refreshMapLink();
+      refreshVisiblePhotos();
     });
   } else {
     console.error('observations fetch failed:', obsResult.reason);

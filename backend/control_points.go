@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -271,6 +272,82 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, ControlPointObservations{
 		ImageMeasurements: images,
 	})
+}
+
+// listControlPointVisiblePhotos returns photos whose horizontal viewshed
+// contains this CP's estimated location, whose station capture time falls
+// inside the CP's lifespan, and which don't already have an image
+// measurement for this CP.
+func (s *Server) listControlPointVisiblePhotos(w http.ResponseWriter, r *http.Request) {
+	id := requireID(w, r, "id")
+	if id == "" {
+		return
+	}
+	q := `SELECT ` + controlPointCols + ` FROM control_points WHERE id = $1`
+	cp, err := scanControlPoint(s.db.QueryRow(r.Context(), q, id))
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	out := ControlPointVisiblePhotos{Photos: []ControlPointVisiblePhoto{}}
+	if cp.EstLat == nil || cp.EstLng == nil {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+
+	where := []string{
+		"p.id NOT IN (SELECT photo_id FROM image_measurements WHERE control_point_id = $1)",
+	}
+	args := []any{id}
+	if cp.StartedAt != nil {
+		op := ">="
+		if cp.StartedAfter {
+			op = ">"
+		}
+		args = append(args, *cp.StartedAt)
+		where = append(where, fmt.Sprintf("st.captured_at %s $%d", op, len(args)))
+	}
+	if cp.EndedAt != nil {
+		op := "<="
+		if cp.EndedBefore {
+			op = "<"
+		}
+		args = append(args, *cp.EndedAt)
+		where = append(where, fmt.Sprintf("st.captured_at %s $%d", op, len(args)))
+	}
+	sql := `
+		SELECT p.id, p.station_id, st.name, st.captured_at,
+		       st.lat, st.lng, p.photo_az, p.size_rad
+		FROM photos p
+		JOIN stations st ON st.id = p.station_id
+		WHERE ` + strings.Join(where, " AND ") + `
+		ORDER BY st.captured_at, p.id`
+	rows, err := s.db.Query(r.Context(), sql, args...)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p ControlPointVisiblePhoto
+		var stationLat, stationLng, photoAz, sizeRad float64
+		if err := rows.Scan(
+			&p.PhotoID, &p.StationID, &p.StationName, &p.StationCapturedAt,
+			&stationLat, &stationLng, &photoAz, &sizeRad,
+		); err != nil {
+			writeErrorFromDB(w, err)
+			return
+		}
+		if !inHorizontalViewshed(stationLat, stationLng, *cp.EstLat, *cp.EstLng, photoAz, sizeRad) {
+			continue
+		}
+		out.Photos = append(out.Photos, p)
+	}
+	if err := rows.Err(); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // controlPointsByStation returns CPs referenced by any image measurement on

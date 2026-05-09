@@ -27,6 +27,8 @@ export type PhotoUpdate = Schemas['PhotoUpdate'];
 export type ImageMeasurementUpdate = Schemas['ImageMeasurementUpdate'];
 export type ApiControlPointObservations = Schemas['ControlPointObservations'];
 export type ApiControlPointImageObservation = Schemas['ControlPointImageObservation'];
+export type ApiControlPointVisiblePhotos = Schemas['ControlPointVisiblePhotos'];
+export type ApiControlPointVisiblePhoto = Schemas['ControlPointVisiblePhoto'];
 export type SolveConfig = Schemas['SolveConfig'];
 export type SolveResult = Schemas['SolveResult'];
 export type EntityChange = Schemas['EntityChange'];
@@ -149,6 +151,12 @@ export function getControlPoint(id: string): Promise<ApiControlPoint> {
 export function listControlPointObservations(id: string): Promise<ApiControlPointObservations> {
   return request<ApiControlPointObservations>(
     'GET', `/control-points/${encodeURIComponent(id)}/observations`,
+  );
+}
+
+export function listControlPointVisiblePhotos(id: string): Promise<ApiControlPointVisiblePhotos> {
+  return request<ApiControlPointVisiblePhotos>(
+    'GET', `/control-points/${encodeURIComponent(id)}/visible-photos`,
   );
 }
 

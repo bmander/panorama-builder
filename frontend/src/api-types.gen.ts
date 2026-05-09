@@ -329,6 +329,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/control-points/{id}/visible-photos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ControlPointId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List photos whose viewshed should contain this control point
+         * @description Returns photos where the CP's estimated location falls inside the
+         *     photo's horizontal field of view AND the station's capture time
+         *     falls inside the CP's lifespan AND no image measurement for this
+         *     CP exists yet on the photo. The result is the inverse of the
+         *     observations list — candidate photos still missing a measurement.
+         *
+         *     Returns an empty list (200) when the CP has no estimated
+         *     location; the caller decides how to render that state.
+         */
+        get: operations["listControlPointVisiblePhotos"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -513,6 +542,23 @@ export interface components {
         };
         ControlPointObservations: {
             image_measurements: components["schemas"]["ControlPointImageObservation"][];
+        };
+        /**
+         * @description A photo whose horizontal viewshed contains the CP's estimated
+         *     location and whose station capture time overlaps the CP's
+         *     lifespan, but which has no image measurement linking to the CP
+         *     yet. Pose and station coordinates used for the server-side
+         *     viewshed test are intentionally not exposed.
+         */
+        ControlPointVisiblePhoto: {
+            photo_id: components["schemas"]["Id"];
+            station_id: components["schemas"]["Id"];
+            station_name: string | null;
+            /** Format: date-time */
+            station_captured_at: string;
+        };
+        ControlPointVisiblePhotos: {
+            photos: components["schemas"]["ControlPointVisiblePhoto"][];
         };
         HydratedStation: {
             station: components["schemas"]["Station"];
@@ -1401,6 +1447,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ControlPointObservations"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listControlPointVisiblePhotos: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ControlPointId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControlPointVisiblePhotos"];
                 };
             };
             404: components["responses"]["NotFound"];

@@ -112,6 +112,26 @@ type ControlPointPatch struct {
 	StartedAt    *time.Time `json:"started_at,omitempty"`
 }
 
+// ControlPointVisiblePhoto A photo whose horizontal viewshed contains the CP's estimated
+// location and whose station capture time overlaps the CP's
+// lifespan, but which has no image measurement linking to the CP
+// yet. Pose and station coordinates used for the server-side
+// viewshed test are intentionally not exposed.
+type ControlPointVisiblePhoto struct {
+	// PhotoID 13-character base32 server-assigned id
+	PhotoID           ID        `json:"photo_id"`
+	StationCapturedAt time.Time `json:"station_captured_at"`
+
+	// StationID 13-character base32 server-assigned id
+	StationID   ID      `json:"station_id"`
+	StationName *string `json:"station_name"`
+}
+
+// ControlPointVisiblePhotos defines model for ControlPointVisiblePhotos.
+type ControlPointVisiblePhotos struct {
+	Photos []ControlPointVisiblePhoto `json:"photos"`
+}
+
 // CreateStationRequest POST body. lat/lng/captured_at are required; other fields default if omitted.
 type CreateStationRequest struct {
 	// Alt defaults to 0 when omitted
