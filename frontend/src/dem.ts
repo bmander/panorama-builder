@@ -13,8 +13,10 @@ export const TILE_PX = 256;
 
 const TILE_URL = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium';
 
-// 128 entries × 256 KB per decoded tile ≈ 32 MB cap.
-const cache = createTileCache<Float32Array>(128);
+// 256 entries × 256 KB per decoded tile ≈ 64 MB cap. Sized to hold one
+// full progressive rebuild (175 unique DEM tiles across 7 rings) plus
+// headroom so the next mode-toggle rebuild hits cache.
+const cache = createTileCache<Float32Array>(256);
 
 export function tileKey(z: number, x: number, y: number): string {
   return `${z.toString()}/${x.toString()}/${y.toString()}`;

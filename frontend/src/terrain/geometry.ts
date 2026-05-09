@@ -72,42 +72,57 @@ const SURVEY_REFRACTION_K = 0.14;
 export const CURVATURE_FACTOR_GEOMETRIC = 1 / (2 * R_EARTH);
 export const CURVATURE_FACTOR_REFRACTED = (1 - SURVEY_REFRACTION_K) / (2 * R_EARTH);
 
-// Threaded from each ring to the next-coarser one. The inner-ring outer
-// edge is in tile-fractional coords at the *inner ring's* zoom; the outer
-// ring halves them (one zoom step ⇒ tile width × 2) to map onto its grid.
-export interface PrevRing {
-  camGroundElev: number;
+// Outer-edge rectangle of a ring in its own zoom's tile-fractional coords.
+// The next-coarser ring uses this to carve a matching hole, halving each
+// coordinate (one zoom step ⇒ tile width × 2) to map onto its grid.
+export interface RingHole {
   innerTileXMin: number;
   innerTileXMax: number;
   innerTileYMin: number;
   innerTileYMax: number;
 }
 
-export interface RingGeometry extends PrevRing {
+export interface RingGeometry {
   positions: Float32Array;
   uvs: Float32Array;
   indices: Uint32Array;
 }
 
+// Cheap, tile-data-free derivation: a ring's outer extent depends only on
+// the camera's lat/lng and its (zoom, radiusTiles) spec. Lets the rebuild
+// orchestrator pre-compute every ring's hole before any tile arrives.
+export function ringBounds(camLoc: LatLng, spec: RingSpec): RingHole {
+  const cx = Math.floor(lngToTileX(camLoc.lng, spec.zoom));
+  const cy = Math.floor(latToTileY(camLoc.lat, spec.zoom));
+  return {
+    innerTileXMin: cx - spec.radiusTiles,
+    innerTileXMax: cx + spec.radiusTiles + 1,
+    innerTileYMin: cy - spec.radiusTiles,
+    innerTileYMax: cy + spec.radiusTiles + 1,
+  };
+}
+
 // Sample elevation at fractional pixel coords within a tile (nearest-neighbor).
-function sampleTile(elev: Float32Array, px: number, py: number): number {
+export function sampleTile(elev: Float32Array, px: number, py: number): number {
   const ix = clamp(Math.floor(px), 0, TILE_PX - 1);
   const iy = clamp(Math.floor(py), 0, TILE_PX - 1);
   return elev[iy * TILE_PX + ix]!;
 }
 
-// Build one ring's geometry. When `prev` is supplied, the ring reuses the
-// inner ring's ground elevation so meshes line up vertically, and skips
-// quads whose four vertices all sit inside the inner ring's outer rectangle.
-// With the consecutive-zoom schedule, that rectangle's edges land exactly on
-// this ring's vertex grid — every quad is fully inside or fully outside, so
-// the skip is a true clean cut: no overlap, no z-fighting at the seam.
+// Build one ring's geometry. `camGroundElev` is the y-reference shared
+// across all rings (sampled once at rebuild start so rings line up
+// vertically). `hole`, if supplied, is the next-finer ring's outer
+// rectangle; the build skips quads whose four corners all sit inside it.
+// With the consecutive-zoom schedule the hole's edges land exactly on this
+// ring's vertex grid, so every quad is fully inside or fully outside —
+// a true clean cut: no overlap, no z-fighting at the seam.
 export function buildRingGeometry(
   camLoc: LatLng,
   spec: RingSpec,
   curvatureFactor: number,
   demTiles: ReadonlyMap<string, Float32Array>,
-  prev?: PrevRing,
+  camGroundElev: number,
+  hole?: RingHole,
 ): RingGeometry {
   const { zoom, radiusTiles, stride } = spec;
 
@@ -115,11 +130,6 @@ export function buildRingGeometry(
   const cyFrac = latToTileY(camLoc.lat, zoom);
   const cx = Math.floor(cxFrac);
   const cy = Math.floor(cyFrac);
-
-  const centerTile = demTiles.get(tileKey(zoom, cx, cy));
-  const camGroundElev = prev?.camGroundElev ?? (centerTile
-    ? sampleTile(centerTile, (cxFrac - cx) * TILE_PX, (cyFrac - cy) * TILE_PX)
-    : 0);
 
   // Build the mesh: one vertex per (sampled) DEM pixel across the tile window,
   // with seams welded by including the rightmost/topmost edge.
@@ -186,11 +196,11 @@ export function buildRingGeometry(
   // integer index ranges. The divisor is 2 because computeRings emits
   // adjacent zoom levels; Math.round absorbs only float noise.
   let iHoleMin = 0, iHoleMax = 0, jHoleMin = 0, jHoleMax = 0;
-  if (prev) {
-    iHoleMin = Math.round((prev.innerTileXMin / 2 - (cx - radiusTiles)) * samplesPerTile);
-    iHoleMax = Math.round((prev.innerTileXMax / 2 - (cx - radiusTiles)) * samplesPerTile);
-    jHoleMin = Math.round((prev.innerTileYMin / 2 - (cy - radiusTiles)) * samplesPerTile);
-    jHoleMax = Math.round((prev.innerTileYMax / 2 - (cy - radiusTiles)) * samplesPerTile);
+  if (hole) {
+    iHoleMin = Math.round((hole.innerTileXMin / 2 - (cx - radiusTiles)) * samplesPerTile);
+    iHoleMax = Math.round((hole.innerTileXMax / 2 - (cx - radiusTiles)) * samplesPerTile);
+    jHoleMin = Math.round((hole.innerTileYMin / 2 - (cy - radiusTiles)) * samplesPerTile);
+    jHoleMax = Math.round((hole.innerTileYMax / 2 - (cy - radiusTiles)) * samplesPerTile);
   }
 
   // Skip quads with all four corners inside the inner-ring hole. Boundary
@@ -201,7 +211,7 @@ export function buildRingGeometry(
   const indexBuf = new Uint32Array(quadCount * 6);
   let k = 0;
   for (let j = 0; j < ny - 1; j++) {
-    const jInside = prev !== undefined && j >= jHoleMin && j + 1 <= jHoleMax;
+    const jInside = hole !== undefined && j >= jHoleMin && j + 1 <= jHoleMax;
     for (let i = 0; i < nx - 1; i++) {
       if (jInside && i >= iHoleMin && i + 1 <= iHoleMax) continue;
       const a = j * nx + i;
@@ -215,14 +225,5 @@ export function buildRingGeometry(
   // slice() (not subarray) so the over-allocation isn't retained via the view.
   const indices = indexBuf.slice(0, k);
 
-  return {
-    positions,
-    uvs,
-    indices,
-    camGroundElev,
-    innerTileXMin: cx - radiusTiles,
-    innerTileXMax: cx + radiusTiles + 1,
-    innerTileYMin: cy - radiusTiles,
-    innerTileYMax: cy + radiusTiles + 1,
-  };
+  return { positions, uvs, indices };
 }

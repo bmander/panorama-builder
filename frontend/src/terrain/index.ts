@@ -21,9 +21,10 @@ import {
   CURVATURE_FACTOR_REFRACTED,
   buildRingGeometry,
   computeRings,
+  ringBounds,
 } from './geometry.js';
-import type { PrevRing, RingGeometry, RingSpec } from './geometry.js';
 import {
+  fetchCamGroundElev,
   loadRingTiles,
   prefetchRingTiles,
   stitchImageryCanvas,
@@ -107,42 +108,6 @@ function makeMaterial(
   // ring materials instead of recompiling per instance.
   lambert.customProgramCacheKey = (): string => 'terrain-backface-uv-flip';
   return lambert;
-}
-
-interface RingResult {
-  geometry: THREE.BufferGeometry;
-  texture: THREE.Texture;
-  geom: RingGeometry;
-}
-
-async function buildRing(
-  camLoc: LatLng,
-  spec: RingSpec,
-  curvatureFactor: number,
-  prev?: PrevRing,
-): Promise<RingResult> {
-  const { demTiles, imageryTiles } = await loadRingTiles(camLoc, spec);
-  const geom = buildRingGeometry(camLoc, spec, curvatureFactor, demTiles, prev);
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(geom.positions, 3));
-  geometry.setAttribute('uv', new THREE.BufferAttribute(geom.uvs, 2));
-  geometry.setIndex(new THREE.BufferAttribute(geom.indices, 1));
-  // Normals required for Lambert lighting; cheap enough to always compute so
-  // wireframe→shaded swaps don't need a rebuild.
-  geometry.computeVertexNormals();
-  geometry.computeBoundingSphere();
-
-  const canvas = stitchImageryCanvas(camLoc, spec, imageryTiles);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 4;
-  // The canvas is drawn with north at y=0 already, so disable the default
-  // flip so UV.y = j/(ny-1) lines up directly: j=0 (north vertex) → UV.y=0
-  // → canvas top → north tile.
-  texture.flipY = false;
-
-  return { geometry, texture, geom };
 }
 
 export function createTerrainView({ scene, requestRender }: CreateTerrainViewOptions): TerrainView {
@@ -240,57 +205,102 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
 
   async function rebuild(camLoc: LatLng, buildMode: Exclude<TerrainMode, 'off'>): Promise<void> {
     const myBuildId = ++buildId;
-    const rings = computeRings();
-
-    // Kick off every ring's DEM and imagery fetches before awaiting any: the
-    // dem/imagery modules dedupe via their inflight maps, so this just warms
-    // the caches so outer rings' network round-trips overlap with the inner
-    // ring's geometry build instead of running serially after it.
-    for (const spec of rings) prefetchRingTiles(camLoc, spec);
-
-    // Build inner ring first to fix camGroundElev; outer rings reuse it so the
-    // meshes line up vertically. Each ring's outer edge is threaded to the
-    // next-coarser one so it can carve a matching hole — and because adjacent
-    // zooms differ by 1, that hole's edges land exactly on the coarser ring's
-    // vertex grid: a clean geometric cut, no overlap.
+    const ringsOuterFirst = [...computeRings()].reverse();
     const factor = curvatureFactor();
-    const builtGeometries: THREE.BufferGeometry[] = [];
-    const builtTextures: THREE.Texture[] = [];
-    let prev: PrevRing | undefined;
-    for (const spec of rings) {
-      const result = await buildRing(camLoc, spec, factor, prev);
+    const innermost = ringsOuterFirst.at(-1)!;
+
+    // Kick the elevation-anchor fetch off first so it sits at the head of
+    // the browser's tile queue — every subsequent ring build needs it.
+    const camGroundElevPromise = fetchCamGroundElev(camLoc, innermost);
+    for (const spec of ringsOuterFirst) prefetchRingTiles(camLoc, spec);
+
+    const camGroundElev = await camGroundElevPromise;
+    if (myBuildId !== buildId) return;
+
+    // Each ring's hole is the next-finer ring's outer rectangle — pure
+    // function of camLoc + spec, no tile data needed. Innermost has none.
+    const holes = ringsOuterFirst.map((_, i) => {
+      const innerSpec = ringsOuterFirst[i + 1];
+      return innerSpec ? ringBounds(camLoc, innerSpec) : undefined;
+    });
+
+    interface Built { geometry: THREE.BufferGeometry; texture: THREE.Texture }
+    const disposeBuilt = (b: Built | null): void => {
+      if (b) { b.geometry.dispose(); b.texture.dispose(); }
+    };
+
+    // Build every ring concurrently. Each disposes its own products on
+    // cancellation; the orchestrator only consumes results in outer-first
+    // order so display proceeds strictly outer→inner.
+    const buildPromises = ringsOuterFirst.map(async (spec, i): Promise<Built | null> => {
+      const { demTiles, imageryTiles } = await loadRingTiles(camLoc, spec);
+      if (myBuildId !== buildId) return null;
+      const geom = buildRingGeometry(camLoc, spec, factor, demTiles, camGroundElev, holes[i]);
+      const canvas = stitchImageryCanvas(camLoc, spec, imageryTiles);
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(geom.positions, 3));
+      geometry.setAttribute('uv', new THREE.BufferAttribute(geom.uvs, 2));
+      geometry.setIndex(new THREE.BufferAttribute(geom.indices, 1));
+      // Normals required for Lambert lighting; cheap enough to always compute so
+      // wireframe→shaded swaps don't need a rebuild.
+      geometry.computeVertexNormals();
+      geometry.computeBoundingSphere();
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.anisotropy = 4;
+      // The canvas is drawn with north at y=0 already, so disable the default
+      // flip so UV.y = j/(ny-1) lines up directly: j=0 (north vertex) → UV.y=0
+      // → canvas top → north tile.
+      texture.flipY = false;
+
       if (myBuildId !== buildId) {
-        for (const g of builtGeometries) g.dispose();
-        for (const t of builtTextures) t.dispose();
-        result.geometry.dispose();
-        result.texture.dispose();
+        geometry.dispose();
+        texture.dispose();
+        return null;
+      }
+      return { geometry, texture };
+    });
+
+    // Defer disposing the previous build until the first new ring is in
+    // hand: keeps old terrain on screen during the build instead of
+    // showing a blank scene.
+    let swapped = false;
+    for (let i = 0; i < buildPromises.length; i++) {
+      const result = await buildPromises[i]!;
+      if (myBuildId !== buildId) {
+        disposeBuilt(result);
+        for (let j = i + 1; j < buildPromises.length; j++) {
+          void buildPromises[j]!.then(disposeBuilt);
+        }
         return;
       }
-      prev = result.geom;
-      builtGeometries.push(result.geometry);
-      builtTextures.push(result.texture);
-    }
-
-    disposeMeshes();
-    builtGeometries.forEach((geometry, ringIndex) => {
-      const texture = builtTextures[ringIndex]!;
-      const mesh = new THREE.Mesh(geometry, makeMaterial(buildMode, texture));
+      if (!result) continue;
+      if (!swapped) {
+        disposeMeshes();
+        builtLocation = camLoc;
+        applyGroupTransform();
+        applyVisibility();
+        swapped = true;
+      }
+      const mesh = new THREE.Mesh(result.geometry, makeMaterial(buildMode, result.texture));
       mesh.frustumCulled = false; // bounding sphere is huge; we always want it on screen
       // Always draw before photo overlays (which use depthTest:false to stay on
       // top regardless of whether they physically intersect terrain).
       mesh.renderOrder = -1;
       terrainGroup.add(mesh);
       meshes.push(mesh);
-      textures.push(texture);
-    });
-    builtLocation = camLoc;
-    applyVisibility();
-    applyGroupTransform();
-    requestRender();
+      textures.push(result.texture);
+      requestRender();
+    }
   }
 
   function maybeRebuild(): void {
     if (mode === 'off' || !location) {
+      // Bump buildId to cancel any in-flight rebuild; otherwise its
+      // remaining attaches would land in a scene we just emptied.
+      ++buildId;
       disposeMeshes();
       builtLocation = null;
       applyGroupTransform();

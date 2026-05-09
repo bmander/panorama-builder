@@ -10,7 +10,9 @@ import { createTileCache } from '../tile-cache.js';
 
 const TILE_URL = 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile';
 
-const cache = createTileCache<HTMLImageElement>(128);
+// 256 entries to hold one full progressive rebuild (175 unique imagery
+// tiles across 7 rings) plus headroom for the next rebuild to hit cache.
+const cache = createTileCache<HTMLImageElement>(256);
 
 export function fetchImageryTile(z: number, x: number, y: number): Promise<HTMLImageElement | null> {
   const k = tileKey(z, x, y);

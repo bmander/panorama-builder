@@ -7,7 +7,7 @@ import {
 } from '../dem.js';
 import { fetchImageryTile } from './imagery.js';
 import type { LatLng } from '../types.js';
-import type { RingSpec } from './geometry.js';
+import { sampleTile, type RingSpec } from './geometry.js';
 
 // Fallback fill for the imagery canvas when individual tiles fail to load.
 const IMAGERY_FALLBACK = '#888';
@@ -28,6 +28,20 @@ function ringCenter(camLoc: LatLng, zoom: number): { cx: number; cy: number } {
     cx: Math.floor(lngToTileX(camLoc.lng, zoom)),
     cy: Math.floor(latToTileY(camLoc.lat, zoom)),
   };
+}
+
+// Fetches the camera's center DEM tile at the given ring's zoom and samples
+// the elevation at the camera's sub-tile position. The result anchors all
+// rings' y-coordinates so they line up vertically. Sourcing from the
+// innermost (finest) ring gives sub-meter precision; rings build in parallel
+// once this resolves.
+export async function fetchCamGroundElev(camLoc: LatLng, spec: RingSpec): Promise<number> {
+  const { cx, cy } = ringCenter(camLoc, spec.zoom);
+  const elev = await fetchTileElevations(spec.zoom, cx, cy);
+  if (!elev) return 0;
+  const cxFrac = lngToTileX(camLoc.lng, spec.zoom);
+  const cyFrac = latToTileY(camLoc.lat, spec.zoom);
+  return sampleTile(elev, (cxFrac - cx) * TILE_PX, (cyFrac - cy) * TILE_PX);
 }
 
 export async function loadRingTiles(camLoc: LatLng, spec: RingSpec): Promise<RingTiles> {
