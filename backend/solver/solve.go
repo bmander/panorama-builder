@@ -38,6 +38,52 @@ const (
 	maxBacktracks = 5
 )
 
+// CP axis indices, mirroring the [3]float64 layout of cpENU / stationENU
+// triplets: [east, north, up]. Used by the per-axis CP-constraint union-find
+// so a single index keys both the cpENU array and the per-axis class maps.
+const (
+	axisEast  = 0
+	axisNorth = 1
+	axisUp    = 2
+)
+
+// unionFind is a small string-keyed disjoint-set used to compute axis-class
+// equivalence among control points. Lazy: any new key is its own root on
+// first touch.
+type unionFind struct {
+	parent map[string]string
+	rank   map[string]int
+}
+
+func newUnionFind() *unionFind {
+	return &unionFind{parent: map[string]string{}, rank: map[string]int{}}
+}
+
+func (u *unionFind) find(x string) string {
+	if _, ok := u.parent[x]; !ok {
+		u.parent[x] = x
+		return x
+	}
+	if u.parent[x] != x {
+		u.parent[x] = u.find(u.parent[x])
+	}
+	return u.parent[x]
+}
+
+func (u *unionFind) union(a, b string) {
+	ra, rb := u.find(a), u.find(b)
+	if ra == rb {
+		return
+	}
+	if u.rank[ra] < u.rank[rb] {
+		ra, rb = rb, ra
+	}
+	u.parent[rb] = ra
+	if u.rank[ra] == u.rank[rb] {
+		u.rank[ra]++
+	}
+}
+
 // slot describes one entry in the solver's state vector. Each slot points at
 // a single mutable scalar on a single entity.
 type slot struct {
@@ -45,6 +91,12 @@ type slot struct {
 	id    string
 	name  string  // e.g. "lat", "photo_az", "est_alt", "east", "north", "up"
 	scale float64 // FD ε; also used as the "did this change" threshold for diff emission
+	// cpAxis / cpMembers cache the axis index and class member CP indices for
+	// control_point slots so the FD-jacobian inner loop avoids re-deriving
+	// them per (slot × ±eps × restore) write. Both are unread for non-CP
+	// slots, so the zero defaults are fine.
+	cpAxis    int
+	cpMembers []int
 	// regWeight (Tikhonov λ) adds a residual row of λ·value pulling the slot
 	// toward zero. Zero ⇒ no regularization. Currently only used for k1/k2
 	// where the parameter is weakly observable on narrow-FOV photos and the
@@ -74,6 +126,20 @@ type solveContext struct {
 	slots      []slot        // free parameters (post mode + lock filtering)
 	regCount   int           // count of slots with regWeight > 0; cached for residual sizing
 	autoLocked []string      // slot.kind:slot.id:slot.name for columns frozen mid-solve
+
+	// Per-axis CP equivalence classes from problem.CPConstraints. Empty
+	// constraints yield singleton classes which collapse to the no-constraint
+	// behavior. cpAxisRep[axis][cpID] → rep id; cpClassMember[axis][repID] →
+	// CP indices in the class. A class is "locked" when any member has the
+	// corresponding lock_est_* set; locked classes get no slot.
+	cpAxisRep     [3]map[string]string
+	cpClassMember [3]map[string][]int
+
+	// cpENUOriginal is the cpENU snapshot taken before reconciliation broadcasts
+	// shared-axis values across class members. composeChanges diffs against
+	// this so non-rep members emit a change that reflects both the
+	// reconciliation step and any solver iteration that followed.
+	cpENUOriginal [][3]float64
 
 	// Sparsity index: slotObs[k] = obs indices whose 2-row block depends on
 	// slot k; slotRegRow[k] = the slot's Tikhonov row (or -1). Built once in
@@ -113,9 +179,15 @@ func Solve(problem Problem, cfg Config) (Result, error) {
 	}
 
 	if len(c.obs) == 0 || len(c.slots) == 0 {
-		// Nothing to solve, but not an error: the user asked for a no-op
-		// (e.g. all params locked, or no observations in scope).
-		return Result{Converged: true, AutoLockedColumns: c.autoLocked}, nil
+		// Nothing to solve, but not an error. Still pass through composeChanges
+		// so a locked-axis class that snapped a member during reconciliation
+		// surfaces as a writeback diff.
+		state := c.readState()
+		return Result{
+			Converged:         true,
+			AutoLockedColumns: c.autoLocked,
+			Changes:           c.composeChanges(state, state),
+		}, nil
 	}
 
 	state := c.readState()
@@ -316,6 +388,13 @@ func buildContext(problem Problem, cfg Config) (*solveContext, error) {
 		c.cpENU[i] = [3]float64{e, n, u}
 	}
 
+	// Snapshot pre-reconciliation cpENU; composeChanges diffs against this.
+	c.cpENUOriginal = make([][3]float64, len(c.cpENU))
+	copy(c.cpENUOriginal, c.cpENU)
+
+	c.buildCPAxisClasses()
+	c.reconcileCPClasses()
+
 	if err := c.scopeAndSlots(); err != nil {
 		return nil, err
 	}
@@ -362,7 +441,17 @@ func (c *solveContext) buildSparsity() {
 		case "photo":
 			c.slotObs[k] = obsByPhoto[s.id]
 		case "control_point":
-			c.slotObs[k] = obsByCP[s.id]
+			// A CP slot writes every class member on its axis, so its
+			// jacobian column must cover the obs of every member.
+			if len(s.cpMembers) <= 1 {
+				c.slotObs[k] = obsByCP[s.id]
+			} else {
+				var combined []int
+				for _, idx := range s.cpMembers {
+					combined = append(combined, obsByCP[c.problem.ControlPoints[idx].ID]...)
+				}
+				c.slotObs[k] = combined
+			}
 		}
 		if s.regWeight > 0 {
 			c.slotRegRow[k] = regRow
@@ -378,6 +467,118 @@ func (c *solveContext) buildSparsity() {
 		c.jacMat = mat.NewDense(m, n, nil)
 		c.colBuf = make([]float64, n*m)
 		c.colSlices = make([][]float64, n)
+	}
+}
+
+// buildCPAxisClasses populates cpAxisRep / cpClassMember from
+// problem.CPConstraints. Every CP starts as its own singleton on every axis;
+// each constraint unions both endpoints on the relevant axes.
+//
+// Fast path: with zero constraints (the common case) every class is a
+// singleton, so skip the union-find allocation and seed each CP as its own
+// rep directly.
+func (c *solveContext) buildCPAxisClasses() {
+	n := len(c.problem.ControlPoints)
+	for a := 0; a < 3; a++ {
+		c.cpAxisRep[a] = make(map[string]string, n)
+		c.cpClassMember[a] = make(map[string][]int, n)
+	}
+	if len(c.problem.CPConstraints) == 0 {
+		for i, cp := range c.problem.ControlPoints {
+			for a := 0; a < 3; a++ {
+				c.cpAxisRep[a][cp.ID] = cp.ID
+				c.cpClassMember[a][cp.ID] = []int{i}
+			}
+		}
+		return
+	}
+
+	ufs := [3]*unionFind{newUnionFind(), newUnionFind(), newUnionFind()}
+	for _, k := range c.problem.CPConstraints {
+		// Skip constraints whose endpoints aren't both loaded — single-station
+		// and single-CP modes intentionally restrict the active set, and a
+		// half-loaded constraint has no anchor.
+		if _, ok := c.cpIdx[k.CpAID]; !ok {
+			continue
+		}
+		if _, ok := c.cpIdx[k.CpBID]; !ok {
+			continue
+		}
+		switch k.ConstraintType {
+		case "plumb":
+			ufs[axisEast].union(k.CpAID, k.CpBID)
+			ufs[axisNorth].union(k.CpAID, k.CpBID)
+		case "level":
+			ufs[axisUp].union(k.CpAID, k.CpBID)
+		default:
+			// Unknown type slipped past the API validator; treat as no-op
+			// rather than silently union on the wrong axes.
+			continue
+		}
+	}
+	for a := 0; a < 3; a++ {
+		for i, cp := range c.problem.ControlPoints {
+			rep := ufs[a].find(cp.ID)
+			c.cpAxisRep[a][cp.ID] = rep
+			c.cpClassMember[a][rep] = append(c.cpClassMember[a][rep], i)
+		}
+	}
+}
+
+// classAxisLock returns (locked, lockedValue) for the axis class containing
+// the rep CP id. Locked when any member has the corresponding axis lock; the
+// returned value is the locked member's cpENU value on that axis (the first
+// such found).
+func (c *solveContext) classAxisLock(axis int, repID string) (bool, float64) {
+	members := c.cpClassMember[axis][repID]
+	for _, idx := range members {
+		cp := c.problem.ControlPoints[idx]
+		var locked bool
+		switch axis {
+		case axisNorth:
+			locked = cp.Locks.EstLat
+		case axisEast:
+			locked = cp.Locks.EstLng
+		case axisUp:
+			locked = cp.Locks.EstAlt
+		}
+		if locked {
+			return true, c.cpENU[idx][axis]
+		}
+	}
+	return false, 0
+}
+
+// reconcileCPClasses snaps every class member's cpENU value on each axis to a
+// single chosen value: the locked member's value if any is locked, else the
+// rep's. This guarantees cpENU is internally consistent before the solver
+// reads any residuals — without it, a free class with two members at
+// different starting heights would enter the solver with two different cpENU
+// values that get clobbered by the first writeSlot broadcast.
+func (c *solveContext) reconcileCPClasses() {
+	for a := 0; a < 3; a++ {
+		seen := map[string]struct{}{}
+		for _, cp := range c.problem.ControlPoints {
+			rep := c.cpAxisRep[a][cp.ID]
+			if _, done := seen[rep]; done {
+				continue
+			}
+			seen[rep] = struct{}{}
+			members := c.cpClassMember[a][rep]
+			if len(members) <= 1 {
+				continue
+			}
+			locked, lockedVal := c.classAxisLock(a, rep)
+			var v float64
+			if locked {
+				v = lockedVal
+			} else {
+				v = c.cpENU[c.cpIdx[rep]][a]
+			}
+			for _, idx := range members {
+				c.cpENU[idx][a] = v
+			}
+		}
 	}
 }
 
@@ -415,15 +616,9 @@ func (c *solveContext) scopeAndSlots() error {
 		}
 		c.appendPhotoSlots(c.problem.Photos)
 		for _, cp := range c.problem.ControlPoints {
-			if !cp.Locks.EstLat {
-				c.slots = append(c.slots, slot{kind: "control_point", id: cp.ID, name: "north", scale: fdEpsPosM})
-			}
-			if !cp.Locks.EstLng {
-				c.slots = append(c.slots, slot{kind: "control_point", id: cp.ID, name: "east", scale: fdEpsPosM})
-			}
-			if !cp.Locks.EstAlt {
-				c.slots = append(c.slots, slot{kind: "control_point", id: cp.ID, name: "up", scale: fdEpsPosM})
-			}
+			c.appendCPSlot(cp, axisNorth, "north")
+			c.appendCPSlot(cp, axisEast, "east")
+			c.appendCPSlot(cp, axisUp, "up")
 		}
 
 	case ModeSingleStation:
@@ -460,20 +655,29 @@ func (c *solveContext) scopeAndSlots() error {
 		if len(c.obs) < 2 {
 			return ErrInsufficientObservations
 		}
-		if !cp.Locks.EstLat {
-			c.slots = append(c.slots, slot{kind: "control_point", id: cp.ID, name: "north", scale: fdEpsPosM})
-		}
-		if !cp.Locks.EstLng {
-			c.slots = append(c.slots, slot{kind: "control_point", id: cp.ID, name: "east", scale: fdEpsPosM})
-		}
-		if !cp.Locks.EstAlt {
-			c.slots = append(c.slots, slot{kind: "control_point", id: cp.ID, name: "up", scale: fdEpsPosM})
-		}
+		c.appendCPSlot(cp, axisNorth, "north")
+		c.appendCPSlot(cp, axisEast, "east")
+		c.appendCPSlot(cp, axisUp, "up")
 
 	default:
 		return fmt.Errorf("solver: unknown mode %v", c.cfg.Mode)
 	}
 	return nil
+}
+
+// appendCPSlot emits one slot for the (axis-class containing cp, axis) pair,
+// but only when cp is the rep of that class and the class is free.
+func (c *solveContext) appendCPSlot(cp ControlPoint, axis int, name string) {
+	if c.cpAxisRep[axis][cp.ID] != cp.ID {
+		return
+	}
+	if locked, _ := c.classAxisLock(axis, cp.ID); locked {
+		return
+	}
+	c.slots = append(c.slots, slot{
+		kind: "control_point", id: cp.ID, name: name, scale: fdEpsPosM,
+		cpAxis: axis, cpMembers: c.cpClassMember[axis][cp.ID],
+	})
 }
 
 func (c *solveContext) appendPhotoSlots(photos []Photo) {
@@ -531,14 +735,8 @@ func (c *solveContext) writeSlot(k int, v float64) {
 		}
 		c.photoPose[idx] = p
 	case "control_point":
-		idx := c.cpIdx[s.id]
-		switch s.name {
-		case "east":
-			c.cpENU[idx][0] = v
-		case "north":
-			c.cpENU[idx][1] = v
-		case "up":
-			c.cpENU[idx][2] = v
+		for _, idx := range s.cpMembers {
+			c.cpENU[idx][s.cpAxis] = v
 		}
 	}
 }
@@ -847,6 +1045,10 @@ func (c *solveContext) composeChanges(initial, final []float64) []EntityChange {
 	cosLat0 := math.Cos(c.gaugeLat * math.Pi / 180)
 
 	for k, s := range c.slots {
+		if s.kind == "control_point" {
+			// CPs diffed via cpENU below — slot vector only carries the rep.
+			continue
+		}
 		bf := initial[k]
 		af := final[k]
 		if math.Abs(bf-af) <= s.scale {
@@ -870,18 +1072,29 @@ func (c *solveContext) composeChanges(initial, final []float64) []EntityChange {
 			a := get(photos, s.id)
 			a.before[s.name] = bf
 			a.after[s.name] = af
-		case "control_point":
-			a := get(cps, s.id)
-			switch s.name {
-			case "north":
-				a.before["est_lat"] = c.gaugeLat + bf/MPerDegLat
-				a.after["est_lat"] = c.gaugeLat + af/MPerDegLat
-			case "east":
-				a.before["est_lng"] = c.gaugeLng + bf/(MPerDegLat*cosLat0)
-				a.after["est_lng"] = c.gaugeLng + af/(MPerDegLat*cosLat0)
-			case "up":
-				a.before["est_alt"] = bf
-				a.after["est_alt"] = af
+		}
+	}
+
+	// Per-CP per-axis diff against the pre-reconciliation snapshot — captures
+	// both reconciliation and any iteration that followed.
+	for i, cp := range c.problem.ControlPoints {
+		for axis := 0; axis < 3; axis++ {
+			before := c.cpENUOriginal[i][axis]
+			after := c.cpENU[i][axis]
+			if math.Abs(before-after) <= fdEpsPosM {
+				continue
+			}
+			a := get(cps, cp.ID)
+			switch axis {
+			case axisEast:
+				a.before["est_lng"] = c.gaugeLng + before/(MPerDegLat*cosLat0)
+				a.after["est_lng"] = c.gaugeLng + after/(MPerDegLat*cosLat0)
+			case axisNorth:
+				a.before["est_lat"] = c.gaugeLat + before/MPerDegLat
+				a.after["est_lat"] = c.gaugeLat + after/MPerDegLat
+			case axisUp:
+				a.before["est_alt"] = before
+				a.after["est_alt"] = after
 			}
 		}
 	}

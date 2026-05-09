@@ -34,11 +34,15 @@ export interface SyncManager {
   flush(): void;
   markLoaded(): void;
   reportError(label: string, err: unknown): void;
+  // Drop all sync baselines and re-arm `markLoaded`. Called on
+  // loadStation so the new station starts from scratch — the old
+  // station's PUTs would target the wrong row.
+  reset(): void;
 }
 
 export interface CreateSyncManagerOptions {
   overlays: OverlayManager;
-  getCurrentStationId: () => string | null;
+  getCurrentStationId: () => string;
 }
 
 export function createSyncManager({
@@ -120,7 +124,6 @@ export function createSyncManager({
 
   async function flushOnce(): Promise<void> {
     const locId = getCurrentStationId();
-    if (!locId) return;
     const tasks: Promise<unknown>[] = [];
 
     // Station lat/lng/alt are now PUT directly from the settings-panel inputs
@@ -194,6 +197,13 @@ export function createSyncManager({
     reportError(label, err) {
       console.error(`${label}:`, err);
       showError(`Could not ${label}.`);
+    },
+    reset() {
+      synced.photos.clear();
+      synced.imageMeasurements.clear();
+      synced.controlPoints.clear();
+      loaded = false;
+      hideError();
     },
   };
 }

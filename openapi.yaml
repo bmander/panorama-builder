@@ -25,6 +25,7 @@ tags:
   - name: photos
   - name: image-measurements
   - name: control-points
+  - name: cp-constraints
   - name: solver
 
 paths:
@@ -381,6 +382,80 @@ paths:
         '204': { description: Deleted }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /control-point-constraints:
+    post:
+      tags: [cp-constraints]
+      summary: Create a pairwise constraint between two control points
+      description: |
+        Creates a hard equality constraint between two control points.
+        The handler swaps `cp_a_id` and `cp_b_id` if necessary so the
+        stored row satisfies the canonical `cp_a_id < cp_b_id` ordering.
+        Self-loops (same id on both sides) and duplicate (a, b, type)
+        triples are rejected.
+
+        Type semantics:
+          * `plumb` — the two CPs share `est_lat` and `est_lng`
+          * `level` — the two CPs share `est_alt`
+      operationId: createCPConstraint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CPConstraintCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CPConstraint' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: A constraint of this type already exists between this pair
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    get:
+      tags: [cp-constraints]
+      summary: List all pairwise control-point constraints
+      operationId: listCPConstraints
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CPConstraint' }
+
+  /control-point-constraints/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CPConstraintId'
+    put:
+      tags: [cp-constraints]
+      summary: Change the constraint type
+      operationId: updateCPConstraint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CPConstraintPatch' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CPConstraint' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [cp-constraints]
+      summary: Delete a constraint
+      operationId: deleteCPConstraint
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /solve/joint:
     post:
       tags: [solver]
@@ -531,6 +606,11 @@ components:
       required: true
       schema: { $ref: '#/components/schemas/Id' }
     ControlPointId:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    CPConstraintId:
       name: id
       in: path
       required: true
@@ -896,6 +976,43 @@ components:
         lock_est_lat: { type: boolean }
         lock_est_lng: { type: boolean }
         lock_est_alt: { type: boolean }
+
+    CPConstraintType:
+      type: string
+      enum: [plumb, level]
+      description: |
+        plumb: cp_a and cp_b share est_lat and est_lng (vertical line);
+        level: cp_a and cp_b share est_alt (horizontal alignment).
+
+    CPConstraint:
+      type: object
+      required: [id, cp_a_id, cp_b_id, constraint_type, created_at, updated_at]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        cp_a_id: { $ref: '#/components/schemas/Id' }
+        cp_b_id: { $ref: '#/components/schemas/Id' }
+        constraint_type: { $ref: '#/components/schemas/CPConstraintType' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CPConstraintCreate:
+      type: object
+      required: [cp_a_id, cp_b_id, constraint_type]
+      description: |
+        POST body for `/control-point-constraints`. The handler
+        swaps `cp_a_id` and `cp_b_id` if needed to satisfy the
+        canonical `cp_a_id < cp_b_id` ordering before insert.
+      properties:
+        cp_a_id: { $ref: '#/components/schemas/Id' }
+        cp_b_id: { $ref: '#/components/schemas/Id' }
+        constraint_type: { $ref: '#/components/schemas/CPConstraintType' }
+
+    CPConstraintPatch:
+      type: object
+      description: |
+        Partial-update body. Only `constraint_type` is mutable.
+      properties:
+        constraint_type: { $ref: '#/components/schemas/CPConstraintType' }
 
     SolveConfig:
       type: object

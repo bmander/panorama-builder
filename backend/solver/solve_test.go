@@ -523,3 +523,185 @@ func TestSolveRecoversK1K2(t *testing.T) {
 		t.Errorf("dist_k2: got %v want %v", got["dist_k2"], trueK2)
 	}
 }
+
+// threeStationCPPair builds a 3-station / 2-CP joint world with the given
+// true CP positions. Stations are at (0,0), (15,0), (-15,0) with all of
+// lat/lng/alt locked (no vertical gauge ambiguity), looking due north with
+// 90° FOV; photos have every rotation/size lock set so the only free
+// parameters are the CP positions themselves. Used by the CP-constraint
+// tests so we can assert exact equality of shared params without poses or
+// gauge ambiguities bleeding noise into the residual.
+func threeStationCPPair(t *testing.T, cpAENU, cpBENU [3]float64) solver.Problem {
+	t.Helper()
+	cpALat, cpALng, cpAAlt := solver.ENUToLatLngAlt(cpAENU[0], cpAENU[1], cpAENU[2], gaugeLat, gaugeLng, 0)
+	cpBLat, cpBLng, cpBAlt := solver.ENUToLatLngAlt(cpBENU[0], cpBENU[1], cpBENU[2], gaugeLat, gaugeLng, 0)
+	allPhotoLocks := solver.PhotoLocks{PhotoAz: true, PhotoTilt: true, PhotoRoll: true, SizeRad: true}
+	allStationLocks := solver.StationLocks{Lat: true, Lng: true, Alt: true}
+	mkStation := func(id string, e, n float64) synth.TrueStation {
+		lat, lng := offsetLatLng(e, n)
+		return synth.TrueStation{ID: id, Lat: lat, Lng: lng, Locks: allStationLocks}
+	}
+	w := synth.World{
+		Stations: []synth.TrueStation{
+			mkStation("s1", 0, 0),
+			mkStation("s2", 15, 0),
+			mkStation("s3", -15, 0),
+		},
+		Photos: []synth.TruePhoto{
+			{ID: "p1", StationID: "s1", Pose: basicPose(0), Locks: allPhotoLocks},
+			{ID: "p2", StationID: "s2", Pose: basicPose(0), Locks: allPhotoLocks},
+			{ID: "p3", StationID: "s3", Pose: basicPose(0), Locks: allPhotoLocks},
+		},
+		ControlPoints: []synth.TrueCP{
+			{ID: "cpA", EstLat: cpALat, EstLng: cpALng, EstAlt: cpAAlt},
+			{ID: "cpB", EstLat: cpBLat, EstLng: cpBLng, EstAlt: cpBAlt},
+		},
+		// All three photos see both CPs — 12 observations total.
+		VisibleIn: [][]int{{0, 1, 2}, {0, 1, 2}},
+	}
+	prob, err := synth.Build(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prob
+}
+
+func cpByID(prob solver.Problem, id string) *solver.ControlPoint {
+	for i := range prob.ControlPoints {
+		if prob.ControlPoints[i].ID == id {
+			return &prob.ControlPoints[i]
+		}
+	}
+	return nil
+}
+
+func cpChangeAfter(res solver.Result, id string) map[string]float64 {
+	for _, c := range res.Changes {
+		if c.Kind == "control_point" && c.ID == id {
+			return c.After
+		}
+	}
+	return nil
+}
+
+// TestSolveCPConstraintPlumbSharesLatLng verifies a "plumb" constraint forces
+// est_lat and est_lng to be identical on both CPs after a joint solve, even
+// when the inputs disagree. cpA and cpB share true lat/lng but differ in
+// altitude — perturbing cpA's lat/lng pulls cpB along during reconciliation,
+// and the joint solve then drives the shared parameters back to truth.
+func TestSolveCPConstraintPlumbSharesLatLng(t *testing.T) {
+	prob := threeStationCPPair(t, [3]float64{0, 30, 5}, [3]float64{0, 30, 12})
+	prob.CPConstraints = []solver.CPConstraint{
+		{CpAID: "cpA", CpBID: "cpB", ConstraintType: "plumb"},
+	}
+	// Perturb both CPs (different magnitudes) so reconciliation forces a snap
+	// on cpB AND the solver still has work to do on the shared lat/lng slots.
+	prob.ControlPoints[0].EstLat += 5e-5 // ~5m
+	prob.ControlPoints[0].EstLng += 5e-5
+	prob.ControlPoints[1].EstLat += 1e-4 // ~10m
+	prob.ControlPoints[1].EstLng += 1e-4
+
+	res, err := solver.Solve(prob, solver.Config{Mode: solver.ModeJoint, MaxIters: 80})
+	if err != nil {
+		t.Fatalf("solve: %v", err)
+	}
+	if res.Diverged {
+		t.Fatalf("plumb solve diverged: %+v", res)
+	}
+	afterA := cpChangeAfter(res, "cpA")
+	afterB := cpChangeAfter(res, "cpB")
+	if afterA == nil || afterB == nil {
+		t.Fatalf("expected changes for both cpA and cpB; got %+v", res.Changes)
+	}
+	if afterA["est_lat"] != afterB["est_lat"] {
+		t.Errorf("plumb: est_lat must match exactly; cpA=%v cpB=%v", afterA["est_lat"], afterB["est_lat"])
+	}
+	if afterA["est_lng"] != afterB["est_lng"] {
+		t.Errorf("plumb: est_lng must match exactly; cpA=%v cpB=%v", afterA["est_lng"], afterB["est_lng"])
+	}
+	// Sanity: shared lat is near truth (truth = unperturbed lat of cpA = cpB).
+	cpTrueLat, _ := offsetLatLng(0, 30)
+	if math.Abs(afterA["est_lat"]-cpTrueLat) > 1e-7 {
+		t.Errorf("shared est_lat should converge near truth; got %v want %v", afterA["est_lat"], cpTrueLat)
+	}
+}
+
+// TestSolveCPConstraintLevelSharesAlt verifies "level" forces est_alt to be
+// identical and leaves lat/lng free per CP. cpA and cpB share true alt but
+// differ in lat; perturbing cpA's alt drags cpB through reconciliation, and
+// the joint solve recovers the shared alt from both CPs' observations.
+func TestSolveCPConstraintLevelSharesAlt(t *testing.T) {
+	prob := threeStationCPPair(t, [3]float64{4, 30, 7}, [3]float64{-4, 30, 7})
+	prob.CPConstraints = []solver.CPConstraint{
+		{CpAID: "cpA", CpBID: "cpB", ConstraintType: "level"},
+	}
+	// Perturb both CPs' alt by different amounts so reconciliation snaps cpB
+	// onto cpA and the shared-alt slot still has work to do on the joint
+	// minimum.
+	prob.ControlPoints[0].EstAlt += 4
+	prob.ControlPoints[1].EstAlt -= 2
+
+	res, err := solver.Solve(prob, solver.Config{Mode: solver.ModeJoint, MaxIters: 80})
+	if err != nil {
+		t.Fatalf("solve: %v", err)
+	}
+	if res.Diverged {
+		t.Fatalf("level solve diverged: %+v", res)
+	}
+	afterA := cpChangeAfter(res, "cpA")
+	afterB := cpChangeAfter(res, "cpB")
+	if afterA == nil || afterB == nil {
+		t.Fatalf("expected changes for both cpA and cpB; got %+v", res.Changes)
+	}
+	if afterA["est_alt"] != afterB["est_alt"] {
+		t.Errorf("level: est_alt must match exactly; cpA=%v cpB=%v", afterA["est_alt"], afterB["est_alt"])
+	}
+	// Sanity: shared alt is near truth (7). Vertical observability with three
+	// stations and a 13° elevation angle is decent but not exact; allow 0.5m.
+	if math.Abs(afterA["est_alt"]-7) > 0.5 {
+		t.Errorf("shared est_alt should converge near truth (7); got %v", afterA["est_alt"])
+	}
+}
+
+// TestSolveCPConstraintLockPropagates verifies a lock on one class member
+// suppresses the slot for every member on the locked axis: the locked value
+// dominates reconciliation, and the change record still surfaces the snap on
+// the non-locked partner so writeback persists it.
+func TestSolveCPConstraintLockPropagates(t *testing.T) {
+	prob := threeStationCPPair(t, [3]float64{4, 30, 7}, [3]float64{-4, 30, 7})
+	prob.CPConstraints = []solver.CPConstraint{
+		{CpAID: "cpA", CpBID: "cpB", ConstraintType: "level"},
+	}
+	// Lock cpA's est_alt at a value (60) that differs from cpB's seeded
+	// est_alt (7). Reconciliation must snap cpB to 60.
+	cpA := cpByID(prob, "cpA")
+	cpA.EstAlt = 60
+	cpA.Locks.EstAlt = true
+	// Lock everything else free of free-parameter noise so the solve trivially
+	// settles and we can assert on the change record.
+	for i := range prob.ControlPoints {
+		prob.ControlPoints[i].Locks.EstLat = true
+		prob.ControlPoints[i].Locks.EstLng = true
+	}
+
+	res, err := solver.Solve(prob, solver.Config{Mode: solver.ModeJoint})
+	if err != nil {
+		t.Fatalf("solve: %v", err)
+	}
+	if res.Diverged {
+		t.Fatalf("locked-class solve diverged: %+v", res)
+	}
+	afterB := cpChangeAfter(res, "cpB")
+	if afterB == nil {
+		t.Fatalf("expected a reconciliation change for cpB; got %+v", res.Changes)
+	}
+	if math.Abs(afterB["est_alt"]-60) > 1e-9 {
+		t.Errorf("cpB est_alt should snap to cpA's locked value (60); got %v", afterB["est_alt"])
+	}
+	// cpA didn't move (it was already at 60 with the lock); no est_alt change.
+	if afterA := cpChangeAfter(res, "cpA"); afterA != nil {
+		if _, present := afterA["est_alt"]; present {
+			t.Errorf("cpA was locked at 60; should not appear in changes for est_alt: %+v", afterA)
+		}
+	}
+}

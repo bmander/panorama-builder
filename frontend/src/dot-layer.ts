@@ -101,27 +101,33 @@ export function createDotLayer({ scene, requestRender }: CreateDotLayerOptions):
   };
 }
 
-// Pick the closest dot in `dots` to an NDC point within `hitRadius` (in NDC
-// units, x/y both in [-1,1]). Dots behind the camera are skipped. Returns
-// the dot itself so callers can pull whatever id/payload they keep on it.
+// Pick the closest dot in `dots` to an NDC point within `hitRadiusPx` of
+// pixel distance on the viewport. NDC alone gives an aspect-ratio-dependent
+// hit ellipse; on a 400 px wide phone an NDC radius of 0.01 is only ~2 px,
+// which is much smaller than the visible 12 px dot and unhittable by a
+// finger. Dots behind the camera are skipped.
 const _projected = new THREE.Vector3();
 export function findHitDot<T extends { anchor: LatLng; altitude: number }>(
   ndc: { x: number; y: number },
-  hitRadius: number,
+  hitRadiusPx: number,
+  viewportWidth: number,
+  viewportHeight: number,
   camera: THREE.Camera,
   cameraLocation: LatLng,
   cameraHeight: number,
   dots: readonly T[],
 ): T | null {
   let best: T | null = null;
-  let bestDist = hitRadius;
+  let bestDistPx = hitRadiusPx;
+  const halfW = viewportWidth / 2;
+  const halfH = viewportHeight / 2;
   for (const dot of dots) {
     const { x, z } = latLngToCameraRelativeMeters(dot.anchor, cameraLocation);
     const y = dot.altitude - cameraHeight;
     _projected.set(x, y, z).project(camera);
     if (_projected.z > 1) continue;
-    const d = norm2(_projected.x - ndc.x, _projected.y - ndc.y);
-    if (d < bestDist) { bestDist = d; best = dot; }
+    const dPx = norm2((_projected.x - ndc.x) * halfW, (_projected.y - ndc.y) * halfH);
+    if (dPx < bestDistPx) { bestDistPx = dPx; best = dot; }
   }
   return best;
 }

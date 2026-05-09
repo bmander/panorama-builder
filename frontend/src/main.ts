@@ -1,39 +1,46 @@
-// URL routing entry point. Each route owns its setup; the only thing main
-// has to know is which route the URL points to and how to hide the
-// station-scoped chrome on the index page.
+// URL routing entry point.
+//   /                  → index map (createIndexPage).
+//   /world?sta=<id>    → station view; sta swaps in place via loadStation.
+//   /station/<id>      → legacy; redirected to /world?sta=<id>.
+//   /world (no sta)    → redirect to /.
 
 import {
-  FOCUS_QUERY_PARAM, INDEX_CP_QUERY_PARAM, INDEX_STATION_QUERY_PARAM, getElement,
+  FOCUS_QUERY_PARAM, ID_RE, INDEX_CP_QUERY_PARAM, INDEX_STATION_QUERY_PARAM,
+  getElement, parseStaFromURL,
 } from './types.js';
 import { mountStationPage } from './station-page.js';
 import { mountIndexPage } from './index-page.js';
 
-const ID_RE = /^\/station\/([A-Z2-7]{13})$/;
-const FOCUS_RE = /^[A-Z2-7]{13}$/;
-
-function parseStationIdFromURL(): string | null {
-  const m = ID_RE.exec(location.pathname);
-  return m ? m[1]! : null;
-}
+const LEGACY_STATION_RE = new RegExp(`^/station/(${ID_RE.source.slice(1, -1)})$`);
 
 function focusParam(name: string): string | null {
   const id = new URLSearchParams(location.search).get(name);
-  return id && FOCUS_RE.test(id) ? id : null;
+  return id && ID_RE.test(id) ? id : null;
 }
 
-const stationId = parseStationIdFromURL();
+// Legacy /station/<id> → /world?sta=<id>. replaceState so the browser
+// history doesn't grow a redirect entry.
+const legacy = LEGACY_STATION_RE.exec(location.pathname);
+if (legacy) {
+  history.replaceState(null, '', `/world?sta=${legacy[1]!}${location.hash}`);
+}
 
-if (stationId === null) {
+if (location.pathname === '/world') {
+  const sta = parseStaFromURL();
+  if (sta === null) {
+    location.replace('/');
+  } else {
+    void mountStationPage({
+      initialStationId: sta,
+      focusImageMeasurementId: focusParam(FOCUS_QUERY_PARAM),
+    });
+  }
+} else {
   // Index mode hides the station-scoped chrome — the upper-right buttons
   // only make sense once a station is loaded.
   getElement('top-right').hidden = true;
   mountIndexPage({
     focusIndexControlPointId: focusParam(INDEX_CP_QUERY_PARAM),
     focusIndexStationId: focusParam(INDEX_STATION_QUERY_PARAM),
-  });
-} else {
-  void mountStationPage({
-    stationId,
-    focusImageMeasurementId: focusParam(FOCUS_QUERY_PARAM),
   });
 }

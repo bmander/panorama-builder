@@ -31,7 +31,10 @@ export interface StationFieldsHandle {
 }
 
 export interface CreateStationFieldsOptions {
-  stationId: string;
+  // Getter so a single mount can swap stations in place via loadStation —
+  // the listeners attached below read the *current* station id at PUT
+  // time, not the one captured at mount time.
+  getCurrentStationId: () => string;
   // Fires after every hydrate. Consumer typically does:
   //   if (terrain.setCameraHeight(alt)) refreshControlPointColumns();
   onAltitudeChanged: (alt: number) => void;
@@ -43,7 +46,7 @@ export interface CreateStationFieldsOptions {
 const fieldDigits = (key: 'lat' | 'lng' | 'alt'): number => key === 'alt' ? 2 : 6;
 
 export function createStationFields(opts: CreateStationFieldsOptions): StationFieldsHandle {
-  const { stationId, onAltitudeChanged, onLocationChanged } = opts;
+  const { getCurrentStationId, onAltitudeChanged, onLocationChanged } = opts;
 
   const latEl = getElement<HTMLInputElement>('station-lat');
   const lngEl = getElement<HTMLInputElement>('station-lng');
@@ -100,7 +103,7 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
     if (patch.capturedAt !== undefined) body.captured_at = patch.capturedAt;
     let updated: api.ApiStation;
     try {
-      updated = await api.updateStation(stationId, body);
+      updated = await api.updateStation(getCurrentStationId(), body);
     } catch (err) {
       console.error('update station failed:', err);
       render(); // revert UI to the last known-good cache

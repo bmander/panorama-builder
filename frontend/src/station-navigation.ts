@@ -1,12 +1,11 @@
-// Tweens the camera into roughly the destination's pose, then page-reloads at
-// the destination URL — landing close to the final pose lets the post-reload
-// hydrate paint without a visible snap.
+// Tweens the camera into the destination's pose, then hands off to the
+// host's loadStation(destId) — same /world page, no remount, just swap
+// the per-station data in place.
 
 import * as api from './api.js';
 import { dirFromAzAlt } from './overlay.js';
 import { groundDistance, vecToAzAlt } from './geo.js';
 import { wrapPi } from './mathx.js';
-import { stationHref } from './types.js';
 import type { LatLng } from './types.js';
 import type { Viewer } from './viewer.js';
 import { DEFAULT_FOV } from './viewer.js';
@@ -33,7 +32,7 @@ export interface StationNavigationDeps {
   terrain: TerrainView;
   cpColumns: ControlPointColumns;
   stationDots: StationMarkers;
-  currentStationId: string;
+  getCurrentStationId: () => string;
   getStationLocation: () => LatLng | null;
   setStationLocation: (loc: LatLng) => void;
   getStationCache: () => { name: string | null; alt: number } | null;
@@ -44,6 +43,10 @@ export interface StationNavigationDeps {
   // (cones, observation rays, …) — without it those overlays freeze in
   // their pre-fly positions and visually detach from the moving world.
   onFlyFrame?: (loc: LatLng, alt: number) => void;
+  // Called at fly end (and on early-out paths) to swap the host's per-
+  // station data to destId. Passing the prefetched dest lets the host
+  // skip its own getStation call — the fly already fetched it.
+  loadStation: (destId: string, prefetched?: api.ApiHydratedStation) => Promise<void>;
 }
 
 export interface StationNavigation {
@@ -53,10 +56,10 @@ export interface StationNavigation {
 export function createStationNavigation(deps: StationNavigationDeps): StationNavigation {
   const {
     viewer, terrain, cpColumns, stationDots,
-    currentStationId,
+    getCurrentStationId,
     getStationLocation, setStationLocation, getStationCache,
     getOtherStations, setOtherStations,
-    onFlyFrame,
+    onFlyFrame, loadStation,
   } = deps;
 
   let flyInProgress = false;
@@ -65,8 +68,9 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
     if (flyInProgress) return;
     const here = getStationLocation();
     const cache = getStationCache();
+    const currentStationId = getCurrentStationId();
     if (!here || !cache || destId === currentStationId) {
-      location.assign(stationHref(destId));
+      await loadStation(destId);
       return;
     }
     flyInProgress = true;
@@ -77,7 +81,7 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
         dest = await api.getStation(destId);
       } catch (err) {
         console.error('fly: dest fetch failed:', err);
-        location.assign(stationHref(destId));
+        await loadStation(destId);
         return;
       }
 
@@ -138,21 +142,17 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
           stationDots.update(loc, alt, getOtherStations());
           onFlyFrame?.(loc, alt);
           viewer.requestRender();
-          // Defer resolve by one rAF so the viewer's continuous render loop
-          // paints the k=1 state before location.assign tears the page down.
           if (tau < 1) requestAnimationFrame(step);
-          else requestAnimationFrame(() => { resolve(); });
+          else resolve();
         }
         requestAnimationFrame(step);
       });
 
-      location.assign(stationHref(destId));
+      await loadStation(destId, dest);
     } finally {
       flyInProgress = false;
-      // If location.assign was queued the browser tears the page down before
-      // these run visually; if the navigation is somehow intercepted, the
-      // restoration leaves the viewer in a usable state.
-      setOtherStations(savedOtherStations);
+      // Re-show the layers that were hidden for the tween. loadStation
+      // owns otherStations / overlays content, so no restoration here.
       viewer.overlaysGroup.visible = true;
       cpColumns.setVisible(true);
     }

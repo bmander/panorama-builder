@@ -7,6 +7,24 @@ import (
 	"time"
 )
 
+// Defines values for CPConstraintType.
+const (
+	Level CPConstraintType = "level"
+	Plumb CPConstraintType = "plumb"
+)
+
+// Valid indicates whether the value is a known member of the CPConstraintType enum.
+func (e CPConstraintType) Valid() bool {
+	switch e {
+	case Level:
+		return true
+	case Plumb:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for EntityChangeKind.
 const (
 	EntityChangeKindControlPoint EntityChangeKind = "control_point"
@@ -27,6 +45,50 @@ func (e EntityChangeKind) Valid() bool {
 		return false
 	}
 }
+
+// CPConstraint defines model for CPConstraint.
+type CPConstraint struct {
+	// ConstraintType plumb: cp_a and cp_b share est_lat and est_lng (vertical line);
+	// level: cp_a and cp_b share est_alt (horizontal alignment).
+	ConstraintType CPConstraintType `json:"constraint_type"`
+
+	// CpAId 13-character base32 server-assigned id
+	CpAId ID `json:"cp_a_id"`
+
+	// CpBId 13-character base32 server-assigned id
+	CpBId     ID        `json:"cp_b_id"`
+	CreatedAt time.Time `json:"created_at"`
+
+	// ID 13-character base32 server-assigned id
+	ID        ID        `json:"id"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// CPConstraintCreate POST body for `/control-point-constraints`. The handler
+// swaps `cp_a_id` and `cp_b_id` if needed to satisfy the
+// canonical `cp_a_id < cp_b_id` ordering before insert.
+type CPConstraintCreate struct {
+	// ConstraintType plumb: cp_a and cp_b share est_lat and est_lng (vertical line);
+	// level: cp_a and cp_b share est_alt (horizontal alignment).
+	ConstraintType CPConstraintType `json:"constraint_type"`
+
+	// CpAId 13-character base32 server-assigned id
+	CpAId ID `json:"cp_a_id"`
+
+	// CpBId 13-character base32 server-assigned id
+	CpBId ID `json:"cp_b_id"`
+}
+
+// CPConstraintPatch Partial-update body. Only `constraint_type` is mutable.
+type CPConstraintPatch struct {
+	// ConstraintType plumb: cp_a and cp_b share est_lat and est_lng (vertical line);
+	// level: cp_a and cp_b share est_alt (horizontal alignment).
+	ConstraintType *CPConstraintType `json:"constraint_type,omitempty"`
+}
+
+// CPConstraintType plumb: cp_a and cp_b share est_lat and est_lng (vertical line);
+// level: cp_a and cp_b share est_alt (horizontal alignment).
+type CPConstraintType string
 
 // ControlPoint A real-world landmark with a user-seeded location estimate
 // (est_lat / est_lng / est_alt) and image-measurement observations
@@ -383,6 +445,9 @@ type StationUpdate struct {
 	Name       *string    `json:"name,omitempty"`
 }
 
+// CPConstraintID 13-character base32 server-assigned id
+type CPConstraintID = ID
+
 // ControlPointID 13-character base32 server-assigned id
 type ControlPointID = ID
 
@@ -416,6 +481,12 @@ type ListStationsParams struct {
 	// stations ordered by created_at DESC.
 	Bbox *string `form:"bbox,omitempty" json:"bbox,omitempty"`
 }
+
+// CreateCPConstraintJSONRequestBody defines body for CreateCPConstraint for application/json ContentType.
+type CreateCPConstraintJSONRequestBody = CPConstraintCreate
+
+// UpdateCPConstraintJSONRequestBody defines body for UpdateCPConstraint for application/json ContentType.
+type UpdateCPConstraintJSONRequestBody = CPConstraintPatch
 
 // CreateControlPointJSONRequestBody defines body for CreateControlPoint for application/json ContentType.
 type CreateControlPointJSONRequestBody = ControlPointPatch

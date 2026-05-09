@@ -25,6 +25,10 @@ export type ControlPointPatch = Schemas['ControlPointPatch'];
 export type StationUpdate = Schemas['StationUpdate'];
 export type PhotoUpdate = Schemas['PhotoUpdate'];
 export type ImageMeasurementUpdate = Schemas['ImageMeasurementUpdate'];
+export type ApiCPConstraint = Schemas['CPConstraint'];
+export type ApiCPConstraintCreate = Schemas['CPConstraintCreate'];
+export type ApiCPConstraintPatch = Schemas['CPConstraintPatch'];
+export type ApiCPConstraintType = Schemas['CPConstraintType'];
 export type ApiControlPointObservations = Schemas['ControlPointObservations'];
 export type ApiControlPointImageObservation = Schemas['ControlPointImageObservation'];
 export type ApiControlPointVisiblePhotos = Schemas['ControlPointVisiblePhotos'];
@@ -166,6 +170,24 @@ export function updateControlPoint(id: string, body: ControlPointPatch): Promise
 
 export function deleteControlPoint(id: string): Promise<void> {
   return requestVoid('DELETE', `/control-points/${encodeURIComponent(id)}`);
+}
+
+// --- Control point constraints ---
+
+export function createCPConstraint(body: ApiCPConstraintCreate): Promise<ApiCPConstraint> {
+  return request<ApiCPConstraint>('POST', '/control-point-constraints', body);
+}
+
+export function listCPConstraints(): Promise<ApiCPConstraint[]> {
+  return request<ApiCPConstraint[]>('GET', '/control-point-constraints');
+}
+
+export function updateCPConstraint(id: string, patch: ApiCPConstraintPatch): Promise<ApiCPConstraint> {
+  return request<ApiCPConstraint>('PUT', `/control-point-constraints/${encodeURIComponent(id)}`, patch);
+}
+
+export function deleteCPConstraint(id: string): Promise<void> {
+  return requestVoid('DELETE', `/control-point-constraints/${encodeURIComponent(id)}`);
 }
 
 // --- Solver ---

@@ -122,6 +122,20 @@ export interface ControlPointView {
   readonly selected: boolean;
 }
 
+// Pairwise hard equality between two control points.
+//   'plumb' → cpA and cpB share est_lat AND est_lng (vertical line).
+//   'level' → cpA and cpB share est_alt           (horizontal alignment).
+export type CPConstraintType = 'plumb' | 'level';
+
+// Frontend view of a CP-CP constraint. Mirrors the API row but renamed to
+// the project-wide camelCase convention.
+export interface CPConstraintView {
+  readonly id: string;
+  readonly cpAId: string;
+  readonly cpBId: string;
+  readonly type: CPConstraintType;
+}
+
 // Bake (pixel buffer + dimensions) returned by the equirect baker.
 export interface Baked {
   readonly pixels: Uint8Array;
@@ -256,11 +270,23 @@ export function fmtCpLatLng(lat: number | null, lng: number | null): string {
 // Display label for a CP — the description, or "(unnamed)" if blank.
 export const cpLabel = (description: string): string => description || '(unnamed)';
 
+// 13-char base32 IDs from `crypto/rand` on the backend. Shared so the two
+// regex sites that validate them (URL params, popstate handler) and the
+// CP-page id parser stay in sync.
+export const ID_RE = /^[A-Z2-7]{13}$/;
+
 // Optional `focusImageId` deep-links the station page to recenter the 360°
 // camera on a specific image measurement after hydrate.
 export function stationHref(stationId: string, focusImageId?: string): string {
-  const base = `/station/${stationId}`;
-  return focusImageId ? `${base}?focus=${focusImageId}` : base;
+  const params = new URLSearchParams({ sta: stationId });
+  if (focusImageId) params.set('focus', focusImageId);
+  return `/world?${params.toString()}`;
+}
+
+// Reads & validates the station id from the current URL's `?sta=` param.
+export function parseStaFromURL(): string | null {
+  const sta = new URLSearchParams(location.search).get('sta');
+  return sta && ID_RE.test(sta) ? sta : null;
 }
 export const FOCUS_QUERY_PARAM = 'focus';
 

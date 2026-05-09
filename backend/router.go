@@ -45,6 +45,11 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/control-points/{id}/observations", s.listControlPointObservations)
 	mux.HandleFunc("GET /api/control-points/{id}/visible-photos", s.listControlPointVisiblePhotos)
 
+	mux.HandleFunc("POST /api/control-point-constraints", s.postCPConstraint)
+	mux.HandleFunc("GET /api/control-point-constraints", s.listCPConstraints)
+	mux.HandleFunc("PUT /api/control-point-constraints/{id}", s.putCPConstraint)
+	mux.HandleFunc("DELETE /api/control-point-constraints/{id}", s.deleteCPConstraint)
+
 	// Catch-all: serve static frontend with SPA fallback for unknown paths.
 	mux.HandleFunc("/", s.spaFallback)
 

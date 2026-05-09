@@ -44,7 +44,7 @@ export interface OrchestrationHandlers {
 }
 
 export interface CreateOrchestrationOptions {
-  getCurrentStationId: () => string | null;
+  getCurrentStationId: () => string;
   overlays: OverlayManager;
   sync: SyncManager;
 }
@@ -114,13 +114,6 @@ export function createOrchestration({
     tex: THREE.Texture, blob: Blob, aspect: number, dir: THREE.Vector3, revokeUrl: () => void,
   ): Promise<void> {
     const locId = getCurrentStationId();
-    if (!locId) {
-      // Index page: the 360°-viewer drop has no target. The map's own drop
-      // handler creates a station from a dropped photo; this codepath is just
-      // a silent fallback for drops outside the map.
-      revokeUrl();
-      return;
-    }
     const az = Math.atan2(-dir.x, -dir.z);
     const alt = Math.asin(clamp(dir.y, -1, 1));
     const pose = { aspect, photo_az: az, photo_tilt: alt, photo_roll: 0, size_rad: DEFAULT_SIZE_RAD, opacity: 1 };

@@ -29,10 +29,24 @@ type ModeState =
   // committing a no-op move (and skips the undo record).
   | { type: 'poi-drag'; poi: THREE.Mesh; downX: number; downY: number; moved: boolean }
   | { type: 'pinch'; startDist: number; startFov: number; p0: PointerPos; p1: PointerPos }
+  // Shift-click-drag from one CP marker to another to author a CP-CP
+  // constraint. cpAId is the source. hoverCpId is the other CP currently
+  // under the cursor (if any) — the host renders a preview line that snaps
+  // to that CP's 3D position when set.
+  | { type: 'cp-constraint-draw'; cpAId: string; hoverCpId: string | null }
   | null;
 
 // Squared px threshold separating a tap (open menu) from a drag (reposition).
 const TAP_THRESHOLD_PX2 = 25;
+
+// Touch long-press hold time before we synthesize a contextmenu open. The
+// canvas has touch-action: none, so iOS Safari won't fire its own long-press
+// contextmenu — we drive it ourselves.
+const LONG_PRESS_MS = 500;
+// Generous slop for the "is the finger still holding still?" test. Android
+// touch reports several pixels of jitter even on a stationary finger, so
+// TAP_THRESHOLD_PX2 (5 px) is too tight here and leads to flaky cancellation.
+const LONG_PRESS_SLOP_PX2 = 400;
 
 // A click that resolved to a photo body hit, with the uv where the ray
 // crossed the photo. The host uses (overlay, u, v) to anchor a new
@@ -93,13 +107,29 @@ export interface AttachInputOptions {
     controlPointId: string, screenX: number, screenY: number,
     bodyHit: PhotoBodyHit | null,
   ) => void;
+  // Hit-test for CP-CP constraint lines at the cursor's NDC. Returns the
+  // constraint id if the cursor is within the host's screen-space radius,
+  // else null. The host owns the projection math against its drawn-line
+  // cache.
+  findConstraintAtNDC?: (ndc: { x: number; y: number }) => { constraintId: string } | null;
+  // Plain-click on an existing constraint line. Host opens an edit / delete
+  // modal for the constraint.
+  onConstraintClick?: (constraintId: string, screenX: number, screenY: number) => void;
+  // Shift-click-drag completed on a second CP marker. Host posts the
+  // constraint and opens the type picker. Cancels (no callback) when the
+  // pointer releases anywhere else.
+  onCreateCPConstraint?: (cpAId: string, cpBId: string, screenX: number, screenY: number) => void;
+  // Live preview during the constraint draw. cpAId is the source; cpBId is
+  // the CP currently under the cursor (or null). Host renders a 3D preview
+  // line; passing both ids null clears the preview.
+  onCPConstraintDrawPreview?: (cpAId: string | null, cpBId: string | null) => void;
   // Records before/after snapshots for gesture-end mutations and applies
   // them on Cmd/Ctrl+Z. Optional for the index page where attachInput
   // still runs but no overlays are mutated.
   undoManager?: UndoManager;
 }
 
-export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu, findStationAtNDC, onStationClick, onDeselectStation, onCPClick, undoManager }: AttachInputOptions): void {
+export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu, findStationAtNDC, onStationClick, onDeselectStation, onCPClick, findConstraintAtNDC, onConstraintClick, onCreateCPConstraint, onCPConstraintDrawPreview, undoManager }: AttachInputOptions): void {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -124,6 +154,33 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
   let mode: ModeState = null;
   let lastX = 0, lastY = 0;
   const pointers = new Map<number, PointerPos>();
+  let longPressTimer: number | null = null;
+  let longPressX = 0, longPressY = 0;
+  function cancelLongPress(): void {
+    if (longPressTimer !== null) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+  }
+  // Returns true if a menu was opened.
+  function openContextMenuFromHits(clientX: number, clientY: number): boolean {
+    ndc.set((clientX / innerWidth) * 2 - 1, -(clientY / innerHeight) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    const hits = raycastOverlays();
+    const poiHit = hits.find(h => getRole(h.object) === ROLE_POI);
+    if (poiHit && onImagePOIContextMenu) {
+      onImagePOIContextMenu(poiHit.object as THREE.Mesh, clientX, clientY);
+      return true;
+    }
+    const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
+    if (bodyHit?.uv && onPhotoBodyContextMenu) {
+      onPhotoBodyContextMenu(
+        bodyHit.object.parent as THREE.Group, bodyHit.uv.x, bodyHit.uv.y, clientX, clientY,
+      );
+      return true;
+    }
+    return false;
+  }
   // The map-POI column under the cursor (if any). Set by pointermove via the
   // host's findColumnAtNDC. While non-null the next click will create a paired
   // image-POI on the underlying photo, anchored to this column's lat/lng.
@@ -199,13 +256,23 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
     raycaster.setFromCamera(ndc, camera);
     const hits = raycastOverlays();
 
-    // CP-marker click → open the CP menu. Skipped when a POI sits at the
-    // same NDC; clicking an existing observation should take priority over
-    // the CP marker behind it.
+    // CP-marker click. Two cases:
+    //   • shift + CP marker → enter CP-CP constraint draw mode. The drag
+    //     ends on a second CP (creates) or anywhere else (cancels).
+    //   • plain click + CP marker → open the CP menu. Skipped when a POI
+    //     sits at the same NDC; clicking an existing observation should
+    //     take priority over the CP marker behind it.
     const earlyPoiHit = hits.find(h => getRole(h.object) === ROLE_POI);
-    if (!earlyPoiHit && onCPClick) {
+    if (!earlyPoiHit) {
       const cpHit = findColumnAtNDC?.({ x: ndc.x, y: ndc.y }) ?? null;
-      if (cpHit) {
+      if (cpHit && e.shiftKey && onCreateCPConstraint) {
+        e.stopPropagation();
+        mode = { type: 'cp-constraint-draw', cpAId: cpHit.controlPointId, hoverCpId: null };
+        canvas.setPointerCapture(e.pointerId);
+        onCPConstraintDrawPreview?.(cpHit.controlPointId, null);
+        return;
+      }
+      if (cpHit && onCPClick) {
         e.stopPropagation();
         pointers.delete(e.pointerId);
         const earlyBodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
@@ -213,6 +280,19 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
           ? { overlay: earlyBodyHit.object.parent as THREE.Group, u: earlyBodyHit.uv.x, v: earlyBodyHit.uv.y }
           : null;
         onCPClick(cpHit.controlPointId, e.clientX, e.clientY, body);
+        return;
+      }
+    }
+
+    // Constraint-line click → open the edit/delete modal. Tested before
+    // the body-hit / empty-space pan branch so a click on the line beats
+    // a pan on the canvas behind it.
+    if (!earlyPoiHit && onConstraintClick) {
+      const conHit = findConstraintAtNDC?.({ x: ndc.x, y: ndc.y }) ?? null;
+      if (conHit) {
+        e.stopPropagation();
+        pointers.delete(e.pointerId);
+        onConstraintClick(conHit.constraintId, e.clientX, e.clientY);
         return;
       }
     }
@@ -303,26 +383,33 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
     }
     lastX = e.clientX; lastY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
+
+    // Touch/pen lacks right-click; synthesize contextmenu via long-press. A
+    // pre-existing pinch (size > 1) cancels the timer below.
+    cancelLongPress();
+    if (e.pointerType !== 'mouse' && pointers.size === 1) {
+      longPressX = e.clientX; longPressY = e.clientY;
+      const x = longPressX, y = longPressY;
+      const pid = e.pointerId;
+      longPressTimer = window.setTimeout(() => {
+        longPressTimer = null;
+        if (!openContextMenuFromHits(x, y)) return;
+        // Treat the long-press as ending the gesture: a missed pointerup
+        // (Android Chrome can drop captured-pointer events when DOM mutates
+        // under the finger) would otherwise leave this pointer in the Map,
+        // making the next pointerdown look like a pinch (size === 2).
+        closeBatch();
+        gestureBefore = null;
+        mode = null;
+        pointers.delete(pid);
+        if (canvas.hasPointerCapture(pid)) canvas.releasePointerCapture(pid);
+      }, LONG_PRESS_MS);
+    }
   });
 
   canvas.addEventListener('contextmenu', (e: MouseEvent) => {
     if (mode) return;
-    ndcFromEvent(e);
-    raycaster.setFromCamera(ndc, camera);
-    const hits = raycastOverlays();
-    // POI sits visually on top of body, so a hit on both means the user
-    // targeted the POI.
-    const poiHit = hits.find(h => getRole(h.object) === ROLE_POI);
-    if (poiHit && onImagePOIContextMenu) {
-      e.preventDefault();
-      onImagePOIContextMenu(poiHit.object as THREE.Mesh, e.clientX, e.clientY);
-      return;
-    }
-    const bodyHit = hits.find(h => getRole(h.object) === ROLE_BODY);
-    if (bodyHit?.uv && onPhotoBodyContextMenu) {
-      e.preventDefault();
-      onPhotoBodyContextMenu(bodyHit.object.parent as THREE.Group, bodyHit.uv.x, bodyHit.uv.y, e.clientX, e.clientY);
-    }
+    if (openContextMenuFromHits(e.clientX, e.clientY)) e.preventDefault();
   });
 
   function endDrag(): void {
@@ -344,6 +431,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
   }
   function onPointerEnd(e: PointerEvent): void {
     pointers.delete(e.pointerId);
+    cancelLongPress();
     // Smooth handoff: when a pinch ends with one finger still down, slide
     // into pan so the user can continue dragging without re-tapping.
     if (mode?.type === 'pinch' && pointers.size === 1) {
@@ -360,6 +448,14 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
         gestureBefore = null;
         onImagePOIContextMenu?.(poi, e.clientX, e.clientY);
       }
+      // Constraint draw release: if we ended on a different CP, fire the
+      // create callback; otherwise just clear the preview and bail.
+      if (mode?.type === 'cp-constraint-draw') {
+        if (mode.hoverCpId && onCreateCPConstraint) {
+          onCreateCPConstraint(mode.cpAId, mode.hoverCpId, e.clientX, e.clientY);
+        }
+        onCPConstraintDrawPreview?.(null, null);
+      }
       endDrag();
     }
   }
@@ -375,6 +471,10 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
   canvas.addEventListener('pointermove', (e: PointerEvent) => {
     const tracked = pointers.get(e.pointerId);
     if (tracked) { tracked.x = e.clientX; tracked.y = e.clientY; }
+    if (longPressTimer !== null
+      && dist2(e.clientX, e.clientY, longPressX, longPressY) > LONG_PRESS_SLOP_PX2) {
+      cancelLongPress();
+    }
     if (mode?.type === 'pinch') {
       const before = camera.fov;
       viewer.setFov(mode.startFov * mode.startDist / pinchDist(mode.p0, mode.p1));
@@ -406,6 +506,16 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
       return;
     }
     switch (mode.type) {
+      case 'cp-constraint-draw': {
+        ndcFromEvent(e);
+        const colHit = findColumnAtNDC?.({ x: ndc.x, y: ndc.y }) ?? null;
+        const next = colHit && colHit.controlPointId !== mode.cpAId ? colHit.controlPointId : null;
+        if (mode.hoverCpId !== next) {
+          mode.hoverCpId = next;
+          onCPConstraintDrawPreview?.(mode.cpAId, next);
+        }
+        break;
+      }
       case 'pan': {
         const dx = e.clientX - lastX, dy = e.clientY - lastY;
         lastX = e.clientX; lastY = e.clientY;

@@ -17,17 +17,21 @@ import { createControlPointColumns, findHitColumn } from './map-poi-columns.js';
 import type { ControlPointColumn } from './map-poi-columns.js';
 import { createObservationRays } from './observation-rays.js';
 import type { ObservationRay } from './observation-rays.js';
+import { createCPConstraintLines } from './cp-constraint-lines.js';
+import { createCPConstraintModal } from './cp-constraint-modal.js';
+import { makeOverlayLine, makeOverlayLineMaterial } from './overlay-lines.js';
 import { createStationMarkers } from './station-markers.js';
 import type { StationMarker } from './station-markers.js';
 import { createStationCones } from './station-cones.js';
 import { findHitDot } from './dot-layer.js';
 import {
   cpHref, cpLabel, cpLifespanFromApi, getElement, indexStationHref, isExtantAt,
+  parseStaFromURL, stationHref,
   meshMat, overlayData, poiData,
 } from './types.js';
-import { vecToAzAlt } from './geo.js';
+import { latLngToCameraRelativeMeters, vecToAzAlt } from './geo.js';
 import { degToRad } from './mathx.js';
-import type { ControlPointView, LatLng } from './types.js';
+import type { CPConstraintView, ControlPointView, LatLng } from './types.js';
 import { createSyncManager } from './sync.js';
 import { createSettingsPanel } from './settings.js';
 import { createOrchestration } from './handlers.js';
@@ -42,19 +46,26 @@ import { createStationFields } from './station-fields.js';
 import { attachSolveActions } from './solve-actions.js';
 
 export interface MountStationPageOptions {
-  stationId: string;
+  initialStationId: string;
   focusImageMeasurementId: string | null;
 }
 
 const SHIFT_WHEEL_LOG_PER_PX = 0.005;
 const COLUMN_NDC_HIT_RADIUS = 0.01;
+const STATION_DOT_HIT_PX = 10;
 const FOCUS_FOV_DEG = 25;
 
 export async function mountStationPage(opts: MountStationPageOptions): Promise<void> {
-  const { stationId, focusImageMeasurementId } = opts;
-  const getCurrentStationId = (): string | null => stationId;
+  const { initialStationId, focusImageMeasurementId } = opts;
+  // Mutable so loadStation(newId) can swap which station this mount is
+  // bound to without recreating viewer / listeners / modals.
+  let stationId = initialStationId;
+  const getCurrentStationId = (): string => stationId;
 
-  getElement<HTMLAnchorElement>('view-on-map').href = indexStationHref(stationId);
+  function syncViewOnMapHref(): void {
+    getElement<HTMLAnchorElement>('view-on-map').href = indexStationHref(stationId);
+  }
+  syncViewOnMapHref();
 
   // --- Viewer + scene singletons -----------------------------------------
 
@@ -101,6 +112,21 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     scene: viewer.scene,
     requestRender: () => { viewer.requestRender(); },
   });
+  const cpConstraintLines = createCPConstraintLines({
+    scene: viewer.scene,
+    requestRender: () => { viewer.requestRender(); },
+  });
+  // Loaded once at hydrate; mutated by the modal's onMutated callback.
+  let cpConstraints: CPConstraintView[] = [];
+  let selectedConstraintId: string | null = null;
+  // Preview line drawn during shift-click-drag. Updated in place rather than
+  // pushed through the constraint-lines layer so the per-pointermove update
+  // doesn't stomp the persisted lines.
+  const previewMat = makeOverlayLineMaterial(0xffffff);
+  const previewLine = makeOverlayLine([0, 0, 0, 0, 0, 0], previewMat);
+  previewLine.visible = false;
+  viewer.scene.add(previewLine);
+  const previewPositions = previewLine.geometry.getAttribute('position') as THREE.BufferAttribute;
   let otherStations: StationMarker[] = [];
   let otherCameras: OtherCamera[] = [];
   let selectedStationId: string | null = null;
@@ -113,6 +139,8 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       stationDots.setVisible(visible);
       observationRays.setVisible(visible);
       stationCones.setVisible(visible);
+      cpConstraintLines.setVisible(visible);
+      if (!visible) previewLine.visible = false;
     },
   });
   const hud = createHud(() => {
@@ -248,6 +276,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     stationDots.update(stationLocation, cameraHeight, otherStations);
     stationCones.update(stationLocation, cameraHeight, otherCameras, selectedStationId);
     observationRays.update(stationLocation, cameraHeight, buildObservationRays());
+    cpConstraintLines.update(stationLocation, cameraHeight, cps, cpConstraints, selectedConstraintId);
   }
 
   function applyCameraLocation(loc: LatLng): void {
@@ -310,6 +339,35 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   });
 
   const admin = createAdminModal({ getCurrentStationId });
+
+  function mapApiCPConstraint(r: api.ApiCPConstraint): CPConstraintView {
+    return { id: r.id, cpAId: r.cp_a_id, cpBId: r.cp_b_id, type: r.constraint_type };
+  }
+  // Pulls every CP-CP constraint and rebuilds the in-scene lines. CPs are
+  // global so we don't filter by station; the constraint-lines factory drops
+  // any constraint whose endpoints aren't in `cps`.
+  async function reloadCPConstraints(): Promise<void> {
+    try {
+      cpConstraints = (await api.listCPConstraints()).map(mapApiCPConstraint);
+    } catch (err) {
+      console.error('list cp constraints failed:', err);
+      cpConstraints = [];
+    }
+    refreshControlPointColumns();
+  }
+  const cpConstraintModal = createCPConstraintModal({
+    getControlPoints: () => overlays.controlPoints.list(),
+    onMutated: () => {
+      selectedConstraintId = null;
+      void reloadCPConstraints();
+    },
+    onClose: () => {
+      if (selectedConstraintId !== null) {
+        selectedConstraintId = null;
+        refreshControlPointColumns();
+      }
+    },
+  });
 
   // Mutations no longer trigger a solve — the solver is backend-side, behind
   // the explicit Solve buttons.
@@ -488,7 +546,9 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     },
     findStationAtNDC: ndc => {
       if (!stationLocation || otherStations.length === 0) return null;
-      return findHitDot(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, stationLocation,
+      const canvas = viewer.renderer.domElement;
+      return findHitDot(ndc, STATION_DOT_HIT_PX,
+        canvas.clientWidth, canvas.clientHeight, viewer.camera, stationLocation,
         terrain.getCameraHeight(), otherStations);
     },
     onStationClick: (id, sx, sy) => {
@@ -508,6 +568,42 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       refreshControlPointColumns();
     },
     onCPClick: (cpId, sx, sy, body) => { openCpContextMenu(cpId, sx, sy, body); },
+    findConstraintAtNDC: ndc => cpConstraintLines.findHit(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera),
+    onConstraintClick: (constraintId) => {
+      const constraint = cpConstraints.find(k => k.id === constraintId);
+      if (!constraint) return;
+      selectedConstraintId = constraintId;
+      refreshControlPointColumns();
+      cpConstraintModal.openEdit(constraint);
+    },
+    onCreateCPConstraint: (cpAId, cpBId) => { cpConstraintModal.openCreate(cpAId, cpBId); },
+    onCPConstraintDrawPreview: (cpAId, cpBId) => {
+      const hide = (): void => {
+        if (previewLine.visible) {
+          previewLine.visible = false;
+          viewer.requestRender();
+        }
+      };
+      // Without both endpoints (or a camera fix) there's no meaningful 3D
+      // line to draw — bail. The line reappears as soon as the cursor
+      // re-enters another CP marker.
+      if (!cpAId || !cpBId || !stationLocation) { hide(); return; }
+      const cps = overlays.controlPoints.list();
+      const a = cps.find(c => c.id === cpAId);
+      const b = cps.find(c => c.id === cpBId);
+      if (!a || !b) { hide(); return; }
+      if (a.estLat === null || a.estLng === null || a.estAlt === null) { hide(); return; }
+      if (b.estLat === null || b.estLng === null || b.estAlt === null) { hide(); return; }
+      const cameraHeight = terrain.getCameraHeight();
+      const axz = latLngToCameraRelativeMeters({ lat: a.estLat, lng: a.estLng }, stationLocation);
+      const bxz = latLngToCameraRelativeMeters({ lat: b.estLat, lng: b.estLng }, stationLocation);
+      const arr = previewPositions.array as Float32Array;
+      arr[0] = axz.x; arr[1] = a.estAlt - cameraHeight; arr[2] = axz.z;
+      arr[3] = bxz.x; arr[4] = b.estAlt - cameraHeight; arr[5] = bxz.z;
+      previewPositions.needsUpdate = true;
+      previewLine.visible = true;
+      viewer.requestRender();
+    },
     undoManager,
   });
 
@@ -516,7 +612,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   // --- Station fields, solve, navigation ---------------------------------
 
   const stationFields = createStationFields({
-    stationId,
+    getCurrentStationId,
     onAltitudeChanged: (alt) => {
       // Keep the viewer's vertical reference in sync with the station's recorded
       // altitude — otherwise CP columns (rendered at est_alt − cameraHeight) drift
@@ -560,14 +656,14 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   }
 
   attachSolveActions({
-    stationId,
+    getCurrentStationId,
     rehydrate: rehydrateAfterSolve,
     reportError: (label, err) => { sync.reportError(label, err); },
   });
 
   const stationNavigation = createStationNavigation({
     viewer, terrain, cpColumns, stationDots,
-    currentStationId: stationId,
+    getCurrentStationId,
     getStationLocation: () => stationLocation,
     setStationLocation: (loc) => { stationLocation = loc; },
     getStationCache: stationFields.getNameAndAlt,
@@ -577,18 +673,77 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       stationCones.update(loc, alt, otherCameras, selectedStationId);
       observationRays.update(loc, alt, buildObservationRays());
     },
+    loadStation,
   });
 
   // --- Hydrate + bootstrap -----------------------------------------------
 
-  async function hydrateFromAPI(id: string): Promise<void> {
+  // Reset all per-station state so the next hydrateFromAPI starts fresh.
+  function clearStationData(): void {
+    // Reset sync FIRST. The overlay teardown below removes every photo /
+    // measurement / CP, each of which queues a notify; the batch's
+    // onMutate then runs sync.flush, and a still-loaded sync would diff
+    // the empty overlay state against its baseline and DELETE the
+    // backend rows for the station we're leaving. Resetting sync flips
+    // `loaded` to false so flush short-circuits before issuing any
+    // network call.
+    sync.reset();
+    overlays.withBatch(() => {
+      // deleteSelected disposes textures, removes from overlaysGroup, and
+      // strips child measurements via disposePoisOn. Snapshot first since
+      // the loop mutates overlaysGroup.children.
+      for (const o of [...overlays.photos.list()]) {
+        if (!(o instanceof THREE.Group)) continue;
+        overlays.photos.setSelected(o);
+        overlays.photos.deleteSelected();
+      }
+      for (const cp of [...overlays.controlPoints.list()]) {
+        overlays.controlPoints.remove(cp.id);
+      }
+    });
+    otherStations = [];
+    otherCameras = [];
+    selectedStationId = null;
+    cpConstraints = [];
+    selectedConstraintId = null;
+    previewLine.visible = false;
+  }
+
+  // Swap to `newId` in place. Caller is responsible for the URL: fly /
+  // station-clicks should pushState first; popstate just calls this.
+  async function applyStation(newId: string, prefetched?: ApiHydratedStation): Promise<void> {
+    if (newId === stationId) return;
+    stationId = newId;
+    syncViewOnMapHref();
+    clearStationData();
+    await hydrateFromAPI(newId, prefetched);
+    if (newId !== stationId) return;  // another loadStation took over
+    sync.markLoaded();
+  }
+
+  async function loadStation(newId: string, prefetched?: ApiHydratedStation): Promise<void> {
+    if (newId !== stationId) history.pushState(null, '', stationHref(newId));
+    await applyStation(newId, prefetched);
+  }
+
+  addEventListener('popstate', () => {
+    const sta = parseStaFromURL();
+    if (sta) void applyStation(sta);
+  });
+
+  async function hydrateFromAPI(id: string, prefetched?: ApiHydratedStation): Promise<void> {
     let data: ApiHydratedStation;
-    try {
-      data = await api.getStation(id);
-    } catch (err) {
-      console.error('hydrate failed:', err);
-      alert('Could not load this station.');
-      return;
+    if (prefetched) {
+      data = prefetched;
+    } else {
+      try {
+        data = await api.getStation(id);
+      } catch (err) {
+        console.error('hydrate failed:', err);
+        alert('Could not load this station.');
+        return;
+      }
+      if (id !== stationId) return;  // user navigated away during fetch
     }
     const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
     applyCameraLocation(loc);
@@ -649,11 +804,14 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     });
 
     // Independent fetches — kick off in parallel so hydrate latency isn't
-    // gated on the slower of the two.
-    const [cpsRes, stationsRes] = await Promise.allSettled([
+    // gated on the slower of the two. Constraints are global; piggy-back here
+    // so they're available the moment the world view paints.
+    const [cpsRes, stationsRes, consRes] = await Promise.allSettled([
       api.listControlPoints(),
       api.listStations(),
+      api.listCPConstraints(),
     ]);
+    if (id !== stationId) return;  // user navigated away during fetch
     overlays.withBatch(() => {
       if (cpsRes.status === 'fulfilled') {
         for (const cp of cpsRes.value) registerControlPoint(cp);
@@ -661,6 +819,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         console.error('list control points failed:', cpsRes.reason);
       }
     });
+    if (consRes.status === 'fulfilled') {
+      cpConstraints = consRes.value.map(mapApiCPConstraint);
+    } else {
+      console.error('list cp constraints failed:', consRes.reason);
+      cpConstraints = [];
+    }
     if (stationsRes.status === 'fulfilled') {
       // Skip the current station: a dot at (0,0,0) just sits on top of the camera.
       otherStations = stationsRes.value
@@ -670,6 +834,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       // Non-blocking: dots already render without the per-photo data.
       void Promise.all(otherStations.map(s => api.getStation(s.id)))
         .then(hydrated => {
+          if (id !== stationId) return;  // user navigated away
           const cams: OtherCamera[] = [];
           for (const d of hydrated) {
             const measByPhotoId = new Map<string, OtherCameraMeasurement[]>();

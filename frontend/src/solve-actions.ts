@@ -7,13 +7,13 @@ import * as api from './api.js';
 import { getElement } from './types.js';
 
 export interface SolveActionsDeps {
-  stationId: string;
+  getCurrentStationId: () => string;
   rehydrate: () => Promise<void>;
   reportError: (label: string, err: unknown) => void;
 }
 
 export function attachSolveActions(deps: SolveActionsDeps): void {
-  const { stationId, rehydrate, reportError } = deps;
+  const { getCurrentStationId, rehydrate, reportError } = deps;
 
   async function applySolveResultByRefetch(label: string, run: () => Promise<api.SolveResult>): Promise<void> {
     let result: api.SolveResult;
@@ -38,7 +38,7 @@ export function attachSolveActions(deps: SolveActionsDeps): void {
   const solveJointBtn = getElement<HTMLButtonElement>('solve-joint-btn');
   solveStationBtn.addEventListener('click', () => {
     solveStationBtn.disabled = true;
-    void applySolveResultByRefetch('solve station', () => api.solveStation(stationId))
+    void applySolveResultByRefetch('solve station', () => api.solveStation(getCurrentStationId()))
       .finally(() => { solveStationBtn.disabled = false; });
   });
   solveJointBtn.addEventListener('click', () => {

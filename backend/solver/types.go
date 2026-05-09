@@ -67,6 +67,18 @@ type Observation struct {
 	V              float64
 }
 
+// CPConstraint is a hard equality between two control points on one or more
+// axes. The solver eliminates the shared parameter via per-axis union-find:
+// every axis-class has at most one slot in the state vector, and updates to
+// that slot are broadcast to every CP in the class.
+//
+//	"plumb" — CpAID and CpBID share est_lat AND est_lng (vertical line)
+//	"level" — CpAID and CpBID share est_alt           (horizontal alignment)
+type CPConstraint struct {
+	CpAID, CpBID   string
+	ConstraintType string
+}
+
 // Problem is the in-memory snapshot the solver mutates. After Solve returns,
 // the caller diffs the snapshot against Result.Changes to know what to write.
 type Problem struct {
@@ -74,6 +86,7 @@ type Problem struct {
 	Photos        []Photo
 	ControlPoints []ControlPoint
 	Observations  []Observation
+	CPConstraints []CPConstraint
 }
 
 type Mode int

@@ -9,7 +9,7 @@ export interface AdminModal {
 }
 
 export interface CreateAdminModalOptions {
-  getCurrentStationId: () => string | null;
+  getCurrentStationId: () => string;
 }
 
 export function createAdminModal({ getCurrentStationId }: CreateAdminModalOptions): AdminModal {
@@ -28,7 +28,6 @@ export function createAdminModal({ getCurrentStationId }: CreateAdminModalOption
   });
   adminDeleteBtn.addEventListener('click', () => {
     const id = getCurrentStationId();
-    if (!id) return;
     if (!confirm('Delete this station? Photos, POIs, and matches will be removed permanently.')) return;
     adminDeleteBtn.disabled = true;
     void api.deleteStation(id)

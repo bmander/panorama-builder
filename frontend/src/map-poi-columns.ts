@@ -19,7 +19,10 @@ import type { LatLng, ControlPointView } from './types.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
 import { createDotLayer } from './dot-layer.js';
 import type { Dot } from './dot-layer.js';
-import { clearLineGroup, makeOverlayLine } from './overlay-lines.js';
+import {
+  clearLineGroup, makeOverlayLine, ndcDistToProjectedSegment,
+  OVERLAY_LINE_BASE_PROPS,
+} from './overlay-lines.js';
 import { norm2 } from './mathx.js';
 
 const MARKER_COLOR = 0x5080ff;
@@ -73,13 +76,8 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
 
   const dots = createDotLayer({ scene, requestRender });
 
-  // transparent: true puts the lines in the same render pass as the
-  // (transparent) photo overlays; renderOrder sorts them on top.
-  const baseLineProps = {
-    depthTest: false, depthWrite: false, transparent: true, fog: false,
-  } as const;
-  const lineMat = new THREE.LineBasicMaterial({ color: MARKER_COLOR, ...baseLineProps });
-  const lineMatSel = new THREE.LineBasicMaterial({ color: MARKER_COLOR_SELECTED, ...baseLineProps });
+  const lineMat = new THREE.LineBasicMaterial({ color: MARKER_COLOR, ...OVERLAY_LINE_BASE_PROPS });
+  const lineMatSel = new THREE.LineBasicMaterial({ color: MARKER_COLOR_SELECTED, ...OVERLAY_LINE_BASE_PROPS });
   const colorDefault = new THREE.Color(MARKER_COLOR);
   const colorSelected = new THREE.Color(MARKER_COLOR_SELECTED);
 
@@ -154,7 +152,8 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
 }
 
 const _proj = new THREE.Vector3();
-const _projTop = new THREE.Vector3();
+const _colBot = new THREE.Vector3();
+const _colTop = new THREE.Vector3();
 
 // Pick the closest control-point — either a dot at (lat,lng,alt) or a vertical
 // column at (lat,lng) with unknown altitude — to an NDC point within
@@ -180,17 +179,9 @@ export function findHitColumn(
       if (_proj.z > 1) continue;
       dist = norm2(_proj.x - ndc.x, _proj.y - ndc.y);
     } else {
-      // Skip when either endpoint is behind the camera: project() flips the
-      // sign across the near plane, so the line through the two projected
-      // points no longer represents the visible column.
-      _proj.set(x, -COLUMN_HIT_HALF_HEIGHT, z).project(camera);
-      _projTop.set(x, COLUMN_HIT_HALF_HEIGHT, z).project(camera);
-      if (_proj.z > 1 || _projTop.z > 1) continue;
-      const dx = _projTop.x - _proj.x;
-      const dy = _projTop.y - _proj.y;
-      const len = norm2(dx, dy);
-      if (len === 0) continue;
-      dist = Math.abs(dx * (ndc.y - _proj.y) - dy * (ndc.x - _proj.x)) / len;
+      _colBot.set(x, -COLUMN_HIT_HALF_HEIGHT, z);
+      _colTop.set(x, COLUMN_HIT_HALF_HEIGHT, z);
+      dist = ndcDistToProjectedSegment(ndc, _colBot, _colTop, camera, false);
     }
     if (dist < bestDist) {
       bestDist = dist;

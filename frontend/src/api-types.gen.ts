@@ -233,6 +233,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/control-point-constraints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List all pairwise control-point constraints */
+        get: operations["listCPConstraints"];
+        put?: never;
+        /**
+         * Create a pairwise constraint between two control points
+         * @description Creates a hard equality constraint between two control points.
+         *     The handler swaps `cp_a_id` and `cp_b_id` if necessary so the
+         *     stored row satisfies the canonical `cp_a_id < cp_b_id` ordering.
+         *     Self-loops (same id on both sides) and duplicate (a, b, type)
+         *     triples are rejected.
+         *
+         *     Type semantics:
+         *       * `plumb` — the two CPs share `est_lat` and `est_lng`
+         *       * `level` — the two CPs share `est_alt`
+         */
+        post: operations["createCPConstraint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control-point-constraints/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CPConstraintId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Change the constraint type */
+        put: operations["updateCPConstraint"];
+        post?: never;
+        /** Delete a constraint */
+        delete: operations["deleteCPConstraint"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/solve/joint": {
         parameters: {
             query?: never;
@@ -718,6 +767,36 @@ export interface components {
             lock_est_lng?: boolean;
             lock_est_alt?: boolean;
         };
+        /**
+         * @description plumb: cp_a and cp_b share est_lat and est_lng (vertical line);
+         *     level: cp_a and cp_b share est_alt (horizontal alignment).
+         * @enum {string}
+         */
+        CPConstraintType: "plumb" | "level";
+        CPConstraint: {
+            id: components["schemas"]["Id"];
+            cp_a_id: components["schemas"]["Id"];
+            cp_b_id: components["schemas"]["Id"];
+            constraint_type: components["schemas"]["CPConstraintType"];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /**
+         * @description POST body for `/control-point-constraints`. The handler
+         *     swaps `cp_a_id` and `cp_b_id` if needed to satisfy the
+         *     canonical `cp_a_id < cp_b_id` ordering before insert.
+         */
+        CPConstraintCreate: {
+            cp_a_id: components["schemas"]["Id"];
+            cp_b_id: components["schemas"]["Id"];
+            constraint_type: components["schemas"]["CPConstraintType"];
+        };
+        /** @description Partial-update body. Only `constraint_type` is mutable. */
+        CPConstraintPatch: {
+            constraint_type?: components["schemas"]["CPConstraintType"];
+        };
         /** @description Optional knobs for the solver. Defaults are used when omitted. */
         SolveConfig: {
             /** @description GN iteration cap (synchronous default 30 */
@@ -800,6 +879,7 @@ export interface components {
         PhotoId: components["schemas"]["Id"];
         ImageMeasurementId: components["schemas"]["Id"];
         ControlPointId: components["schemas"]["Id"];
+        CPConstraintId: components["schemas"]["Id"];
     };
     requestBodies: never;
     headers: never;
@@ -1306,6 +1386,110 @@ export interface operations {
             header?: never;
             path: {
                 id: components["parameters"]["ControlPointId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listCPConstraints: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CPConstraint"][];
+                };
+            };
+        };
+    };
+    createCPConstraint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CPConstraintCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CPConstraint"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            /** @description A constraint of this type already exists between this pair */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    updateCPConstraint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CPConstraintId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CPConstraintPatch"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CPConstraint"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteCPConstraint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CPConstraintId"];
             };
             cookie?: never;
         };

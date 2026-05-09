@@ -49,7 +49,15 @@ func (s *Server) loadJointProblem(ctx context.Context) (solver.Problem, []string
 		return solver.Problem{}, nil, err
 	}
 	cps, obs, seeded := seedNullLocationCPs(cps, nullLoc, obs, photos, stations)
-	return solver.Problem{Stations: stations, Photos: photos, ControlPoints: cps, Observations: obs}, seeded, nil
+	cons, err := s.loadProblemCPConstraints(ctx, cps)
+	if err != nil {
+		return solver.Problem{}, nil, err
+	}
+	return solver.Problem{
+		Stations: stations, Photos: photos,
+		ControlPoints: cps, Observations: obs,
+		CPConstraints: cons,
+	}, seeded, nil
 }
 
 func (s *Server) loadSingleStationProblem(ctx context.Context, stationID string) (solver.Problem, bool, error) {
@@ -72,7 +80,15 @@ func (s *Server) loadSingleStationProblem(ctx context.Context, stationID string)
 	if err != nil {
 		return solver.Problem{}, false, err
 	}
-	return solver.Problem{Stations: []solver.Station{st}, Photos: photos, ControlPoints: cps, Observations: obs}, true, nil
+	cons, err := s.loadProblemCPConstraints(ctx, cps)
+	if err != nil {
+		return solver.Problem{}, false, err
+	}
+	return solver.Problem{
+		Stations: []solver.Station{st}, Photos: photos,
+		ControlPoints: cps, Observations: obs,
+		CPConstraints: cons,
+	}, true, nil
 }
 
 func (s *Server) loadSingleCPProblem(ctx context.Context, cpID string) (solver.Problem, bool, error) {
@@ -104,7 +120,16 @@ func (s *Server) loadSingleCPProblem(ctx context.Context, cpID string) (solver.P
 			cp.EstLng = lng
 		}
 	}
-	return solver.Problem{Stations: stations, Photos: photos, ControlPoints: []solver.ControlPoint{cp}, Observations: obs}, true, nil
+	cps := []solver.ControlPoint{cp}
+	cons, err := s.loadProblemCPConstraints(ctx, cps)
+	if err != nil {
+		return solver.Problem{}, false, err
+	}
+	return solver.Problem{
+		Stations: stations, Photos: photos,
+		ControlPoints: cps, Observations: obs,
+		CPConstraints: cons,
+	}, true, nil
 }
 
 // --- DB loaders. Each one fills in the solver-side type directly so the
@@ -417,6 +442,61 @@ func cpIDsFromObs(obs []solver.Observation) []string {
 			seen[o.ControlPointID] = true
 			out = append(out, o.ControlPointID)
 		}
+	}
+	return out
+}
+
+// loadProblemCPConstraints reads every cp_constraints row and drops the ones
+// whose endpoints aren't both in `cps` — an unfiltered constraint would be
+// silently ignored by the solver anyway, and pre-filtering keeps the
+// in-memory Problem snug. Single-call wrapper used by all three loaders.
+func (s *Server) loadProblemCPConstraints(ctx context.Context, cps []solver.ControlPoint) ([]solver.CPConstraint, error) {
+	cons, err := loadAllCPConstraints(ctx, s.db)
+	if err != nil {
+		return nil, err
+	}
+	return filterCPConstraintsByCPSet(cons, cps), nil
+}
+
+func loadAllCPConstraints(ctx context.Context, db *pgxpool.Pool) ([]solver.CPConstraint, error) {
+	rows, err := db.Query(ctx,
+		`SELECT cp_a_id, cp_b_id, constraint_type FROM cp_constraints`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []solver.CPConstraint
+	for rows.Next() {
+		var c solver.CPConstraint
+		if err := rows.Scan(&c.CpAID, &c.CpBID, &c.ConstraintType); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// filterCPConstraintsByCPSet drops constraints whose endpoints aren't both
+// in the given CP slice. Single-station and single-CP modes restrict the
+// active CP set, so a half-loaded constraint has no anchor and would be
+// silently ignored by the solver anyway.
+func filterCPConstraintsByCPSet(cons []solver.CPConstraint, cps []solver.ControlPoint) []solver.CPConstraint {
+	if len(cons) == 0 {
+		return nil
+	}
+	in := make(map[string]struct{}, len(cps))
+	for _, cp := range cps {
+		in[cp.ID] = struct{}{}
+	}
+	out := cons[:0:0]
+	for _, c := range cons {
+		if _, ok := in[c.CpAID]; !ok {
+			continue
+		}
+		if _, ok := in[c.CpBID]; !ok {
+			continue
+		}
+		out = append(out, c)
 	}
 	return out
 }
