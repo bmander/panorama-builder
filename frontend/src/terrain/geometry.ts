@@ -5,10 +5,10 @@ import {
   tileKey,
   tileXToLng,
   tileYToLat,
-} from './dem.js';
-import { M_PER_DEG_LAT, R_EARTH } from './geo.js';
-import { clamp, degToRad } from './mathx.js';
-import type { LatLng } from './types.js';
+} from '../dem.js';
+import { M_PER_DEG_LAT, R_EARTH } from '../geo.js';
+import { clamp, degToRad } from '../mathx.js';
+import type { LatLng } from '../types.js';
 
 // Ring layout is derived from a single target angular resolution. A pixel of
 // size R subtends ≤ θ at distance ≥ R/θ. At zoom z, tile width T = 40_075_000

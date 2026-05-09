@@ -5,8 +5,8 @@
 // path order is {z}/{y}/{x} (row before column), unlike the standard XYZ
 // convention dem.ts uses.
 
-import { tileKey } from './dem.js';
-import { createTileCache } from './tile-cache.js';
+import { tileKey } from '../dem.js';
+import { createTileCache } from '../tile-cache.js';
 
 const TILE_URL = 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile';
 

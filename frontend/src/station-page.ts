@@ -11,7 +11,7 @@ import { createBaker } from './bake.js';
 import { attachInput } from './input.js';
 import type { PhotoBodyHit } from './input.js';
 import { createHud, attachDownload } from './ui.js';
-import { createTerrainView } from './terrain.js';
+import { createTerrainView } from './terrain/index.js';
 import { createSunMarker } from './sun-marker.js';
 import { createControlPointColumns, findHitColumn } from './map-poi-columns.js';
 import type { ControlPointColumn } from './map-poi-columns.js';

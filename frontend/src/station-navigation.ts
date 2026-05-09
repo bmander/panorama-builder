@@ -9,7 +9,7 @@ import { wrapPi } from './mathx.js';
 import type { LatLng } from './types.js';
 import type { Viewer } from './viewer.js';
 import { DEFAULT_FOV } from './viewer.js';
-import type { TerrainView } from './terrain.js';
+import type { TerrainView } from './terrain/index.js';
 import type { ControlPointColumns } from './map-poi-columns.js';
 import type { StationMarker, StationMarkers } from './station-markers.js';
 import type { PhotoPreviews } from './photo-previews.js';

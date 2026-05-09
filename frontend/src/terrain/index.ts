@@ -13,21 +13,21 @@
 // angular resolution — see computeRings and its comment block.
 
 import * as THREE from 'three';
-import type { LatLng } from './types.js';
-import { sunDirection } from './solar.js';
-import { latLngToCameraRelativeMeters } from './geo.js';
+import type { LatLng } from '../types.js';
+import { sunDirection } from '../solar.js';
+import { latLngToCameraRelativeMeters } from '../geo.js';
 import {
   CURVATURE_FACTOR_GEOMETRIC,
   CURVATURE_FACTOR_REFRACTED,
   buildRingGeometry,
   computeRings,
-} from './terrain-geometry.js';
-import type { PrevRing, RingGeometry, RingSpec } from './terrain-geometry.js';
+} from './geometry.js';
+import type { PrevRing, RingGeometry, RingSpec } from './geometry.js';
 import {
   loadRingTiles,
   prefetchRingTiles,
   stitchImageryCanvas,
-} from './terrain-tiles.js';
+} from './tiles.js';
 
 const WIREFRAME_COLOR = 0x88aaff;
 const WIREFRAME_OPACITY = 0.35;

@@ -4,10 +4,10 @@ import {
   latToTileY,
   lngToTileX,
   tileKey,
-} from './dem.js';
+} from '../dem.js';
 import { fetchImageryTile } from './imagery.js';
-import type { LatLng } from './types.js';
-import type { RingSpec } from './terrain-geometry.js';
+import type { LatLng } from '../types.js';
+import type { RingSpec } from './geometry.js';
 
 // Fallback fill for the imagery canvas when individual tiles fail to load.
 const IMAGERY_FALLBACK = '#888';

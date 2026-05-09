@@ -11,7 +11,7 @@ import { solarAzAlt } from './solar.js';
 import { formatLocalDateTime, getElement } from './types.js';
 import type { LatLng } from './types.js';
 import type { Viewer } from './viewer.js';
-import type { TerrainView } from './terrain.js';
+import type { TerrainView } from './terrain/index.js';
 import type { SunMarker } from './sun-marker.js';
 
 export interface SettingsPanel {
