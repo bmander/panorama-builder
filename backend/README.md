@@ -68,6 +68,32 @@ falling back to `index.html` (SPA `/station/<id>` and `/cp/<id>` deep-links).
 | PUT    | `/api/control-points/{id}`               |
 | DELETE | `/api/control-points/{id}`               |
 
+## Backups
+
+The Postgres data lives in the `pgdata` docker volume; photo blobs are
+stored on the host under `STORAGE_DIR` (default `./data`). The two are
+backed up separately.
+
+Dump the database to a plain-SQL file via `make`:
+
+```sh
+make dump                                    # writes panorama_<UTC-timestamp>.sql
+make dump DUMP_FILE=path/to/backup.sql       # explicit destination
+```
+
+This shells into the running `postgres` container and runs `pg_dump`, so
+no host-side `postgres-client` is required — only `docker compose up -d`.
+
+Restore a dump back into the running container (drops and recreates the
+`public` schema first, so existing data is wiped):
+
+```sh
+make restore DUMP_FILE=path/to/backup.sql
+```
+
+To back up photos as well, snapshot `STORAGE_DIR` (e.g. `tar czf
+photos.tgz data/`) alongside the SQL dump.
+
 ## Smoke test
 
 ```sh
