@@ -10,33 +10,53 @@ import { M_PER_DEG_LAT, R_EARTH } from './geo.js';
 import { clamp, degToRad } from './mathx.js';
 import type { LatLng } from './types.js';
 
-// Outer-edge angular-pitch target driving the ring layout below: ~5 mrad
-// (~0.29°). At 75° FOV / ~1920 px viewport one screen pixel subtends ~0.7
-// mrad, so 5 mrad ≈ 7 px per mesh cell — coarser than per-pixel but enough
-// for a reference surface. To retune, pick a new target and re-derive RINGS.
+// Ring layout is derived from a single target angular resolution. A pixel of
+// size R subtends ≤ θ at distance ≥ R/θ. At zoom z, tile width T = 40_075_000
+// · cos(lat) / 2^z meters and pixel size = T/256, so the cutoff distance —
+// where pixel angular size hits θ — is (T/256)/θ = T / (256·θ). With θ = 5
+// arcmin (≈1.4544 mrad), that's T · 2.687: the cutoff is always ~2.687 tile
+// widths from the camera, regardless of zoom or latitude. So a single
+// radiusTiles works at every level.
+//
+// Adjacent rings descend by exactly one zoom step (2× tile width). That
+// matters geometrically: the inner ring's outer edge in the outer ring's
+// tile coords lands at outer_cx + δ ± radiusTiles, where δ ∈ {0, 0.5} is
+// the inner ring's tile-center offset relative to the outer's. With a 1/128
+// vertex grid (stride = 2), 1/2 is a multiple of the grid spacing, so the
+// inner edge falls exactly on outer-ring vertex columns. Every outer-ring
+// quad is then either fully inside or fully outside the inner ring's
+// rectangle — no straddle, no overlap, no z-fighting. Strict integer
+// grid-index comparisons in buildRingGeometry's skip rule keep the cut
+// exact even under floating-point drift.
 export interface RingSpec {
   zoom: number;
   radiusTiles: number;
   stride: number;
 }
 
-// Each successive ring drops 2 zoom levels (4× spacing, 4× tile width). The
-// rebuild orchestrator threads each ring's outer half-width to the next so
-// outer rings carve a hole exactly matching the inner ring's coverage —
-// otherwise their meshes z-fight in the overlap band.
-export const RINGS: readonly RingSpec[] = [
-  { zoom: 11, radiusTiles: 2, stride: 2 },
-  { zoom:  9, radiusTiles: 2, stride: 2 },
-  { zoom:  7, radiusTiles: 2, stride: 2 },
-];
+// Outermost zoom: at lat 45° tile width ≈ 110 km, ring outer reach ≈ 275 km
+// (close to the requested ~300 km cap; high-latitude camps land smaller).
+// Innermost zoom: Terrarium serves up to z=14 (~7 m/px at 45°N) reliably;
+// z=15 sometimes 404s.
+const OUTER_ZOOM = 8;
+const INNER_ZOOM = 14;
 
-// World-meter coverage rectangle of a ring relative to the camera. Asymmetric
-// because the camera generally isn't centered within its tile.
-export interface RingBounds {
-  readonly xMin: number;
-  readonly xMax: number;
-  readonly zMin: number;
-  readonly zMax: number;
+// 5×5 tile grid per ring. With stride = 2 that's a 641×641 vertex grid; the
+// outer extent (2.5 tile widths on average) brackets the angular-resolution
+// cutoff (~2.687 tile widths), and the inner-edge-on-grid-line invariant
+// only holds for radiusTiles whose halving stays a multiple of 1/128 — which
+// integer values do.
+const RING_RADIUS_TILES = 2;
+const RING_STRIDE = 2;
+
+// Innermost ring first (zoom descending) so each outer ring sees its inner
+// neighbor's coverage first and can carve a matching hole.
+export function computeRings(): readonly RingSpec[] {
+  const out: RingSpec[] = [];
+  for (let z = INNER_ZOOM; z >= OUTER_ZOOM; z--) {
+    out.push({ zoom: z, radiusTiles: RING_RADIUS_TILES, stride: RING_STRIDE });
+  }
+  return out;
 }
 
 // Curvature + standard atmospheric refraction. The geometric drop below the
@@ -45,24 +65,28 @@ export interface RingBounds {
 // Earth, raising apparent positions by k·d²/(2R); the surveyor's k = 0.14
 // (the "0.0675 d² km" rule of thumb) cancels part of the drop. Net y-offset:
 // −(1 − k) · d² / (2R), which reaches 73 m at 33 km, 608 m at 95 km, and
-// 18.6 km at the outer ring's 525 km horizon.
+// ~25 km at the outermost ring's horizon.
 const SURVEY_REFRACTION_K = 0.14;
 // drop = factor · d². Curvature off → 0 (flat plane). Curvature on,
 // refraction off → full geometric drop. Both on → drop reduced by k.
 export const CURVATURE_FACTOR_GEOMETRIC = 1 / (2 * R_EARTH);
 export const CURVATURE_FACTOR_REFRACTED = (1 - SURVEY_REFRACTION_K) / (2 * R_EARTH);
 
+// Threaded from each ring to the next-coarser one. The inner-ring outer
+// edge is in tile-fractional coords at the *inner ring's* zoom; the outer
+// ring halves them (one zoom step ⇒ tile width × 2) to map onto its grid.
 export interface PrevRing {
   camGroundElev: number;
-  bounds: RingBounds;
+  innerTileXMin: number;
+  innerTileXMax: number;
+  innerTileYMin: number;
+  innerTileYMax: number;
 }
 
-export interface RingGeometry {
+export interface RingGeometry extends PrevRing {
   positions: Float32Array;
   uvs: Float32Array;
   indices: Uint32Array;
-  camGroundElev: number;
-  bounds: RingBounds;
 }
 
 // Sample elevation at fractional pixel coords within a tile (nearest-neighbor).
@@ -72,13 +96,12 @@ function sampleTile(elev: Float32Array, px: number, py: number): number {
   return elev[iy * TILE_PX + ix]!;
 }
 
-// Build one ring's geometry. When `prev` is supplied (every ring except the
-// innermost), the ring reuses the inner ring's ground elevation so meshes line
-// up at boundaries, and skips quads whose bounding box is fully contained in
-// the inner ring's coverage rectangle. The "fully contained" rule lets outer
-// quads extend one cell into the inner ring's coverage — that overlap gets
-// resolved by per-ring polygonOffset (see makeMaterial in terrain.ts) so the
-// inner ring always wins the depth test there, no gap, no z-fighting.
+// Build one ring's geometry. When `prev` is supplied, the ring reuses the
+// inner ring's ground elevation so meshes line up vertically, and skips
+// quads whose four vertices all sit inside the inner ring's outer rectangle.
+// With the consecutive-zoom schedule, that rectangle's edges land exactly on
+// this ring's vertex grid — every quad is fully inside or fully outside, so
+// the skip is a true clean cut: no overlap, no z-fighting at the seam.
 export function buildRingGeometry(
   camLoc: LatLng,
   spec: RingSpec,
@@ -159,29 +182,28 @@ export function buildRingGeometry(
     }
   }
 
-  // Skip quads fully inside the inner ring's bounds. Quads that straddle the
-  // boundary stay (one cell of overlap with the inner ring), which makes the
-  // boundary seamless; polygonOffset on the outer ring's material biases its
-  // depth so the inner ring wins the overlap.
-  const ixMin = prev?.bounds.xMin ?? 0;
-  const ixMax = prev?.bounds.xMax ?? 0;
-  const izMin = prev?.bounds.zMin ?? 0;
-  const izMax = prev?.bounds.zMax ?? 0;
+  // Map the inner ring's outer rectangle into this ring's vertex grid as
+  // integer index ranges. The divisor is 2 because computeRings emits
+  // adjacent zoom levels; Math.round absorbs only float noise.
+  let iHoleMin = 0, iHoleMax = 0, jHoleMin = 0, jHoleMax = 0;
+  if (prev) {
+    iHoleMin = Math.round((prev.innerTileXMin / 2 - (cx - radiusTiles)) * samplesPerTile);
+    iHoleMax = Math.round((prev.innerTileXMax / 2 - (cx - radiusTiles)) * samplesPerTile);
+    jHoleMin = Math.round((prev.innerTileYMin / 2 - (cy - radiusTiles)) * samplesPerTile);
+    jHoleMax = Math.round((prev.innerTileYMax / 2 - (cy - radiusTiles)) * samplesPerTile);
+  }
+
+  // Skip quads with all four corners inside the inner-ring hole. Boundary
+  // indices count as inside, so boundary-touching quads on the inner side
+  // drop out and on the outer side stay.
   const quadCount = (nx - 1) * (ny - 1);
-  // Uint32 since vertex count can exceed 65535. Over-allocated when skipping;
-  // trimmed below via slice() so the unused tail is GC-eligible.
+  // Uint32 indices: vertex count exceeds 65535.
   const indexBuf = new Uint32Array(quadCount * 6);
   let k = 0;
   for (let j = 0; j < ny - 1; j++) {
-    const wzA = rowWz[j]!, wzB = rowWz[j + 1]!;
-    const zMin = Math.min(wzA, wzB);
-    const zMax = Math.max(wzA, wzB);
-    const zInside = zMin >= izMin && zMax <= izMax;
+    const jInside = prev !== undefined && j >= jHoleMin && j + 1 <= jHoleMax;
     for (let i = 0; i < nx - 1; i++) {
-      if (prev && zInside) {
-        const wxA = colWx[i]!, wxB = colWx[i + 1]!;
-        if (Math.min(wxA, wxB) >= ixMin && Math.max(wxA, wxB) <= ixMax) continue;
-      }
+      if (jInside && i >= iHoleMin && i + 1 <= iHoleMax) continue;
       const a = j * nx + i;
       const b = a + 1;
       const c = a + nx;
@@ -193,12 +215,14 @@ export function buildRingGeometry(
   // slice() (not subarray) so the over-allocation isn't retained via the view.
   const indices = indexBuf.slice(0, k);
 
-  const bounds: RingBounds = {
-    xMin: colWx[0]!,
-    xMax: colWx[nx - 1]!,
-    zMin: Math.min(rowWz[0]!, rowWz[ny - 1]!),
-    zMax: Math.max(rowWz[0]!, rowWz[ny - 1]!),
+  return {
+    positions,
+    uvs,
+    indices,
+    camGroundElev,
+    innerTileXMin: cx - radiusTiles,
+    innerTileXMax: cx + radiusTiles + 1,
+    innerTileYMin: cy - radiusTiles,
+    innerTileYMax: cy + radiusTiles + 1,
   };
-
-  return { positions, uvs, indices, camGroundElev, bounds };
 }

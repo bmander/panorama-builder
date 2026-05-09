@@ -7,10 +7,10 @@
 //   - 'wireframe' — translucent blue wireframe (alignment ghost)
 //   - 'shaded'    — Lambert-lit satellite imagery draped over the DEM
 //
-// Coverage is layered as concentric rings of progressively coarser zoom so
+// Coverage is layered as concentric rings of progressively finer zoom so
 // distant features (e.g. peaks 100+ km away) appear without paying full
-// inner-ring resolution everywhere. Ring sizing is driven by a target angular
-// pitch per vertex — see the comment on RingSpec and the RINGS table.
+// inner-ring resolution everywhere. Ring layout is derived from a target
+// angular resolution — see computeRings and its comment block.
 
 import * as THREE from 'three';
 import type { LatLng } from './types.js';
@@ -19,10 +19,10 @@ import { latLngToCameraRelativeMeters } from './geo.js';
 import {
   CURVATURE_FACTOR_GEOMETRIC,
   CURVATURE_FACTOR_REFRACTED,
-  RINGS,
   buildRingGeometry,
+  computeRings,
 } from './terrain-geometry.js';
-import type { PrevRing, RingBounds, RingSpec } from './terrain-geometry.js';
+import type { PrevRing, RingGeometry, RingSpec } from './terrain-geometry.js';
 import {
   loadRingTiles,
   prefetchRingTiles,
@@ -70,19 +70,12 @@ export interface CreateTerrainViewOptions {
   requestRender: () => void;
 }
 
-// `ringIndex` 0 is the innermost ring; outer rings get a polygon-offset bias
-// so they lose the depth test against any inner ring drawn at the same world
-// position. The skip rule lets outer rings extend one quad into the inner
-// ring's coverage to avoid gaps, and this offset prevents z-fighting in that
-// overlap band.
+// Adjacent rings cut cleanly on a shared vertex grid — see computeRings'
+// invariant. No polygon-offset bias needed.
 function makeMaterial(
   mode: Exclude<TerrainMode, 'off'>,
-  ringIndex: number,
   texture: THREE.Texture | null,
 ): THREE.Material {
-  const polygonOffset = ringIndex > 0;
-  const polygonOffsetFactor = ringIndex;
-  const polygonOffsetUnits = ringIndex;
   if (mode === 'wireframe') {
     return new THREE.MeshBasicMaterial({
       color: WIREFRAME_COLOR,
@@ -90,17 +83,11 @@ function makeMaterial(
       transparent: true,
       opacity: WIREFRAME_OPACITY,
       depthWrite: false,
-      polygonOffset,
-      polygonOffsetFactor,
-      polygonOffsetUnits,
     });
   }
   const lambert = new THREE.MeshLambertMaterial({
     map: texture,
     side: THREE.DoubleSide,
-    polygonOffset,
-    polygonOffsetFactor,
-    polygonOffsetUnits,
   });
   // Heightfield normals all point ~up, so distant peaks above the camera
   // render via the back face — and Three.js samples the same UV from both
@@ -125,8 +112,7 @@ function makeMaterial(
 interface RingResult {
   geometry: THREE.BufferGeometry;
   texture: THREE.Texture;
-  camGroundElev: number;
-  bounds: RingBounds;
+  geom: RingGeometry;
 }
 
 async function buildRing(
@@ -156,7 +142,7 @@ async function buildRing(
   // → canvas top → north tile.
   texture.flipY = false;
 
-  return { geometry, texture, camGroundElev: geom.camGroundElev, bounds: geom.bounds };
+  return { geometry, texture, geom };
 }
 
 export function createTerrainView({ scene, requestRender }: CreateTerrainViewOptions): TerrainView {
@@ -247,28 +233,31 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
   function swapMaterials(toMode: Exclude<TerrainMode, 'off'>): void {
     meshes.forEach((m, ringIndex) => {
       const old = m.material as THREE.Material;
-      m.material = makeMaterial(toMode, ringIndex, textures[ringIndex] ?? null);
+      m.material = makeMaterial(toMode, textures[ringIndex] ?? null);
       old.dispose();
     });
   }
 
   async function rebuild(camLoc: LatLng, buildMode: Exclude<TerrainMode, 'off'>): Promise<void> {
     const myBuildId = ++buildId;
+    const rings = computeRings();
 
     // Kick off every ring's DEM and imagery fetches before awaiting any: the
     // dem/imagery modules dedupe via their inflight maps, so this just warms
     // the caches so outer rings' network round-trips overlap with the inner
     // ring's geometry build instead of running serially after it.
-    for (const spec of RINGS) prefetchRingTiles(camLoc, spec);
+    for (const spec of rings) prefetchRingTiles(camLoc, spec);
 
     // Build inner ring first to fix camGroundElev; outer rings reuse it so the
-    // meshes line up cleanly at boundaries. Each ring's outer coverage is
-    // passed to the next so it can carve a matching hole and avoid z-fighting.
+    // meshes line up vertically. Each ring's outer edge is threaded to the
+    // next-coarser one so it can carve a matching hole — and because adjacent
+    // zooms differ by 1, that hole's edges land exactly on the coarser ring's
+    // vertex grid: a clean geometric cut, no overlap.
     const factor = curvatureFactor();
     const builtGeometries: THREE.BufferGeometry[] = [];
     const builtTextures: THREE.Texture[] = [];
     let prev: PrevRing | undefined;
-    for (const spec of RINGS) {
+    for (const spec of rings) {
       const result = await buildRing(camLoc, spec, factor, prev);
       if (myBuildId !== buildId) {
         for (const g of builtGeometries) g.dispose();
@@ -277,7 +266,7 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
         result.texture.dispose();
         return;
       }
-      prev = { camGroundElev: result.camGroundElev, bounds: result.bounds };
+      prev = result.geom;
       builtGeometries.push(result.geometry);
       builtTextures.push(result.texture);
     }
@@ -285,7 +274,7 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
     disposeMeshes();
     builtGeometries.forEach((geometry, ringIndex) => {
       const texture = builtTextures[ringIndex]!;
-      const mesh = new THREE.Mesh(geometry, makeMaterial(buildMode, ringIndex, texture));
+      const mesh = new THREE.Mesh(geometry, makeMaterial(buildMode, texture));
       mesh.frustumCulled = false; // bounding sphere is huge; we always want it on screen
       // Always draw before photo overlays (which use depthTest:false to stay on
       // top regardless of whether they physically intersect terrain).
