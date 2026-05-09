@@ -23,6 +23,7 @@ import { makeOverlayLine, makeOverlayLineMaterial } from './overlay-lines.js';
 import { createStationMarkers } from './station-markers.js';
 import type { StationMarker } from './station-markers.js';
 import { createStationCones } from './station-cones.js';
+import { createPhotoPreviews } from './photo-previews.js';
 import { findHitDot } from './dot-layer.js';
 import {
   cpHref, cpLabel, cpLifespanFromApi, getElement, indexStationHref, isExtantAt,
@@ -74,9 +75,6 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   const viewer = createViewer({
     container: document.body,
     onFovChange: fov => {
-      // Skip the per-overlay rescale during a fly: photos are hidden, and
-      // setFov fires every tween frame.
-      if (!viewer.overlaysGroup.visible) return;
       overlays.measurements.setFovScale(halfFovTan(fov) / POI_FOV_REFERENCE_TAN);
     },
   });
@@ -112,6 +110,11 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     scene: viewer.scene,
     requestRender: () => { viewer.requestRender(); },
   });
+  const photoPreviews = createPhotoPreviews({
+    scene: viewer.scene,
+    requestRender: () => { viewer.requestRender(); },
+    getAnisotropy: () => viewer.renderer.capabilities.getMaxAnisotropy(),
+  });
   const cpConstraintLines = createCPConstraintLines({
     scene: viewer.scene,
     requestRender: () => { viewer.requestRender(); },
@@ -140,6 +143,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       observationRays.setVisible(visible);
       stationCones.setVisible(visible);
       cpConstraintLines.setVisible(visible);
+      photoPreviews.setBakeHidden(!visible);
       if (!visible) previewLine.visible = false;
     },
   });
@@ -662,7 +666,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   });
 
   const stationNavigation = createStationNavigation({
-    viewer, terrain, cpColumns, stationDots,
+    viewer, terrain, cpColumns, stationDots, photoPreviews,
     getCurrentStationId,
     getStationLocation: () => stationLocation,
     setStationLocation: (loc) => { stationLocation = loc; },
@@ -672,6 +676,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     onFlyFrame: (loc, alt) => {
       stationCones.update(loc, alt, otherCameras, selectedStationId);
       observationRays.update(loc, alt, buildObservationRays());
+      photoPreviews.update(loc, alt);
     },
     loadStation,
   });

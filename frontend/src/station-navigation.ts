@@ -4,7 +4,7 @@
 
 import * as api from './api.js';
 import { dirFromAzAlt } from './overlay.js';
-import { groundDistance, vecToAzAlt } from './geo.js';
+import { groundDistance, latLngToCameraRelativeMeters, vecToAzAlt } from './geo.js';
 import { wrapPi } from './mathx.js';
 import type { LatLng } from './types.js';
 import type { Viewer } from './viewer.js';
@@ -12,6 +12,7 @@ import { DEFAULT_FOV } from './viewer.js';
 import type { TerrainView } from './terrain.js';
 import type { ControlPointColumns } from './map-poi-columns.js';
 import type { StationMarker, StationMarkers } from './station-markers.js';
+import type { PhotoPreviews } from './photo-previews.js';
 
 export function meanPhotoAzAlt(photos: readonly api.ApiPhoto[]): { az: number; alt: number } | null {
   let sx = 0, sy = 0, sz = 0;
@@ -32,6 +33,7 @@ export interface StationNavigationDeps {
   terrain: TerrainView;
   cpColumns: ControlPointColumns;
   stationDots: StationMarkers;
+  photoPreviews: PhotoPreviews;
   getCurrentStationId: () => string;
   getStationLocation: () => LatLng | null;
   setStationLocation: (loc: LatLng) => void;
@@ -55,7 +57,7 @@ export interface StationNavigation {
 
 export function createStationNavigation(deps: StationNavigationDeps): StationNavigation {
   const {
-    viewer, terrain, cpColumns, stationDots,
+    viewer, terrain, cpColumns, stationDots, photoPreviews,
     getCurrentStationId,
     getStationLocation, setStationLocation, getStationCache,
     getOtherStations, setOtherStations,
@@ -95,12 +97,17 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
         altitude: src.alt,
       }]);
 
-      // Photos are anchored to the source camera frame and would shear as the
-      // world translates underneath them. Same shear hits CP markers and their
-      // observation lines (lines connect world-space CPs to source-anchored
-      // POIs); hide the whole CP layer until the post-fly reload rebuilds it.
-      viewer.overlaysGroup.visible = false;
+      // CP markers + observation lines connect world-space CPs to
+      // source-anchored POIs; hide the whole CP layer until the post-fly
+      // reload rebuilds it for the destination station.
       cpColumns.setVisible(false);
+
+      photoPreviews.set(dest.photos.map(p => ({
+        photoId: p.id,
+        fromLat: dest.station.lat, fromLng: dest.station.lng, fromAlt: dest.station.alt,
+        photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
+        sizeRad: p.size_rad, aspect: p.aspect,
+      })));
 
       const { azimuth: srcAz, altitude: srcAlt } = viewer.getAzAlt();
       const dstOrient = meanPhotoAzAlt(dest.photos);
@@ -129,6 +136,10 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
           setStationLocation(loc);
           terrain.setLocation(loc);
           terrain.setCameraHeight(alt);
+          // Glue source panes to the source station as the camera flies
+          // away — finally block resets to origin before dest hydrate.
+          const srcOffset = latLngToCameraRelativeMeters(src, loc);
+          viewer.overlaysGroup.position.set(srcOffset.x, src.alt - alt, srcOffset.z);
           viewer.setAzAlt(srcAz + azDelta * k, srcAlt + (dstAlt - srcAlt) * k);
           viewer.setFov(srcFov + (dstFov - srcFov) * k);
           // CP markers are hidden above; the dots / cones / rays are pure
@@ -148,13 +159,17 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
         requestAnimationFrame(step);
       });
 
+      // Hide before reset so source panes don't snap to origin for one
+      // frame before clearStationData removes them.
+      viewer.overlaysGroup.visible = false;
+      viewer.overlaysGroup.position.set(0, 0, 0);
       await loadStation(destId, dest);
     } finally {
       flyInProgress = false;
-      // Re-show the layers that were hidden for the tween. loadStation
-      // owns otherStations / overlays content, so no restoration here.
       viewer.overlaysGroup.visible = true;
+      viewer.overlaysGroup.position.set(0, 0, 0);
       cpColumns.setVisible(true);
+      photoPreviews.clear();
     }
   }
 
