@@ -1,7 +1,10 @@
 // Observation rays for the selected other-station: gray to located CPs,
 // purple 5km in the photo's (u, v) direction for null-location targets.
+//
+// Build-once / translate-per-frame; see camera-anchored.ts for the pattern.
 
 import * as THREE from 'three';
+import { applyGroupTransform } from './camera-anchored.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
 import { buildPoseObject, widthFromSizeRad } from './overlay-photos.js';
 import { clearLineGroup, makeOverlayLineSegments } from './overlay-lines.js';
@@ -66,64 +69,70 @@ export function createObservationRays(opts: CreateObservationRaysOptions): Obser
   let lastCamLoc: LatLng | null = null;
   let lastCameraHeight = 0;
   let lastRays: readonly ObservationRay[] = [];
+  let builtCamLoc: LatLng | null = null;
+  let builtCameraHeight = 0;
 
   function rebuild(): void {
     clearLineGroup(group);
-    if (lastCamLoc === null || lastRays.length === 0) {
-      requestRender();
-      return;
-    }
-    let nNull = 0;
-    let nLoc = 0;
-    for (const r of lastRays) {
-      if (r.kind === 'null') nNull++;
-      else nLoc++;
-    }
-    const nullPositions = new Float32Array(nNull * 6);
-    const locPositions = new Float32Array(nLoc * 6);
-    let iN = 0;
-    let iL = 0;
-    for (const r of lastRays) {
-      const offset = latLngToCameraRelativeMeters({ lat: r.fromLat, lng: r.fromLng }, lastCamLoc);
-      const sx = offset.x;
-      const sy = r.fromAlt - lastCameraHeight;
-      const sz = offset.z;
-      if (r.kind === 'null') {
-        const pose = buildPoseObject(r.photoAz, r.photoTilt, r.photoRoll);
-        const w = widthFromSizeRad(r.sizeRad);
-        const h = w / r.aspect;
-        localPos.set((r.u - 0.5) * w, (r.v - 0.5) * h, 0)
-          .applyMatrix4(pose.matrixWorld)
-          .normalize();
-        nullPositions[iN++] = sx;
-        nullPositions[iN++] = sy;
-        nullPositions[iN++] = sz;
-        nullPositions[iN++] = sx + localPos.x * PURPLE_RAY_LENGTH_M;
-        nullPositions[iN++] = sy + localPos.y * PURPLE_RAY_LENGTH_M;
-        nullPositions[iN++] = sz + localPos.z * PURPLE_RAY_LENGTH_M;
-      } else {
-        const toOffset = latLngToCameraRelativeMeters({ lat: r.toLat, lng: r.toLng }, lastCamLoc);
-        const ey = r.toAlt === null ? 0 : r.toAlt - lastCameraHeight;
-        locPositions[iL++] = sx;
-        locPositions[iL++] = sy;
-        locPositions[iL++] = sz;
-        locPositions[iL++] = toOffset.x;
-        locPositions[iL++] = ey;
-        locPositions[iL++] = toOffset.z;
+    builtCamLoc = null;
+    if (lastCamLoc !== null && lastRays.length > 0) {
+      let nNull = 0;
+      let nLoc = 0;
+      for (const r of lastRays) {
+        if (r.kind === 'null') nNull++;
+        else nLoc++;
       }
+      const nullPositions = new Float32Array(nNull * 6);
+      const locPositions = new Float32Array(nLoc * 6);
+      let iN = 0;
+      let iL = 0;
+      for (const r of lastRays) {
+        const offset = latLngToCameraRelativeMeters({ lat: r.fromLat, lng: r.fromLng }, lastCamLoc);
+        const sx = offset.x;
+        const sy = r.fromAlt - lastCameraHeight;
+        const sz = offset.z;
+        if (r.kind === 'null') {
+          const pose = buildPoseObject(r.photoAz, r.photoTilt, r.photoRoll);
+          const w = widthFromSizeRad(r.sizeRad);
+          const h = w / r.aspect;
+          localPos.set((r.u - 0.5) * w, (r.v - 0.5) * h, 0)
+            .applyMatrix4(pose.matrixWorld)
+            .normalize();
+          nullPositions[iN++] = sx;
+          nullPositions[iN++] = sy;
+          nullPositions[iN++] = sz;
+          nullPositions[iN++] = sx + localPos.x * PURPLE_RAY_LENGTH_M;
+          nullPositions[iN++] = sy + localPos.y * PURPLE_RAY_LENGTH_M;
+          nullPositions[iN++] = sz + localPos.z * PURPLE_RAY_LENGTH_M;
+        } else {
+          const toOffset = latLngToCameraRelativeMeters({ lat: r.toLat, lng: r.toLng }, lastCamLoc);
+          const ey = r.toAlt === null ? 0 : r.toAlt - lastCameraHeight;
+          locPositions[iL++] = sx;
+          locPositions[iL++] = sy;
+          locPositions[iL++] = sz;
+          locPositions[iL++] = toOffset.x;
+          locPositions[iL++] = ey;
+          locPositions[iL++] = toOffset.z;
+        }
+      }
+      if (nNull > 0) group.add(makeOverlayLineSegments(nullPositions, purpleMat));
+      if (nLoc > 0) group.add(makeOverlayLineSegments(locPositions, grayMat));
+      builtCamLoc = lastCamLoc;
+      builtCameraHeight = lastCameraHeight;
     }
-    if (nNull > 0) group.add(makeOverlayLineSegments(nullPositions, purpleMat));
-    if (nLoc > 0) group.add(makeOverlayLineSegments(locPositions, grayMat));
-    requestRender();
+    applyGroupTransform(group, builtCamLoc, builtCameraHeight, lastCamLoc, lastCameraHeight);
   }
 
   return {
     update(camLoc, cameraHeight, rays) {
       if (camLoc === lastCamLoc && cameraHeight === lastCameraHeight && rays === lastRays) return;
+      const dataChanged = rays !== lastRays;
       lastCamLoc = camLoc;
       lastCameraHeight = cameraHeight;
       lastRays = rays;
-      rebuild();
+      if (dataChanged || builtCamLoc === null) rebuild();
+      else applyGroupTransform(group, builtCamLoc, builtCameraHeight, camLoc, cameraHeight);
+      requestRender();
     },
     setVisible(visible) {
       group.visible = visible;

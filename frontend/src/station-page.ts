@@ -225,6 +225,10 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   // Reused empty array so the no-op guard inside observationRays.update
   // catches refreshes when nothing is selected (the common case).
   const EMPTY_RAYS: readonly ObservationRay[] = [];
+  // Cached so onFlyFrame's per-frame call into observationRays.update
+  // sees a stable array reference and skips its rebuild path. Recomputed
+  // by refreshControlPointColumns whenever the underlying data changes.
+  let cachedObservationRays: readonly ObservationRay[] = EMPTY_RAYS;
 
   // Built fresh when there's a selection; per-CP location and selected
   // station id can both change between calls, and the ray count is small
@@ -276,10 +280,11 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       observations: handlesByCpId.get(cp.id) ?? [],
     }));
     const cameraHeight = terrain.getCameraHeight();
+    cachedObservationRays = buildObservationRays();
     cpColumns.update(stationLocation, cameraHeight, markers);
     stationDots.update(stationLocation, cameraHeight, otherStations);
     stationCones.update(stationLocation, cameraHeight, otherCameras, selectedStationId);
-    observationRays.update(stationLocation, cameraHeight, buildObservationRays());
+    observationRays.update(stationLocation, cameraHeight, cachedObservationRays);
     cpConstraintLines.update(stationLocation, cameraHeight, cps, cpConstraints, selectedConstraintId);
   }
 
@@ -675,7 +680,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     setOtherStations: (s) => { otherStations = [...s]; },
     onFlyFrame: (loc, alt) => {
       stationCones.update(loc, alt, otherCameras, selectedStationId);
-      observationRays.update(loc, alt, buildObservationRays());
+      observationRays.update(loc, alt, cachedObservationRays);
       photoPreviews.update(loc, alt);
     },
     loadStation,

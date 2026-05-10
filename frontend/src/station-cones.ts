@@ -2,8 +2,11 @@
 // station's photosphere. Cones at the selected station render in
 // highlight color so the host can drive observation-ray rendering off
 // the same selection.
+//
+// Build-once / translate-per-frame; see camera-anchored.ts for the pattern.
 
 import * as THREE from 'three';
+import { applyGroupTransform } from './camera-anchored.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
 import { buildPoseObject } from './overlay-photos.js';
 import { clearLineGroup, makeOverlayLineSegments } from './overlay-lines.js';
@@ -57,6 +60,8 @@ export function createStationCones(opts: CreateStationConesOptions): StationCone
   let lastCameraHeight = 0;
   let lastCones: readonly StationCone[] = [];
   let lastSelectedStationId: string | null = null;
+  let builtCamLoc: LatLng | null = null;
+  let builtCameraHeight = 0;
 
   function writeConeAt(out: Float32Array, base: number, c: StationCone, ax: number, ay: number, az: number): void {
     // buildPoseObject's matrix +Z points back at the origin (lookAt swap),
@@ -103,36 +108,37 @@ export function createStationCones(opts: CreateStationConesOptions): StationCone
 
   function rebuild(): void {
     clearLineGroup(group);
-    if (lastCamLoc === null || lastCones.length === 0) {
-      requestRender();
-      return;
-    }
-    let nDefault = 0;
-    let nSelected = 0;
-    for (const c of lastCones) {
-      if (c.stationId === lastSelectedStationId) nSelected++;
-      else nDefault++;
-    }
-    const defaultPositions = new Float32Array(nDefault * 48);
-    const selectedPositions = new Float32Array(nSelected * 48);
-    let dOff = 0;
-    let sOff = 0;
-    for (const c of lastCones) {
-      const offset = latLngToCameraRelativeMeters({ lat: c.fromLat, lng: c.fromLng }, lastCamLoc);
-      const ax = offset.x;
-      const ay = c.fromAlt - lastCameraHeight;
-      const az = offset.z;
-      if (c.stationId === lastSelectedStationId) {
-        writeConeAt(selectedPositions, sOff, c, ax, ay, az);
-        sOff += 48;
-      } else {
-        writeConeAt(defaultPositions, dOff, c, ax, ay, az);
-        dOff += 48;
+    builtCamLoc = null;
+    if (lastCamLoc !== null && lastCones.length > 0) {
+      let nDefault = 0;
+      let nSelected = 0;
+      for (const c of lastCones) {
+        if (c.stationId === lastSelectedStationId) nSelected++;
+        else nDefault++;
       }
+      const defaultPositions = new Float32Array(nDefault * 48);
+      const selectedPositions = new Float32Array(nSelected * 48);
+      let dOff = 0;
+      let sOff = 0;
+      for (const c of lastCones) {
+        const offset = latLngToCameraRelativeMeters({ lat: c.fromLat, lng: c.fromLng }, lastCamLoc);
+        const ax = offset.x;
+        const ay = c.fromAlt - lastCameraHeight;
+        const az = offset.z;
+        if (c.stationId === lastSelectedStationId) {
+          writeConeAt(selectedPositions, sOff, c, ax, ay, az);
+          sOff += 48;
+        } else {
+          writeConeAt(defaultPositions, dOff, c, ax, ay, az);
+          dOff += 48;
+        }
+      }
+      if (nDefault > 0) group.add(makeOverlayLineSegments(defaultPositions, mat));
+      if (nSelected > 0) group.add(makeOverlayLineSegments(selectedPositions, matSel));
+      builtCamLoc = lastCamLoc;
+      builtCameraHeight = lastCameraHeight;
     }
-    if (nDefault > 0) group.add(makeOverlayLineSegments(defaultPositions, mat));
-    if (nSelected > 0) group.add(makeOverlayLineSegments(selectedPositions, matSel));
-    requestRender();
+    applyGroupTransform(group, builtCamLoc, builtCameraHeight, lastCamLoc, lastCameraHeight);
   }
 
   return {
@@ -141,11 +147,14 @@ export function createStationCones(opts: CreateStationConesOptions): StationCone
         camLoc === lastCamLoc && cameraHeight === lastCameraHeight
         && cones === lastCones && selectedStationId === lastSelectedStationId
       ) return;
+      const dataChanged = cones !== lastCones || selectedStationId !== lastSelectedStationId;
       lastCamLoc = camLoc;
       lastCameraHeight = cameraHeight;
       lastCones = cones;
       lastSelectedStationId = selectedStationId;
-      rebuild();
+      if (dataChanged || builtCamLoc === null) rebuild();
+      else applyGroupTransform(group, builtCamLoc, builtCameraHeight, camLoc, cameraHeight);
+      requestRender();
     },
     setVisible(visible) {
       group.visible = visible;

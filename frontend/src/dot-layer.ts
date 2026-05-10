@@ -4,9 +4,12 @@
 //
 // Always-on-top: depthTest off, renderOrder high — dots stay visible
 // through terrain, photo overlays, and the sun marker.
+//
+// Build-once / translate-per-frame; see camera-anchored.ts for the pattern.
 
 import * as THREE from 'three';
 import type { LatLng } from './types.js';
+import { applyGroupTransform } from './camera-anchored.js';
 import { makeCanvasTexture } from './canvas-texture.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
 import { norm2 } from './mathx.js';
@@ -64,28 +67,30 @@ export function createDotLayer({ scene, requestRender }: CreateDotLayerOptions):
 
   let points: THREE.Points | null = null;
 
-  function clear(): void {
+  let lastCamLoc: LatLng | null = null;
+  let lastCameraHeight = 0;
+  let lastDots: readonly Dot[] = [];
+  let builtCamLoc: LatLng | null = null;
+  let builtCameraHeight = 0;
+
+  function clearPoints(): void {
     if (points === null) return;
     points.geometry.dispose();
     group.remove(points);
     points = null;
   }
 
-  return {
-    setVisible(visible) { group.visible = visible; },
-    update(camLoc, cameraHeight, dots) {
-      clear();
-      if (camLoc === null || dots.length === 0) {
-        requestRender();
-        return;
-      }
-      const N = dots.length;
+  function rebuild(): void {
+    clearPoints();
+    builtCamLoc = null;
+    if (lastCamLoc !== null && lastDots.length > 0) {
+      const N = lastDots.length;
       const positions = new Float32Array(N * 3);
       const colors = new Float32Array(N * 3);
       for (let i = 0; i < N; i++) {
-        const d = dots[i]!;
-        const { x, z } = latLngToCameraRelativeMeters(d.anchor, camLoc);
-        const y = d.altitude - cameraHeight;
+        const d = lastDots[i]!;
+        const { x, z } = latLngToCameraRelativeMeters(d.anchor, lastCamLoc);
+        const y = d.altitude - lastCameraHeight;
         positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
         colors[i * 3] = d.color.r; colors[i * 3 + 1] = d.color.g; colors[i * 3 + 2] = d.color.b;
       }
@@ -96,6 +101,22 @@ export function createDotLayer({ scene, requestRender }: CreateDotLayerOptions):
       points.renderOrder = OVERLAY_RENDER_ORDER;
       points.frustumCulled = false;
       group.add(points);
+      builtCamLoc = lastCamLoc;
+      builtCameraHeight = lastCameraHeight;
+    }
+    applyGroupTransform(group, builtCamLoc, builtCameraHeight, lastCamLoc, lastCameraHeight);
+  }
+
+  return {
+    setVisible(visible) { group.visible = visible; },
+    update(camLoc, cameraHeight, dots) {
+      if (camLoc === lastCamLoc && cameraHeight === lastCameraHeight && dots === lastDots) return;
+      const dataChanged = dots !== lastDots;
+      lastCamLoc = camLoc;
+      lastCameraHeight = cameraHeight;
+      lastDots = dots;
+      if (dataChanged || builtCamLoc === null) rebuild();
+      else applyGroupTransform(group, builtCamLoc, builtCameraHeight, camLoc, cameraHeight);
       requestRender();
     },
   };
