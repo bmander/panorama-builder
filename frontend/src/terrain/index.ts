@@ -64,6 +64,21 @@ export interface TerrainView {
   // refresh/save work when wheel events repeat the same height.
   setCameraHeight(meters: number): boolean;
   getCameraHeight(): number;
+  // Per-vertex curvature drop factor (`drop = factor · d²`). 0 with
+  // curvature disabled. Exposed so callers performing the same scene→world
+  // inversion (e.g. the orbit gesture) can apply matching math.
+  getCurvatureFactor(): number;
+  // Closest hit on the visible ring meshes for the given pre-armed
+  // raycaster, in scene-space (camera-relative) meters; null if the ray
+  // misses every mesh. Used by the orbit gesture to anchor the pivot to a
+  // landscape point under the cursor.
+  raycastSurface(raycaster: THREE.Raycaster): THREE.Vector3 | null;
+  // While disabled, setLocation translates the group but skips the
+  // camera-moved-too-far rebuild check. Used by the orbit gesture so a
+  // long-radius drag doesn't thrash maybeRebuild every pointermove. Re-
+  // enabling triggers an immediate maybeRebuild if the camera drifted out
+  // of the safe zone while suspended.
+  setRebuildEnabled(enabled: boolean): void;
 }
 
 export interface CreateTerrainViewOptions {
@@ -131,6 +146,7 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
   let textures: THREE.Texture[] = [];
   let buildId = 0;
   let cameraHeight = 0;
+  let rebuildEnabled = true;
   let sunAz = Math.PI;       // default: due south
   let sunAlt = Math.PI / 4;  // default: 45° up
   let curvatureEnabled = true;
@@ -330,7 +346,16 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       // Trigger a real rebuild only when the camera leaves the safe zone of
       // the current build (e.g., the first location after startup, or the
       // user dropping a faraway pin).
-      if (meshes.length === 0 || distSqFromBuilt() >= REBUILD_DIST_THRESHOLD_M * REBUILD_DIST_THRESHOLD_M) {
+      if (rebuildEnabled
+        && (meshes.length === 0 || distSqFromBuilt() >= REBUILD_DIST_THRESHOLD_M * REBUILD_DIST_THRESHOLD_M)) {
+        maybeRebuild();
+      }
+    },
+    setRebuildEnabled(enabled) {
+      if (rebuildEnabled === enabled) return;
+      rebuildEnabled = enabled;
+      if (enabled
+        && (meshes.length === 0 || distSqFromBuilt() >= REBUILD_DIST_THRESHOLD_M * REBUILD_DIST_THRESHOLD_M)) {
         maybeRebuild();
       }
     },
@@ -379,5 +404,11 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       return true;
     },
     getCameraHeight: () => cameraHeight,
+    getCurvatureFactor: curvatureFactor,
+    raycastSurface(raycaster) {
+      if (mode === 'off' || meshes.length === 0) return null;
+      const hits = raycaster.intersectObjects(meshes, false);
+      return hits.length > 0 ? hits[0]!.point.clone() : null;
+    },
   };
 }

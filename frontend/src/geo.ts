@@ -22,6 +22,17 @@ export function latLngToCameraRelativeMeters(pt: LatLng, camLoc: LatLng): { x: n
   };
 }
 
+// Inverse of latLngToCameraRelativeMeters: given a tangent-plane offset
+// (x east, z south) from `ref`, return the corresponding lat/lng. Same
+// approximation, same accuracy bounds.
+export function tangentMetersToLatLng(ref: LatLng, x: number, z: number): LatLng {
+  const cosLat = Math.cos(degToRad(ref.lat));
+  return {
+    lat: ref.lat - z / M_PER_DEG_LAT,
+    lng: ref.lng + x / (M_PER_DEG_LAT * cosLat),
+  };
+}
+
 export function bearingFromLocation(loc: LatLng, latlng: LatLng): number {
   const φ1 = degToRad(loc.lat), φ2 = degToRad(latlng.lat);
   const Δλ = degToRad(latlng.lng - loc.lng);

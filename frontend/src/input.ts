@@ -34,6 +34,10 @@ type ModeState =
   // under the cursor (if any) — the host renders a preview line that snaps
   // to that CP's 3D position when set.
   | { type: 'cp-constraint-draw'; cpAId: string; hoverCpId: string | null }
+  // Shift-drag on terrain to orbit the camera around the landscape point
+  // initially under the cursor. Pivot + math live in the host's
+  // onOrbitDrag — input.ts just routes the cumulative pixel deltas.
+  | { type: 'orbit' }
   | null;
 
 // Squared px threshold separating a tap (open menu) from a drag (reposition).
@@ -123,13 +127,21 @@ export interface AttachInputOptions {
   // the CP currently under the cursor (or null). Host renders a 3D preview
   // line; passing both ids null clears the preview.
   onCPConstraintDrawPreview?: (cpAId: string | null, cpBId: string | null) => void;
+  // Shift-drag on empty space (no overlay hit) tries to anchor an orbit
+  // gesture to the landscape point under the cursor. Host raycasts the
+  // terrain and stashes the pivot; returning false falls through to the
+  // pan path. Subsequent pointermoves call onOrbitDrag with the
+  // pixel-delta since the last move; pointerup calls onOrbitEnd.
+  onOrbitStart?: (ndc: { x: number; y: number }) => boolean;
+  onOrbitDrag?: (dx: number, dy: number) => void;
+  onOrbitEnd?: () => void;
   // Records before/after snapshots for gesture-end mutations and applies
   // them on Cmd/Ctrl+Z. Optional for the index page where attachInput
   // still runs but no overlays are mutated.
   undoManager?: UndoManager;
 }
 
-export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu, findStationAtNDC, onStationClick, onDeselectStation, onCPClick, findConstraintAtNDC, onConstraintClick, onCreateCPConstraint, onCPConstraintDrawPreview, undoManager }: AttachInputOptions): void {
+export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu, findStationAtNDC, onStationClick, onDeselectStation, onCPClick, findConstraintAtNDC, onConstraintClick, onCreateCPConstraint, onCPConstraintDrawPreview, onOrbitStart, onOrbitDrag, onOrbitEnd, undoManager }: AttachInputOptions): void {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -374,7 +386,14 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
         onDeselectStation?.();
         mode = { type: 'pan' };
       }
-      // 5. Empty space → deselect the photo and any selected station, then pan.
+      // 5. Shift-drag on empty space → orbit around the landscape point
+      //    under the cursor. Falls through to pan if no terrain hit.
+      else if (e.shiftKey && onOrbitStart?.({ x: ndc.x, y: ndc.y })) {
+        if (selected) { overlays.photos.setSelected(null); onChange(); }
+        onDeselectStation?.();
+        mode = { type: 'orbit' };
+      }
+      // 6. Empty space → deselect the photo and any selected station, then pan.
       else {
         if (selected) { overlays.photos.setSelected(null); onChange(); }
         onDeselectStation?.();
@@ -456,6 +475,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
         }
         onCPConstraintDrawPreview?.(null, null);
       }
+      if (mode?.type === 'orbit') onOrbitEnd?.();
       endDrag();
     }
   }
@@ -524,6 +544,12 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
         const { azimuth, altitude } = viewer.getAzAlt();
         viewer.setAzAlt(azimuth + dx * radPerPx, altitude + dy * radPerPx);
         onChange();
+        break;
+      }
+      case 'orbit': {
+        const dx = e.clientX - lastX, dy = e.clientY - lastY;
+        lastX = e.clientX; lastY = e.clientY;
+        onOrbitDrag?.(dx, dy);
         break;
       }
       case 'move': {
