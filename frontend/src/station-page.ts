@@ -30,8 +30,8 @@ import {
   parseStaFromURL, stationHref,
   meshMat, overlayData, poiData,
 } from './types.js';
-import { latLngToCameraRelativeMeters, tangentMetersToLatLng, vecToAzAlt, M_PER_DEG_LAT } from './geo.js';
-import { clamp, degToRad } from './mathx.js';
+import { latLngToCameraRelativeMeters, tangentMetersToLatLng, vecToAzAlt } from './geo.js';
+import { degToRad } from './mathx.js';
 import type { CPConstraintView, ControlPointView, LatLng } from './types.js';
 import { createSyncManager } from './sync.js';
 import { createSettingsPanel } from './settings.js';
@@ -172,12 +172,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   let stationLocation: LatLng | null = null;
   const getStationLocation = (): LatLng | null => stationLocation;
 
-  // Transient override active during (and persisting after) a shift-drag
-  // orbit gesture. When non-null, every camera-anchored overlay and the
-  // terrain view is positioned at this location instead of stationLocation.
-  // Cleared on station load; not synced to the server.
-  let orbitCameraLocation: LatLng | null = null;
-  const getCameraLocation = (): LatLng | null => orbitCameraLocation ?? stationLocation;
+  // Transient camera-position override accumulated by shift-wheel forward/
+  // backward navigation. When non-null, every camera-anchored overlay and
+  // the terrain view is positioned at this location instead of
+  // stationLocation. Cleared on station load; not synced to the server.
+  let cameraOverrideLocation: LatLng | null = null;
+  const getCameraLocation = (): LatLng | null => cameraOverrideLocation ?? stationLocation;
 
   // --- Cross-cutting refreshers ------------------------------------------
 
@@ -271,7 +271,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   }
 
   // Cached so repushOverlayCameraAnchors hits the layers' applyTransform
-  // fast path during orbit drag instead of triggering a data-side rebuild.
+  // fast path on a camera-only update instead of recomputing markers.
   let cachedCpMarkers: readonly ControlPointColumn[] = [];
   let cachedVisibleCps: readonly ControlPointView[] = [];
 
@@ -306,101 +306,36 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     cpConstraintLines.update(camLoc, cameraHeight, cachedVisibleCps, cpConstraints, selectedConstraintId);
   }
 
-  // --- Orbit (shift-drag on terrain) -------------------------------------
-
-  // pivot is fixed in world coords; psi/phi are the running spherical
-  // coordinates of the camera relative to pivot (azimuth from north + above-
-  // horizontal elevation), updated incrementally by each pointermove.
-  interface OrbitState {
-    pivot: { lat: number; lng: number; alt: number };
-    pivotCosLat: number;
-    r: number;
-    psi: number;
-    phi: number;
-  }
-  const ORBIT_PHI_LIMIT = degToRad(85);
-  const orbitRaycaster = new THREE.Raycaster();
-  const orbitNdc = new THREE.Vector2();
-  let orbitState: OrbitState | null = null;
-
-  function onOrbitStart(ndc: { x: number; y: number }): boolean {
-    const camLoc = getCameraLocation();
-    if (!camLoc) return false;
-    orbitNdc.set(ndc.x, ndc.y);
-    orbitRaycaster.setFromCamera(orbitNdc, viewer.camera);
-    const hitScene = terrain.raycastSurface(orbitRaycaster);
-    if (!hitScene) return false;
-
-    const camAlt = terrain.getCameraHeight();
-    const { lat: pivotLat, lng: pivotLng } = tangentMetersToLatLng(camLoc, hitScene.x, hitScene.z);
-    // hitScene.y has the renderer's curvature drop folded in; add it back
-    // so the pivot's stored altitude matches the true world point.
-    const dropAtHit = terrain.getCurvatureFactor()
-      * (hitScene.x * hitScene.x + hitScene.z * hitScene.z);
-    const pivotAlt = camAlt + hitScene.y + dropAtHit;
-
-    const pivotCosLat = Math.cos(degToRad(pivotLat));
-    const dx = (camLoc.lng - pivotLng) * M_PER_DEG_LAT * pivotCosLat;
-    const dy = camAlt - pivotAlt;
-    const dz = -(camLoc.lat - pivotLat) * M_PER_DEG_LAT;
-    const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    if (r < 1) return false;
-
-    orbitState = {
-      pivot: { lat: pivotLat, lng: pivotLng, alt: pivotAlt },
-      pivotCosLat,
-      r,
-      psi: Math.atan2(dx, -dz),
-      phi: Math.asin(dy / r),
-    };
-    // A long-radius orbit moves the camera lat/lng by hundreds of meters per
-    // frame; without this guard, setLocation would thrash maybeRebuild.
-    terrain.setRebuildEnabled(false);
-    return true;
-  }
-
-  function onOrbitDrag(dx: number, dy: number): void {
-    if (!orbitState) return;
-    // Same drag-per-radian feel as pan: one screen-height ≈ vertical FOV.
-    const radPerPx = degToRad(viewer.camera.fov) / innerHeight;
-    orbitState.psi += dx * radPerPx;
-    orbitState.phi = clamp(orbitState.phi - dy * radPerPx, -ORBIT_PHI_LIMIT, ORBIT_PHI_LIMIT);
-
-    const { pivot, pivotCosLat, r, psi, phi } = orbitState;
-    const cosPhi = Math.cos(phi);
-    const offsetX = r * Math.sin(psi) * cosPhi;
-    const offsetY = r * Math.sin(phi);
-    const offsetZ = -r * Math.cos(psi) * cosPhi;
-    const newCamLng = pivot.lng + offsetX / (M_PER_DEG_LAT * pivotCosLat);
-    const newCamLat = pivot.lat - offsetZ / M_PER_DEG_LAT;
-    const newCamAlt = pivot.alt + offsetY;
-
-    // Subtract the renderer's drop so the camera aims at where the pivot
-    // will actually be drawn, not its true world position.
-    const newCosLat = Math.cos(degToRad(newCamLat));
-    const sceneX = (pivot.lng - newCamLng) * M_PER_DEG_LAT * newCosLat;
-    const sceneZ = -(pivot.lat - newCamLat) * M_PER_DEG_LAT;
-    const horizDistSq = sceneX * sceneX + sceneZ * sceneZ;
-    const sceneY = pivot.alt - newCamAlt - terrain.getCurvatureFactor() * horizDistSq;
-
-    orbitCameraLocation = { lat: newCamLat, lng: newCamLng };
-    terrain.setLocation(orbitCameraLocation);
-    terrain.setCameraHeight(newCamAlt);
-    viewer.setAzAlt(Math.atan2(sceneX, -sceneZ), Math.atan2(sceneY, Math.sqrt(horizDistSq)));
-    repushOverlayCameraAnchors();
-    hud.refresh();
-  }
-
-  function onOrbitEnd(): void {
-    orbitState = null;
-    terrain.setRebuildEnabled(true);
+  // Photo overlays are rendered as a sphere around the camera at scene
+  // origin, so by default they follow the camera. While the camera is
+  // detached from the station (shift-wheel has displaced it), translate
+  // overlaysGroup so the photos stay at the station's true location and
+  // the user can fly past or around them.
+  function updateOverlaysGroupOffset(): void {
+    const cache = stationFields.getNameAndAlt();
+    if (!cameraOverrideLocation || !stationLocation || !cache) {
+      viewer.overlaysGroup.position.set(0, 0, 0);
+      return;
+    }
+    const offset = latLngToCameraRelativeMeters(stationLocation, cameraOverrideLocation);
+    viewer.overlaysGroup.position.set(offset.x, cache.alt - terrain.getCameraHeight(), offset.z);
   }
 
   function applyCameraLocation(loc: LatLng): void {
     stationLocation = loc;
+    // Editing the station's coords re-attaches the camera to it: the
+    // shift-wheel detach is meaningful only relative to a fixed anchor.
+    // Restore the station's stored altitude too — otherwise the camera
+    // would re-anchor at whatever altitude shift-wheel had drifted to.
+    if (cameraOverrideLocation) {
+      cameraOverrideLocation = null;
+      const cache = stationFields.getNameAndAlt();
+      if (cache) terrain.setCameraHeight(cache.alt);
+    }
     terrain.setLocation(loc);
     settings.refreshSunDirection();
     refreshControlPointColumns();
+    updateOverlaysGroupOffset();
     // Mark the location dirty so the next flush PUTs it.
     sync.flush();
   }
@@ -632,12 +567,23 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       void handlers.onPhotoDropped(tex, blob, aspect, dir, revokeUrl);
     },
     onShiftWheel: deltaPx => {
-      const h = terrain.getCameraHeight();
-      const s = Math.sign(h) * Math.log1p(Math.abs(h)) - deltaPx * SHIFT_WHEEL_LOG_PER_PX;
-      const next = Math.sign(s) * Math.expm1(Math.abs(s));
-      if (!terrain.setCameraHeight(next)) return;
+      // Translate the camera forward (along its look direction) by a step
+      // that scales with the current altitude — far above a landscape, big
+      // strides; near the ground, fine. Wheel-up (deltaPx < 0) → forward.
+      const camLoc = getCameraLocation();
+      if (!camLoc) return;
+      const camAlt = terrain.getCameraHeight();
+      const { azimuth, altitude } = viewer.getAzAlt();
+      const stepScale = Math.max(Math.abs(camAlt), 1);
+      const step = -deltaPx * SHIFT_WHEEL_LOG_PER_PX * stepScale;
+      const look = dirFromAzAlt(azimuth, altitude);
+
+      cameraOverrideLocation = tangentMetersToLatLng(camLoc, step * look.x, step * look.z);
+      terrain.setLocation(cameraOverrideLocation);
+      terrain.setCameraHeight(camAlt + step * look.y);
       hud.refresh();
-      refreshControlPointColumns(); // markers' world-y depends on cameraHeight
+      repushOverlayCameraAnchors();
+      updateOverlaysGroupOffset();
     },
     findColumnAtNDC: ndc => {
       if (!stationLocation) return null;
@@ -694,9 +640,6 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       cpConstraintModal.openEdit(constraint);
     },
     onCreateCPConstraint: (cpAId, cpBId) => { cpConstraintModal.openCreate(cpAId, cpBId); },
-    onOrbitStart,
-    onOrbitDrag,
-    onOrbitEnd,
     onCPConstraintDrawPreview: (cpAId, cpBId) => {
       const hide = (): void => {
         if (previewLine.visible) {
@@ -734,12 +677,18 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   const stationFields = createStationFields({
     getCurrentStationId,
     onAltitudeChanged: (alt) => {
-      // Keep the viewer's vertical reference in sync with the station's recorded
-      // altitude — otherwise CP columns (rendered at est_alt − cameraHeight) drift
-      // visually from the photo POIs (which the solver projects against the real
-      // station altitude). Shift+wheel still nudges cameraHeight locally; the next
-      // station-alt update re-syncs.
-      if (terrain.setCameraHeight(alt)) refreshControlPointColumns();
+      // Keep the viewer's vertical reference in sync with the station's
+      // recorded altitude. Editing the alt also re-attaches the camera if
+      // it had drifted via shift-wheel — the form is for the station, so
+      // the user expects to see it from the station after editing.
+      let changed = terrain.setCameraHeight(alt);
+      if (cameraOverrideLocation && stationLocation) {
+        cameraOverrideLocation = null;
+        terrain.setLocation(stationLocation);
+        changed = true;
+      }
+      if (changed) refreshControlPointColumns();
+      updateOverlaysGroupOffset();
     },
     onLocationChanged: (loc) => { applyCameraLocation(loc); },
   });
@@ -784,10 +733,10 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   const stationNavigation = createStationNavigation({
     viewer, terrain, cpColumns, stationDots, photoPreviews,
     getCurrentStationId,
-    // Use the live camera pose (orbit pose if active, else station coords)
-    // so a fly starts from where the user actually is on screen.
+    // Use the live camera pose (shift-wheel-driven override if any, else
+    // station coords) so a fly starts from where the user actually is.
     getStationLocation: getCameraLocation,
-    setStationLocation: (loc) => { stationLocation = loc; orbitCameraLocation = null; },
+    setStationLocation: (loc) => { stationLocation = loc; cameraOverrideLocation = null; },
     getStationCache: () => {
       const base = stationFields.getNameAndAlt();
       if (!base) return null;
@@ -833,8 +782,8 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     selectedStationId = null;
     cpConstraints = [];
     selectedConstraintId = null;
-    orbitCameraLocation = null;
-    orbitState = null;
+    cameraOverrideLocation = null;
+    updateOverlaysGroupOffset();
     previewLine.visible = false;
   }
 
