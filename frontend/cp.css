@@ -67,6 +67,13 @@ h2 { font-size: 14px; color: #aaa; margin: 32px 0 8px; font-weight: normal;
 .cp-list a.desc:hover { text-decoration: underline; }
 .cp-list .meta { color: #888; }
 .cp-list .meta.unlocated { font-style: italic; }
+.cp-list .locks { font-size: 10px; text-transform: uppercase;
+                  letter-spacing: 0.06em; padding: 1px 6px;
+                  border-radius: 3px; }
+.cp-list .locks.partial { color: #d0a060;
+                          background: rgba(208,160,96,0.15); }
+.cp-list .locks.full { color: #80c080;
+                       background: rgba(128,192,128,0.15); }
 .cp-list .empty { color: #888; font-style: italic; padding: 6px 8px;
                   background: rgba(255,255,255,0.04); }
 .actions { margin-top: 32px; }

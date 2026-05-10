@@ -25,6 +25,13 @@ function renderList(cps: readonly api.ApiControlPoint[]): void {
     if (cp.est_lat === null || cp.est_lng === null) meta.classList.add('unlocated');
     meta.textContent = fmtCpLatLng(cp.est_lat, cp.est_lng);
     li.append(a, meta);
+    const lockCount = +cp.lock_est_lat + +cp.lock_est_lng + +cp.lock_est_alt;
+    if (lockCount > 0) {
+      const lock = document.createElement('span');
+      lock.className = lockCount === 3 ? 'locks full' : 'locks partial';
+      lock.textContent = lockCount === 3 ? 'locked' : 'partial lock';
+      li.append(lock);
+    }
     list.appendChild(li);
   }
 }
