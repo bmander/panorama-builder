@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -733,6 +734,222 @@ func (s *Server) getControlPointInSession(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, cp)
+}
+
+// imageMeasurementsForCP returns the rows that, after applying the session
+// overlay, currently reference cpID. Picks up session-inserted measurements
+// and rows rerouted to/away from cpID by the session.
+func (s *Server) imageMeasurementsForCP(ctx context.Context, overlay sessionOverlay, cpID string) ([]ImageMeasurement, error) {
+	base, err := s.imageMeasurementsByControlPoint(ctx, cpID)
+	if err != nil {
+		return nil, err
+	}
+	return mergeOverlay(base, overlay[entityImageMeasurement],
+		func(im ImageMeasurement) string { return im.ID },
+		decodeJSON[ImageMeasurement],
+		func(im ImageMeasurement) bool {
+			return im.ControlPointID != nil && *im.ControlPointID == cpID
+		})
+}
+
+// cpLifespanIncludes reports whether `t` falls inside the CP's lifespan,
+// honoring the open-vs-closed bound flags. Pairs with started_at/ended_at
+// being optional — nil bounds mean "no bound on that side".
+func cpLifespanIncludes(cp ControlPoint, t time.Time) bool {
+	if cp.StartedAt != nil {
+		if cp.StartedAfter && !t.After(*cp.StartedAt) {
+			return false
+		}
+		if !cp.StartedAfter && t.Before(*cp.StartedAt) {
+			return false
+		}
+	}
+	if cp.EndedAt != nil {
+		if cp.EndedBefore && !t.Before(*cp.EndedAt) {
+			return false
+		}
+		if !cp.EndedBefore && t.After(*cp.EndedAt) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) listControlPointObservationsInSession(w http.ResponseWriter, r *http.Request, sess *Session) {
+	id := requireID(w, r, "id")
+	if id == "" {
+		return
+	}
+	ctx := r.Context()
+	overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if _, present, err := currentControlPoint(ctx, s.db, overlay, id); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	} else if !present {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	ims, err := s.imageMeasurementsForCP(ctx, overlay, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	type obsRow struct {
+		im ImageMeasurement
+		p  Photo
+		st Station
+	}
+	rows := make([]obsRow, 0, len(ims))
+	for _, im := range ims {
+		p, present, err := currentPhoto(ctx, s.db, overlay, im.PhotoID)
+		if err != nil {
+			writeErrorFromDB(w, err)
+			return
+		}
+		if !present {
+			continue
+		}
+		st, present, err := currentStation(ctx, s.db, overlay, p.StationID)
+		if err != nil {
+			writeErrorFromDB(w, err)
+			return
+		}
+		if !present {
+			continue
+		}
+		rows = append(rows, obsRow{im, p, st})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		if !a.st.CapturedAt.Equal(b.st.CapturedAt) {
+			return a.st.CapturedAt.Before(b.st.CapturedAt)
+		}
+		return a.im.CreatedAt.Before(b.im.CreatedAt)
+	})
+	out := make([]ControlPointImageObservation, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ControlPointImageObservation{
+			ID:                r.im.ID,
+			PhotoID:           r.im.PhotoID,
+			U:                 r.im.U,
+			V:                 r.im.V,
+			StationID:         r.p.StationID,
+			StationName:       r.st.Name,
+			StationLat:        r.st.Lat,
+			StationLng:        r.st.Lng,
+			StationCapturedAt: r.st.CapturedAt,
+			PhotoAz:           r.p.PhotoAz,
+			PhotoTilt:         r.p.PhotoTilt,
+			PhotoRoll:         r.p.PhotoRoll,
+			SizeRad:           r.p.SizeRad,
+			Aspect:            r.p.Aspect,
+		})
+	}
+	writeJSON(w, http.StatusOK, ControlPointObservations{ImageMeasurements: out})
+}
+
+func (s *Server) listControlPointVisiblePhotosInSession(w http.ResponseWriter, r *http.Request, sess *Session) {
+	id := requireID(w, r, "id")
+	if id == "" {
+		return
+	}
+	ctx := r.Context()
+	overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	cp, present, err := currentControlPoint(ctx, s.db, overlay, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if !present {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	out := ControlPointVisiblePhotos{Photos: []ControlPointVisiblePhoto{}}
+	if cp.EstLat == nil || cp.EstLng == nil {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+
+	linkedIMs, err := s.imageMeasurementsForCP(ctx, overlay, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	taken := make(map[string]bool, len(linkedIMs))
+	for _, im := range linkedIMs {
+		taken[im.PhotoID] = true
+	}
+
+	basePhotos, err := s.allPhotos(ctx)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	photos, err := mergeOverlay(basePhotos, overlay[entityPhoto],
+		func(p Photo) string { return p.ID },
+		decodeJSON[Photo],
+		func(Photo) bool { return true })
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+
+	type visRow struct {
+		photoID           string
+		stationID         string
+		stationName       *string
+		stationCapturedAt time.Time
+	}
+	rows := make([]visRow, 0, len(photos))
+	for _, p := range photos {
+		if taken[p.ID] {
+			continue
+		}
+		st, present, err := currentStation(ctx, s.db, overlay, p.StationID)
+		if err != nil {
+			writeErrorFromDB(w, err)
+			return
+		}
+		if !present {
+			continue
+		}
+		if !cpLifespanIncludes(cp, st.CapturedAt) {
+			continue
+		}
+		if !inHorizontalViewshed(st.Lat, st.Lng, *cp.EstLat, *cp.EstLng, p.PhotoAz, p.SizeRad) {
+			continue
+		}
+		rows = append(rows, visRow{
+			photoID:           p.ID,
+			stationID:         p.StationID,
+			stationName:       st.Name,
+			stationCapturedAt: st.CapturedAt,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		if !a.stationCapturedAt.Equal(b.stationCapturedAt) {
+			return a.stationCapturedAt.Before(b.stationCapturedAt)
+		}
+		return a.photoID < b.photoID
+	})
+	for _, r := range rows {
+		out.Photos = append(out.Photos, ControlPointVisiblePhoto{
+			PhotoID:           r.photoID,
+			StationID:         r.stationID,
+			StationName:       r.stationName,
+			StationCapturedAt: r.stationCapturedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // --- CP constraints ---

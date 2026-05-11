@@ -126,6 +126,12 @@ func (s *Server) deleteControlPoint(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Request) {
+	if sess, ok := s.tryLoadSession(w, r); !ok {
+		return
+	} else if sess != nil {
+		s.listControlPointObservationsInSession(w, r, sess)
+		return
+	}
 	id := requireID(w, r, "id")
 	if id == "" {
 		return
@@ -187,6 +193,12 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 // inside the CP's lifespan, and which don't already have an image
 // measurement for this CP.
 func (s *Server) listControlPointVisiblePhotos(w http.ResponseWriter, r *http.Request) {
+	if sess, ok := s.tryLoadSession(w, r); !ok {
+		return
+	} else if sess != nil {
+		s.listControlPointVisiblePhotosInSession(w, r, sess)
+		return
+	}
 	id := requireID(w, r, "id")
 	if id == "" {
 		return
@@ -256,6 +268,48 @@ func (s *Server) listControlPointVisiblePhotos(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// imageMeasurementsByControlPoint returns rows in main that currently
+// reference this CP. Used as the base set for the in-session observations
+// and visible-photos endpoints; the overlay is layered on top.
+func (s *Server) imageMeasurementsByControlPoint(ctx context.Context, cpID string) ([]ImageMeasurement, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT `+imageMeasurementCols+` FROM image_measurements WHERE control_point_id=$1 ORDER BY created_at`,
+		cpID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ImageMeasurement{}
+	for rows.Next() {
+		im, err := scanImageMeasurement(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, im)
+	}
+	return out, rows.Err()
+}
+
+// allPhotos returns every photo row from main. The visible-photos endpoint
+// needs the full set so the overlay can append session-only inserts.
+func (s *Server) allPhotos(ctx context.Context) ([]Photo, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT `+photoCols+` FROM photos ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Photo{}
+	for rows.Next() {
+		p, err := scanPhoto(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
 }
 
 // controlPointsByStation returns CPs referenced by any image measurement on
