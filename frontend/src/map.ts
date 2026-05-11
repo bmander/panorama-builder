@@ -74,6 +74,10 @@ export interface CreateMapViewOptions {
   // Also fires on the initial layout pass, so the URL can be kept in sync
   // without an explicit first-paint write.
   onViewChange?: (view: MapViewState) => void;
+  // Fires when an open station-marker preview is dismissed (popup closed by
+  // any means). Lets the index page drop "always-show-observed" overrides
+  // it applied while the preview was active.
+  onStationPreviewClose?: () => void;
 }
 
 const DEFAULT_INDEX_VIEW: MapViewState = { lat: 47.607, lng: -122.335, zoom: 14 };
@@ -187,6 +191,7 @@ export function createMapView({
   onPhotoDroppedOnMap,
   initialView = DEFAULT_INDEX_VIEW,
   onViewChange,
+  onStationPreviewClose,
 }: CreateMapViewOptions): MapView {
   const layers: Record<string, L.Layer> = {
     'Sanborn 1884': histLayer(1884),
@@ -439,7 +444,10 @@ export function createMapView({
       .setLatLng([p.latlng.lat, p.latlng.lng])
       .setContent(popupHtml)
       .openOn(map);
-    popup.on('remove', () => { applyStationPreview(null); });
+    popup.on('remove', () => {
+      applyStationPreview(null);
+      onStationPreviewClose?.();
+    });
     onStationMarkerPreview?.(p.id);
     wireGoButton(popup, '.go', () => onStationMarkerOpen?.(p.id));
   }

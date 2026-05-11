@@ -75,13 +75,18 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   // The station route caches CPs in OverlayManager; index has no scene to
   // share with, so a flat Map is enough.
   const cpsById = new Map<string, ApiControlPoint>();
+  // CPs observed by the currently-previewed station. These bypass the time
+  // filter so clicking a station marker surfaces every CP it touches, even
+  // ones whose lifespan excludes the slider date.
+  let previewObservedCpIds: ReadonlySet<string> = new Set();
 
   function refreshIndexControlPoints(): void {
     const filterMs = timeFilter.getTime().getTime();
     const dots = [];
     for (const cp of cpsById.values()) {
       if (cp.est_lat === null || cp.est_lng === null) continue;
-      if (!isExtantAt(cpLifespanFromApi(cp), filterMs)) continue;
+      const observed = previewObservedCpIds.has(cp.id);
+      if (!observed && !isExtantAt(cpLifespanFromApi(cp), filterMs)) continue;
       dots.push({
         id: cp.id,
         latlng: { lat: cp.est_lat, lng: cp.est_lng },
@@ -202,6 +207,8 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
         photo.size_rad, photo.aspect, im.u, im.v,
       ));
     }
+    previewObservedCpIds = observedCpIds;
+    refreshIndexControlPoints();
     view.setStationPreview({
       origin: { lat: data.station.lat, lng: data.station.lng },
       cones,
@@ -324,6 +331,11 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     onPhotoDroppedOnMap: (latlng, files) => { startStationModal.open(latlng, files); },
     initialView: urlState.view ?? undefined,
     onViewChange: (v) => { writeUrlState({ view: v }); },
+    onStationPreviewClose: () => {
+      if (previewObservedCpIds.size === 0) return;
+      previewObservedCpIds = new Set();
+      refreshIndexControlPoints();
+    },
   });
   const solveModal = createSolveModal({
     onComplete: (result, dryRun) => {
