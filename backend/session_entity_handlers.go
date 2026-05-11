@@ -231,10 +231,51 @@ func (s *Server) getStationInSession(w http.ResponseWriter, r *http.Request, ses
 	})
 }
 
-// listStationsInSession returns the main station list with the session
-// overlay applied — updates replace, deletes drop, session-only inserts
-// append. Bbox is intentionally not honored here; the caller can filter
-// client-side. (The hot path is the index page's full-list refresh.)
+// Bbox filters from the non-session endpoints are dropped here — the index
+// page calls these without a bbox.
+func writeListInSession[T any](
+	w http.ResponseWriter, overlay sessionOverlay,
+	entityType string,
+	fetchAll func() ([]T, error), idOf func(T) string,
+) {
+	base, err := fetchAll()
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	out, err := mergeOverlay(base, overlay[entityType],
+		idOf, decodeJSON[T], func(T) bool { return true })
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) listControlPointsInSession(w http.ResponseWriter, r *http.Request, sess *Session) {
+	ctx := r.Context()
+	overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	writeListInSession(w, overlay, entityControlPoint,
+		func() ([]ControlPoint, error) { return s.allControlPoints(ctx) },
+		func(cp ControlPoint) string { return cp.ID })
+}
+
+func (s *Server) listCPConstraintsInSession(w http.ResponseWriter, r *http.Request, sess *Session) {
+	ctx := r.Context()
+	overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	writeListInSession(w, overlay, entityCPConstraint,
+		func() ([]CPConstraint, error) { return s.allCPConstraints(ctx) },
+		func(c CPConstraint) string { return c.ID })
+}
+
 func (s *Server) listStationsInSession(w http.ResponseWriter, r *http.Request, sess *Session) {
 	ctx := r.Context()
 	overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)
@@ -242,20 +283,9 @@ func (s *Server) listStationsInSession(w http.ResponseWriter, r *http.Request, s
 		writeErrorFromDB(w, err)
 		return
 	}
-	baseList, err := s.allStations(ctx)
-	if err != nil {
-		writeErrorFromDB(w, err)
-		return
-	}
-	out, err := mergeOverlay(baseList, overlay[entityStation],
-		func(st Station) string { return st.ID },
-		decodeJSON[Station],
-		func(Station) bool { return true })
-	if err != nil {
-		writeErrorFromDB(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, out)
+	writeListInSession(w, overlay, entityStation,
+		func() ([]Station, error) { return s.allStations(ctx) },
+		func(st Station) string { return st.ID })
 }
 
 // --- Photos ---
@@ -854,8 +884,40 @@ func (s *Server) imageMeasurementsByPhoto(ctx context.Context, photoID string) (
 	return out, rows.Err()
 }
 
-// allStations reads every row from main without bbox filtering. Used by
-// listStationsInSession (we apply bbox ourselves after overlay).
+func (s *Server) allControlPoints(ctx context.Context) ([]ControlPoint, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+controlPointCols+` FROM control_points ORDER BY created_at DESC LIMIT 1000`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ControlPoint{}
+	for rows.Next() {
+		cp, err := scanControlPoint(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, cp)
+	}
+	return out, rows.Err()
+}
+
+func (s *Server) allCPConstraints(ctx context.Context) ([]CPConstraint, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+cpConstraintCols+` FROM cp_constraints ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CPConstraint{}
+	for rows.Next() {
+		c, err := scanCPConstraint(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 func (s *Server) allStations(ctx context.Context) ([]Station, error) {
 	rows, err := s.db.Query(ctx, `SELECT `+stationCols+` FROM stations ORDER BY created_at DESC LIMIT 1000`)
 	if err != nil {

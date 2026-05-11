@@ -10,10 +10,7 @@ import (
 
 // Synchronous solver handlers (joint + single-station + single-CP). The
 // streaming joint variant lives in solve_stream.go. All four take
-// Server.solveMu so only one solve runs at a time. Session-mode solves are
-// preview-only: results are returned to the client but never persisted —
-// the canonical writeback happens at merge time, where the server re-runs
-// the joint solver against the freshly-applied intent state.
+// Server.solveMu so only one solve runs at a time.
 
 func (s *Server) postSolveJoint(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.requireSession(w, r)
@@ -85,8 +82,6 @@ func parseSolveConfig(w http.ResponseWriter, r *http.Request) (solver.Config, bo
 	if req.KRegLambda != nil {
 		cfg.KRegLambda = *req.KRegLambda
 	}
-	// req.DryRun is accepted for back-compat but ignored: every session-mode
-	// solve is effectively a dry run (no journal writes).
 	return cfg, true
 }
 
@@ -103,10 +98,8 @@ func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg solver.Con
 		prob, seededCPIDs, err = s.loadJointProblemSession(ctx, sess)
 		exists = true
 	} else {
-		// Single-station / single-CP loaders aren't overlay-aware yet: they
-		// read inputs from main only. Their outputs are still returned to
-		// the client as preview; the canonical writeback is the joint solve
-		// at merge time.
+		// Single-station / single-CP loaders aren't overlay-aware: they read
+		// inputs from main only. Writeback still journals the output.
 		prob, seededCPIDs, exists, err = s.loadProblem(ctx, cfg)
 	}
 	if err != nil {
@@ -137,6 +130,11 @@ func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg solver.Con
 			log.Printf("solver: %v", err)
 			writeError(w, http.StatusInternalServerError, "solver failed")
 		}
+		return
+	}
+	if err := s.writebackChangesInSession(ctx, sess.ID, res.Changes); err != nil {
+		log.Printf("solver writeback: %v", err)
+		writeError(w, http.StatusInternalServerError, "writeback failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, toAPISolveResult(res))

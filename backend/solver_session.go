@@ -4,17 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/bmander/panorama-builder/backend/solver"
 )
-
-// Session-aware solver entry points. Session-mode solves run against
-// main+intent and return preview-only results; the canonical writeback is
-// done by solveAndApplyAtMerge at merge time.
 
 func (s *Server) loadJointProblemSession(ctx context.Context, sess *Session) (solver.Problem, []string, error) {
 	overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)
@@ -234,102 +229,78 @@ func (s *Server) loadProblemCPConstraintsOverlaid(ctx context.Context, overlay s
 	return filterCPConstraintsByCPSet(out, cps), nil
 }
 
-// solveAndApplyAtMerge runs the joint solver against main, writes its result
-// back to main, and journals the derived changes onto session_ops so revert
-// can undo them. Returns the touched (entity_type, entity_id) pairs for
-// entity_commits bookkeeping. Solver failures (divergence, under-constrained
-// gauge) are non-fatal — the merge keeps just the intent ops. Called inside
-// the merge tx with solveMu held to keep concurrent /api/solve/* out of the
-// way.
-func (s *Server) solveAndApplyAtMerge(ctx context.Context, tx pgx.Tx, sessionID string) ([]netOp, error) {
-	s.solveMu.Lock()
-	defer s.solveMu.Unlock()
-
-	prob, seeded, err := s.loadJointProblem(ctx)
+// writebackChangesInSession routes each solver change through recordOp so
+// the seq allocator (sessions.next_seq) stays consistent with the entity
+// handlers — hand-rolling a separate INSERT here would let the two
+// allocators drift and collide on the (session_id, seq) primary key.
+func (s *Server) writebackChangesInSession(ctx context.Context, sessionID string, changes []solver.EntityChange) error {
+	if len(changes) == 0 {
+		return nil
+	}
+	overlay, err := loadSessionOverlay(ctx, s.db, sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("merge solve load: %w", err)
+		return fmt.Errorf("load overlay: %w", err)
 	}
-	res, err := solver.SolveJointWithSeed(prob, seeded, solver.Config{
-		Mode: solver.ModeJoint, MaxIters: 200,
-	})
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		log.Printf("merge solve: %v", err)
-		return nil, nil
+		return err
 	}
-	if res.Diverged || len(res.Changes) == 0 {
-		return nil, nil
-	}
-
-	derived := make([]netOp, 0, len(res.Changes))
-	for _, c := range res.Changes {
-		before, after, err := loadApplyAndUpdate(ctx, tx, c)
+	defer func() { _ = tx.Rollback(ctx) }()
+	now := time.Now().UTC()
+	for _, c := range changes {
+		before, after, err := snapshotForChange(ctx, s.db, overlay, c, now)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if err := upsertSessionOp(ctx, tx, sessionID, c.Kind, c.ID, before, after); err != nil {
-			return nil, err
+		if err := recordOp(ctx, tx, sessionID, c.Kind, c.ID, "update", before, after); err != nil {
+			return err
 		}
-		derived = append(derived, netOp{EntityType: c.Kind, EntityID: c.ID})
 	}
-	return derived, nil
+	return tx.Commit(ctx)
 }
 
-// loadApplyAndUpdate reads the row from main (the before snapshot), folds
-// the solver's After deltas into it, writes the full row back via the
-// shared updateEntityFromJSON path, and returns (before, after) JSON. The
-// merge tx is SERIALIZABLE with solveMu held, so there's no race that
-// would justify a FOR UPDATE read.
-func loadApplyAndUpdate(ctx context.Context, tx pgx.Tx, c solver.EntityChange) (before, after []byte, err error) {
+func snapshotForChange(ctx context.Context, db *pgxpool.Pool, overlay sessionOverlay, c solver.EntityChange, now time.Time) (before, after []byte, err error) {
 	switch c.Kind {
 	case entityStation:
-		st, err := scanStation(tx.QueryRow(ctx, `SELECT `+stationCols+` FROM stations WHERE id=$1`, c.ID))
+		st, present, err := currentStation(ctx, db, overlay, c.ID)
 		if err != nil {
 			return nil, nil, err
+		}
+		if !present {
+			return nil, nil, fmt.Errorf("station %s missing", c.ID)
 		}
 		before = jsonMust(st)
 		applyChangeToStation(&st, c.After)
-		st.UpdatedAt = time.Now().UTC()
+		st.UpdatedAt = now
 		after = jsonMust(st)
 	case entityPhoto:
-		p, err := scanPhoto(tx.QueryRow(ctx, `SELECT `+photoCols+` FROM photos WHERE id=$1`, c.ID))
+		p, present, err := currentPhoto(ctx, db, overlay, c.ID)
 		if err != nil {
 			return nil, nil, err
+		}
+		if !present {
+			return nil, nil, fmt.Errorf("photo %s missing", c.ID)
 		}
 		before = jsonMust(p)
 		applyChangeToPhoto(&p, c.After)
-		p.UpdatedAt = time.Now().UTC()
+		p.UpdatedAt = now
 		after = jsonMust(p)
 	case entityControlPoint:
-		cp, err := scanControlPoint(tx.QueryRow(ctx, `SELECT `+controlPointCols+` FROM control_points WHERE id=$1`, c.ID))
+		cp, present, err := currentControlPoint(ctx, db, overlay, c.ID)
 		if err != nil {
 			return nil, nil, err
 		}
+		if !present {
+			return nil, nil, fmt.Errorf("control_point %s missing", c.ID)
+		}
 		before = jsonMust(cp)
 		applyChangeToControlPoint(&cp, c.After)
-		cp.UpdatedAt = time.Now().UTC()
+		cp.UpdatedAt = now
 		after = jsonMust(cp)
 	default:
 		return nil, nil, fmt.Errorf("unknown change kind %q", c.Kind)
 	}
-	if err := updateEntityFromJSON(ctx, tx, c.Kind, c.ID, after); err != nil {
-		return nil, nil, fmt.Errorf("apply %s/%s: %w", c.Kind, c.ID, err)
-	}
 	return before, after, nil
-}
-
-// upsertSessionOp folds the solver's change into the session journal. If
-// the user already had an intent op on this entity, only after_json is
-// replaced — `before` stays as the pre-intent snapshot so revert undoes
-// the full commit, not just the solver's increment.
-func upsertSessionOp(ctx context.Context, tx pgx.Tx, sessionID, entityType, entityID string, before, after []byte) error {
-	_, err := tx.Exec(ctx, `
-		INSERT INTO session_ops (session_id, seq, entity_type, entity_id, op, before_json, after_json)
-		VALUES ($1, (SELECT COALESCE(MAX(seq), 0) + 1 FROM session_ops WHERE session_id=$1),
-		        $2, $3, 'update', $4, $5)
-		ON CONFLICT (session_id, entity_type, entity_id)
-		DO UPDATE SET after_json = EXCLUDED.after_json`,
-		sessionID, entityType, entityID, before, after)
-	return err
 }
 
 func applyChangeToStation(st *Station, after map[string]float64) {

@@ -111,6 +111,10 @@ func (s *Server) spaFallback(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath.Join(s.staticDir, "cp.html"))
 		return
 	}
+	if clean == "/history" || clean == "/history/" {
+		http.ServeFile(w, r, filepath.Join(s.staticDir, "history.html"))
+		return
+	}
 	// Fallback: SPA's index.
 	http.ServeFile(w, r, filepath.Join(s.staticDir, "index.html"))
 }

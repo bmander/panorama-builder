@@ -147,14 +147,15 @@ export function deletePhoto(id: string): Promise<void> {
 
 export async function uploadPhotoBlob(id: string, blob: Blob): Promise<void> {
   await sessionManager.ensureStarted();
-  const res = await fetch(`${API}/photos/${encodeURIComponent(id)}/blob`, withSession({
+  const path = `/photos/${encodeURIComponent(id)}/blob`;
+  const res = await fetch(API + path, withSession({
     method: 'PUT',
     headers: { 'Content-Type': blob.type || 'image/jpeg' },
     body: blob,
   }));
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`PUT /photos/${id}/blob → ${res.status.toString()} ${text}`);
+    throw new Error(`PUT ${path} → ${res.status.toString()} ${text}`);
   }
 }
 

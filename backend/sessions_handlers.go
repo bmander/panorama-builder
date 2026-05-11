@@ -339,16 +339,7 @@ func (s *Server) mergeSession(w http.ResponseWriter, r *http.Request) {
 		writeApplyError(w, err)
 		return
 	}
-	// Re-run the joint solver against the freshly-applied intent state and
-	// fold its writeback into the same tx. Failure here is non-fatal — we
-	// proceed with the intent-only commit and the user can solve later.
-	derived, err := s.solveAndApplyAtMerge(ctx, tx, sess.ID)
-	if err != nil {
-		writeErrorFromDB(w, err)
-		return
-	}
-	allTouched := append(plan, derived...)
-	if err := bumpEntityCommits(ctx, tx, allTouched, seq); err != nil {
+	if err := bumpEntityCommits(ctx, tx, plan, seq); err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}

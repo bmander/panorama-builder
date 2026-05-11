@@ -7,7 +7,9 @@
 // so handlers don't need to thread the id through manually.
 
 import * as api from './api.js';
-import type { ApiSessionState, ApiCreateSessionResponse, ApiCommitRef } from './api.js';
+import type {
+  ApiSessionState, ApiCreateSessionResponse, ApiCommitRef,
+} from './api.js';
 
 const STORAGE_KEY = 'panorama:session';
 

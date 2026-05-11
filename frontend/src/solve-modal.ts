@@ -1,15 +1,9 @@
-// Index-view "Solve" modal. Shows joint-solver options, runs the SSE
-// streaming endpoint when Run is clicked, and renders live per-iteration
-// loss progress on a log-scale canvas chart.
-//
-// During a run the user can:
+// Index-view "Solve" modal. Streams the joint solve as SSE so the chart
+// fills in per iteration. During a run the user can:
 //   - Cancel — abort the fetch; the server detects the disconnect, the
-//     solver breaks, and nothing is written back.
-//   - Stop here — POST to the /stop endpoint; the solver returns the best
-//     iterate found so far and the server writes it back.
-// On natural termination the solver may report converged / diverged /
-// iter-cap-exhausted; on divergence no writeback happens (per the existing
-// solver contract) and the modal surfaces that as a discarded run.
+//     solver breaks, no result is delivered.
+//   - Stop here — POST to /stop; the solver returns the best iterate so
+//     far and emits a "stopped" terminal event.
 
 import { getElement } from './types.js';
 import * as api from './api.js';
@@ -157,6 +151,19 @@ export function createSolveModal(
     ctx.stroke();
   }
 
+  function pushPoint(iter: number, rms: number): void {
+    chart.iters.push(iter);
+    chart.rms.push(rms);
+    const logRms = Math.log10(Math.max(rms, 1e-30));
+    if (chart.iters.length === 1) {
+      chart.logMin = chart.logMax = logRms;
+    } else {
+      if (logRms < chart.logMin) chart.logMin = logRms;
+      if (logRms > chart.logMax) chart.logMax = logRms;
+    }
+    drawChart();
+  }
+
   function summarize(result: api.SolveResult, dryRun: boolean, kind: 'done' | 'stopped'): string {
     let verdict: string;
     if (result.diverged) verdict = 'DIVERGED — no writeback';
@@ -187,49 +194,79 @@ export function createSolveModal(
       kRegLambda = parsed;
     }
     const dryRun = dryRunEl.checked;
-    const config: api.SolveConfig = {
+    const base: api.SolveConfig = {
       residual_tol_rad: tol,
       rel_improve_tol: relImproveTol,
       dry_run: dryRun,
     };
-    if (kRegLambda !== null) config.k_reg_lambda = kRegLambda;
+    if (kRegLambda !== null) base.k_reg_lambda = kRegLambda;
 
     setRunning(true);
     progressEl.hidden = false;
-    statusEl.textContent = 'solving…';
+    statusEl.textContent = 'starting…';
     chart.iters.length = 0;
     chart.rms.length = 0;
     chart.logMin = 0;
     chart.logMax = 0;
     drawChart();
 
-    // Streaming solve is disabled under the session-required regime. Fall
-    // back to the synchronous endpoint — no per-iteration progress yet, but
-    // the writeback lands in the user's session journal so they can merge
-    // or abandon it after.
-    api.solveJoint(config).then(result => {
+    const abort = new AbortController();
+    activeAbort = abort;
+
+    let result: api.SolveResult | null = null;
+    let terminalKind: 'done' | 'stopped' | 'cancelled' | 'error' | null = null;
+    let errorMessage: string | null = null;
+
+    api.solveJointStream(base, ev => {
+      if (ev.kind === 'iter') {
+        pushPoint(ev.iter, ev.rms);
+        statusEl.textContent = `iter ${(ev.iter + 1).toString()}  rms ${ev.rms.toExponential(4)}`;
+      } else if (ev.kind === 'done' || ev.kind === 'stopped') {
+        result = ev.result;
+        terminalKind = ev.kind;
+      } else if (ev.kind === 'cancelled') {
+        terminalKind = 'cancelled';
+      } else {
+        terminalKind = 'error';
+        errorMessage = ev.message;
+      }
+    }, abort.signal).then(() => {
+      if (activeAbort === abort) activeAbort = null;
       setRunning(false);
-      statusEl.textContent = summarize(result, dryRun, 'done');
+      if (terminalKind === 'cancelled') {
+        statusEl.textContent = 'cancelled';
+        return;
+      }
+      if (terminalKind === 'error') {
+        statusEl.textContent = `error: ${errorMessage ?? 'unknown'}`;
+        return;
+      }
+      if (!result || (terminalKind !== 'done' && terminalKind !== 'stopped')) {
+        statusEl.textContent = 'stream ended without a final event';
+        return;
+      }
+      statusEl.textContent = summarize(result, dryRun, terminalKind);
       onComplete(result, dryRun);
     }, (err: unknown) => {
+      if (activeAbort === abort) activeAbort = null;
       setRunning(false);
       statusEl.textContent = `request failed: ${String(err)}`;
-      console.error('solve failed:', err);
+      console.error('solve stream failed:', err);
     });
   });
 
   cancelBtn.addEventListener('click', () => {
-    // Synchronous solve can't be cancelled mid-request without server-side
-    // support; just close the modal — the server will finish and journal
-    // the writeback. The user can abandon the session if they don't want it.
     activeAbort?.abort();
   });
 
   stopBtn.addEventListener('click', () => {
-    // No-op: synchronous solve has no mid-run stop. Button stays hidden in
-    // the new flow but the listener is kept so the existing setRunning()
-    // visibility logic doesn't need to grow a special case.
+    // Disabled until the server emits a terminal event — the in-flight
+    // loop will finish its current iter and break at the next ShouldStop.
     stopBtn.disabled = true;
+    api.solveJointStop().catch((err: unknown) => {
+      console.error('solve stop failed:', err);
+      stopBtn.disabled = false;
+    });
   });
 
   return { open };

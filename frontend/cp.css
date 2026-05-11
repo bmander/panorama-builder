@@ -77,6 +77,11 @@ h2 { font-size: 14px; color: #aaa; margin: 32px 0 8px; font-weight: normal;
 .cp-list .empty { color: #888; font-style: italic; padding: 6px 8px;
                   background: rgba(255,255,255,0.04); }
 .actions { margin-top: 32px; }
+button.btn { font: inherit; color: #5080ff; background: transparent;
+             border: 1px solid #5080ff; border-radius: 3px;
+             padding: 2px 8px; cursor: pointer; }
+button.btn:hover:not(:disabled) { background: rgba(80,128,255,0.12); }
+button.btn:disabled { opacity: 0.5; cursor: default; }
 button.danger { font: inherit; color: #ff8080; background: transparent;
                 border: 1px solid #ff8080; border-radius: 3px;
                 padding: 6px 12px; cursor: pointer; }

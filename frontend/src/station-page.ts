@@ -34,7 +34,7 @@ import { latLngToCameraRelativeMeters, tangentMetersToLatLng, vecToAzAlt } from 
 import { degToRad } from './mathx.js';
 import type { CPConstraintView, ControlPointView, LatLng } from './types.js';
 import { createSyncManager } from './sync.js';
-import { createSessionPanel, createCommitLog } from './session-panel.js';
+import { createSessionPanel } from './session-panel.js';
 import { createSettingsPanel } from './settings.js';
 import { createOrchestration } from './handlers.js';
 import { createAdminModal } from './admin-modal.js';
@@ -376,10 +376,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
 
   const sync = createSyncManager({ overlays, getCurrentStationId });
 
-  // Session panel — read+merge controls; auto-refreshes on session change.
-  const sessionHost = getElement('session-host');
-  createSessionPanel(sessionHost);
-  createCommitLog(sessionHost);
+  createSessionPanel(getElement('session-host'));
 
   const settings = createSettingsPanel({
     viewer, terrain, sunMarker,
@@ -699,13 +696,8 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     onLocationChanged: (loc) => { applyCameraLocation(loc); },
   });
 
-  // The `preview` arg layers solver-result deltas onto the fetched main+
-  // intent view. Session-mode solves return their result but don't journal,
-  // so without this overlay the post-solve refetch would show pre-solve
-  // values.
-  async function rehydrateAfterSolve(preview?: api.SolveResult): Promise<void> {
+  async function rehydrateAfterSolve(): Promise<void> {
     const data = await api.getStation(stationId);
-    if (preview) applySolvePreview(data, preview);
     stationFields.hydrate(data.station);
     overlays.withBatch(() => {
       const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
@@ -733,22 +725,6 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         syncControlPoint(cp);
       }
     });
-  }
-
-  function applySolvePreview(data: api.ApiHydratedStation, result: api.SolveResult): void {
-    const photoById = new Map(data.photos.map(p => [p.id, p]));
-    const cpById = new Map(data.control_points.map(cp => [cp.id, cp]));
-    for (const c of result.changes) {
-      if (c.kind === 'station' && c.id === data.station.id) {
-        Object.assign(data.station, c.after);
-      } else if (c.kind === 'photo') {
-        const p = photoById.get(c.id);
-        if (p) Object.assign(p, c.after);
-      } else if (c.kind === 'control_point') {
-        const cp = cpById.get(c.id);
-        if (cp) Object.assign(cp, c.after);
-      }
-    }
   }
 
   attachSolveActions({

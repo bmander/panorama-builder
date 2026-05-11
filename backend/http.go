@@ -17,6 +17,10 @@ const metadataBodyMax = 1 << 20 // 1 MiB
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
+	// Heuristic caching of un-headered JSON responses by browsers has bitten
+	// us before (cp-page edits an entity, /world view then refetches and
+	// gets the stale cached body). Mark every API response no-store.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(body); err != nil {
 		log.Printf("encode response: %v", err)

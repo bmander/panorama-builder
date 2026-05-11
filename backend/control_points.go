@@ -33,6 +33,12 @@ func (s *Server) postControlPoint(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listControlPoints(w http.ResponseWriter, r *http.Request) {
+	if sess, ok := s.tryLoadSession(w, r); !ok {
+		return
+	} else if sess != nil {
+		s.listControlPointsInSession(w, r, sess)
+		return
+	}
 	bbox := r.URL.Query().Get("bbox")
 	var sql string
 	var args []any

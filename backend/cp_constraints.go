@@ -27,6 +27,12 @@ func (s *Server) postCPConstraint(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listCPConstraints(w http.ResponseWriter, r *http.Request) {
+	if sess, ok := s.tryLoadSession(w, r); !ok {
+		return
+	} else if sess != nil {
+		s.listCPConstraintsInSession(w, r, sess)
+		return
+	}
 	rows, err := s.db.Query(r.Context(),
 		`SELECT `+cpConstraintCols+` FROM cp_constraints ORDER BY created_at`)
 	if err != nil {
