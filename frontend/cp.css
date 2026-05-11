@@ -57,6 +57,18 @@ h2 { font-size: 14px; color: #aaa; margin: 32px 0 8px; font-weight: normal;
 .observations .meta { color: #888; }
 .observations .captured-at { color: #ddd; }
 .observations .empty { color: #888; font-style: italic; padding: 6px 8px; }
+.observations .clip { position: relative; flex: 0 0 auto;
+                      width: 96px; height: 96px; overflow: hidden;
+                      background: #000; border-radius: 3px;
+                      align-self: center; }
+.observations .clip img { position: absolute; max-width: none;
+                          user-select: none; pointer-events: none; }
+.observations .clip::after { content: ""; position: absolute;
+                             left: 50%; top: 50%; width: 12px; height: 12px;
+                             margin: -6px 0 0 -6px;
+                             border: 1px solid rgba(255,255,255,0.6);
+                             border-radius: 50%;
+                             pointer-events: none; }
 .cp-list { list-style: none; margin: 0; padding: 0;
            display: flex; flex-direction: column; gap: 4px; }
 .cp-list li { display: flex; gap: 12px; align-items: baseline;

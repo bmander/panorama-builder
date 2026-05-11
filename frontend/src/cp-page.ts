@@ -1,7 +1,35 @@
 import * as api from './api.js';
+import { degToRad } from './mathx.js';
 import { cpLabel, formatLocalDateTime, getElement, indexCpHref, stationHref } from './types.js';
 
 const CP_ID_RE = /^\/cp\/([A-Z2-7]{13})$/;
+
+const CLIP_DEG = 2;
+const CLIP_RAD = degToRad(CLIP_DEG);
+const CLIP_SIZE_PX = 96;
+
+function createObservationClip(m: api.ApiControlPointImageObservation): HTMLElement {
+  const scaledW = CLIP_SIZE_PX * m.size_rad / CLIP_RAD;
+  const scaledH = scaledW / m.aspect;
+  const left = CLIP_SIZE_PX / 2 - m.u * scaledW;
+  // v=1 is the top of the image (PlaneGeometry UV y=1 with flipY texture);
+  // CSS top=0 is the top, so we use (1 - v) to translate into CSS y.
+  const top = CLIP_SIZE_PX / 2 - (1 - m.v) * scaledH;
+  const a = document.createElement('a');
+  a.className = 'clip';
+  a.href = stationHref(m.station_id, m.id);
+  const img = document.createElement('img');
+  img.src = api.photoBlobUrl(m.photo_id);
+  img.alt = '';
+  img.draggable = false;
+  img.loading = 'lazy';
+  img.style.width = `${scaledW}px`;
+  img.style.height = `${scaledH}px`;
+  img.style.left = `${left}px`;
+  img.style.top = `${top}px`;
+  a.appendChild(img);
+  return a;
+}
 
 type EditorEl = HTMLInputElement | HTMLTextAreaElement;
 
@@ -363,12 +391,13 @@ function stationLabel(stationId: string, stationName: string | null): string {
 }
 
 function appendObservationItem(
-  list: HTMLElement, kind: 'map' | 'image', meta: Node,
+  list: HTMLElement, kind: 'map' | 'image', meta: Node, leading?: Node,
 ): void {
   const li = document.createElement('li');
   const kindEl = document.createElement('span');
   kindEl.className = `kind ${kind}`;
   kindEl.textContent = kind;
+  if (leading) li.appendChild(leading);
   li.append(kindEl, meta);
   list.appendChild(li);
 }
@@ -396,7 +425,7 @@ function renderObservations(obs: api.ApiControlPointObservations): void {
     captured.className = 'captured-at';
     captured.textContent = new Date(m.station_captured_at).toLocaleString();
     meta.append(captured, ` (u=${m.u.toFixed(2)}, v=${m.v.toFixed(2)}) in `, a);
-    appendObservationItem(list, 'image', meta);
+    appendObservationItem(list, 'image', meta, createObservationClip(m));
   }
 }
 
