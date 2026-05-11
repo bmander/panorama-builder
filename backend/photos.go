@@ -81,32 +81,28 @@ func (s *Server) putPhotoBlob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getPhotoBlob(w http.ResponseWriter, r *http.Request) {
-	// Blob bytes live on disk regardless of session — there's no per-session
-	// blob fork. The blob filename is the photo id (validated below) and the
-	// bytes were written by an in-session upload at some point.
 	id := requireID(w, r, "id")
 	if id == "" {
 		return
 	}
-	var mime *string
-	err := s.db.QueryRow(r.Context(),
-		`SELECT mime_type FROM photos WHERE id = $1 AND blob_path IS NOT NULL`, id,
-	).Scan(&mime)
-	if err != nil {
-		writeErrorFromDB(w, err)
-		return
-	}
+	// Blob lookup is by file existence rather than DB row: browsers fetch
+	// this URL via <img> tags that don't carry our X-Session-Id header, so a
+	// photo created in a session (whose row is only in session_ops) would
+	// otherwise 404. The blob filename is the validated photo id.
 	f, err := s.blobs.openPhoto(id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "blob missing")
 		return
 	}
 	defer f.Close()
+	var mime *string
+	_ = s.db.QueryRow(r.Context(),
+		`SELECT mime_type FROM photos WHERE id = $1`, id,
+	).Scan(&mime)
 	if mime != nil {
 		w.Header().Set("Content-Type", *mime)
 	}
 	if _, err := io.Copy(w, f); err != nil {
-		// Headers already sent; nothing useful to return.
 		return
 	}
 }
