@@ -27,6 +27,8 @@ tags:
   - name: control-points
   - name: cp-constraints
   - name: solver
+  - name: sessions
+  - name: commits
 
 paths:
   /healthz:
@@ -564,6 +566,191 @@ paths:
               schema: { $ref: '#/components/schemas/ControlPointObservations' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /sessions:
+    post:
+      tags: [sessions]
+      summary: Open a new session at HEAD
+      description: |
+        Sessions are server-issued anonymous workspaces. The id returned
+        here is what the client persists in localStorage and sends back as
+        `X-Session-Id` on every subsequent read/write to scope reads to the
+        session overlay and writes to the journal.
+      operationId: createSession
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreateSessionResponse' }
+
+  /sessions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/Id' }
+    get:
+      tags: [sessions]
+      summary: Session metadata + ops summary + live conflict list
+      operationId: getSession
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionState' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /sessions/{id}/ops:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/Id' }
+    get:
+      tags: [sessions]
+      summary: Full journal of ops in seq order
+      operationId: getSessionOps
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SessionOp' }
+
+  /sessions/{id}/abandon:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/Id' }
+    post:
+      tags: [sessions]
+      summary: Mark a session as abandoned
+      description: |
+        Idempotent: returns 204 if already abandoned. Refuses with 409 if
+        the session is merged (history is immutable).
+      operationId: abandonSession
+      responses:
+        '204': { description: Abandoned }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Session is already merged
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /sessions/{id}/merge:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/Id' }
+    post:
+      tags: [sessions]
+      summary: Promote the session to a new commit on main
+      description: |
+        Coalesces session ops per entity, applies them to main inside one
+        SERIALIZABLE transaction, and writes a new commit row referencing
+        this session. Refuses with 409 if any entity touched by the
+        session has been modified by a commit since the session's base.
+      operationId: mergeSession
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CommitMessage' }
+      responses:
+        '201':
+          description: Merged
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommitRef' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Conflict — abandon and start over
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConflictsResponse' }
+
+  /commits:
+    get:
+      tags: [commits]
+      summary: List commits, latest first
+      operationId: listCommits
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500 }
+        - name: before_seq
+          in: query
+          required: false
+          description: Return commits whose seq is strictly less than this value (cursor pagination).
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Commit' }
+
+  /commits/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/Id' }
+    get:
+      tags: [commits]
+      summary: One commit row plus the journaled ops it landed
+      operationId: getCommit
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommitWithOps' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /commits/{id}/revert:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/Id' }
+    post:
+      tags: [commits]
+      summary: Create a new commit that inverts the target's effect
+      description: |
+        Walks the target commit's journal backward, swaps before/after on
+        each op, and applies the inverse plan to main. Refuses with 409 if
+        any later commit has touched any of the target's entities.
+      operationId: revertCommit
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CommitMessage' }
+      responses:
+        '201':
+          description: Reverted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommitRef' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Conflict — later commits have touched these entities
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConflictsResponse' }
+
   /control-points/{id}/visible-photos:
     parameters:
       - $ref: '#/components/parameters/ControlPointId'
@@ -1045,6 +1232,116 @@ components:
         after:
           type: object
           additionalProperties: { type: number, format: double }
+
+    CreateSessionResponse:
+      type: object
+      required: [id, base_seq, status, next_seq, created_at]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        base_seq: { type: integer, format: int64, description: HEAD seq the session forked from (0 if commit log is empty) }
+        status: { type: string, enum: [open, merged, abandoned] }
+        next_seq: { type: integer, format: int64, description: Next per-session op sequence to be assigned }
+        created_at: { type: string, format: date-time }
+
+    EntityRef:
+      type: object
+      description: |
+        One entity touched by a session, optionally annotated with the
+        last-commit seq that updated it on main.
+      required: [entity_type, entity_id]
+      properties:
+        entity_type:
+          type: string
+          enum: [station, photo, image_measurement, control_point, cp_constraint]
+        entity_id: { $ref: '#/components/schemas/Id' }
+        last_seq: { type: integer, format: int64, nullable: true }
+
+    SessionState:
+      type: object
+      required: [id, base_seq, status, next_seq, op_count, touched_entities, conflicts, created_at, updated_at]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        base_seq: { type: integer, format: int64 }
+        status: { type: string, enum: [open, merged, abandoned] }
+        next_seq: { type: integer, format: int64 }
+        op_count: { type: integer, format: int64, description: number of journaled ops (= next_seq - 1) }
+        touched_entities:
+          type: array
+          items: { $ref: '#/components/schemas/EntityRef' }
+        conflicts:
+          type: array
+          description: |
+            Touched entities whose entity_commits.last_seq exceeds
+            base_seq — these are the entities that block a merge.
+          items: { $ref: '#/components/schemas/EntityRef' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    SessionOp:
+      type: object
+      required: [seq, entity_type, entity_id, op]
+      properties:
+        seq: { type: integer, format: int64 }
+        entity_type:
+          type: string
+          enum: [station, photo, image_measurement, control_point, cp_constraint]
+        entity_id: { $ref: '#/components/schemas/Id' }
+        op:
+          type: string
+          enum: [insert, update, delete]
+        before:
+          description: Row state before the op (NULL for inserts).
+          nullable: true
+        after:
+          description: Row state after the op (NULL for deletes).
+          nullable: true
+
+    CommitMessage:
+      type: object
+      properties:
+        message: { type: string }
+
+    CommitRef:
+      type: object
+      required: [commit_id, seq]
+      properties:
+        commit_id: { $ref: '#/components/schemas/Id' }
+        seq: { type: integer, format: int64 }
+
+    Commit:
+      type: object
+      required: [id, seq, kind, created_at]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        seq: { type: integer, format: int64 }
+        parent_seq: { type: integer, format: int64, nullable: true }
+        source_session_id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          nullable: true
+        kind: { type: string, enum: [merge, revert] }
+        reverts_commit_id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          nullable: true
+        message: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    CommitWithOps:
+      type: object
+      required: [commit, ops]
+      properties:
+        commit: { $ref: '#/components/schemas/Commit' }
+        ops:
+          type: array
+          items: { $ref: '#/components/schemas/SessionOp' }
+
+    ConflictsResponse:
+      type: object
+      required: [error, conflicts]
+      properties:
+        error: { type: string }
+        conflicts:
+          type: array
+          items: { $ref: '#/components/schemas/EntityRef' }
 
     SolveResult:
       type: object

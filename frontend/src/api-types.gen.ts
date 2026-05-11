@@ -378,6 +378,175 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Open a new session at HEAD
+         * @description Sessions are server-issued anonymous workspaces. The id returned
+         *     here is what the client persists in localStorage and sends back as
+         *     `X-Session-Id` on every subsequent read/write to scope reads to the
+         *     session overlay and writes to the journal.
+         */
+        post: operations["createSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        /** Session metadata + ops summary + live conflict list */
+        get: operations["getSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/ops": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        /** Full journal of ops in seq order */
+        get: operations["getSessionOps"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/abandon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a session as abandoned
+         * @description Idempotent: returns 204 if already abandoned. Refuses with 409 if
+         *     the session is merged (history is immutable).
+         */
+        post: operations["abandonSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Promote the session to a new commit on main
+         * @description Coalesces session ops per entity, applies them to main inside one
+         *     SERIALIZABLE transaction, and writes a new commit row referencing
+         *     this session. Refuses with 409 if any entity touched by the
+         *     session has been modified by a commit since the session's base.
+         */
+        post: operations["mergeSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/commits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List commits, latest first */
+        get: operations["listCommits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/commits/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        /** One commit row plus the journaled ops it landed */
+        get: operations["getCommit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/commits/{id}/revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a new commit that inverts the target's effect
+         * @description Walks the target commit's journal backward, swaps before/after on
+         *     each op, and applies the inverse plan to main. Refuses with 409 if
+         *     any later commit has touched any of the target's entities.
+         */
+        post: operations["revertCommit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/control-points/{id}/visible-photos": {
         parameters: {
             query?: never;
@@ -834,6 +1003,101 @@ export interface components {
             after: {
                 [key: string]: number;
             };
+        };
+        CreateSessionResponse: {
+            id: components["schemas"]["Id"];
+            /**
+             * Format: int64
+             * @description HEAD seq the session forked from (0 if commit log is empty)
+             */
+            base_seq: number;
+            /** @enum {string} */
+            status: "open" | "merged" | "abandoned";
+            /**
+             * Format: int64
+             * @description Next per-session op sequence to be assigned
+             */
+            next_seq: number;
+            /** Format: date-time */
+            created_at: string;
+        };
+        /**
+         * @description One entity touched by a session, optionally annotated with the
+         *     last-commit seq that updated it on main.
+         */
+        EntityRef: {
+            /** @enum {string} */
+            entity_type: "station" | "photo" | "image_measurement" | "control_point" | "cp_constraint";
+            entity_id: components["schemas"]["Id"];
+            /** Format: int64 */
+            last_seq?: number | null;
+        };
+        SessionState: {
+            id: components["schemas"]["Id"];
+            /** Format: int64 */
+            base_seq: number;
+            /** @enum {string} */
+            status: "open" | "merged" | "abandoned";
+            /** Format: int64 */
+            next_seq: number;
+            /**
+             * Format: int64
+             * @description number of journaled ops (= next_seq - 1)
+             */
+            op_count: number;
+            touched_entities: components["schemas"]["EntityRef"][];
+            /**
+             * @description Touched entities whose entity_commits.last_seq exceeds
+             *     base_seq — these are the entities that block a merge.
+             */
+            conflicts: components["schemas"]["EntityRef"][];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        SessionOp: {
+            /** Format: int64 */
+            seq: number;
+            /** @enum {string} */
+            entity_type: "station" | "photo" | "image_measurement" | "control_point" | "cp_constraint";
+            entity_id: components["schemas"]["Id"];
+            /** @enum {string} */
+            op: "insert" | "update" | "delete";
+            /** @description Row state before the op (NULL for inserts). */
+            before?: unknown;
+            /** @description Row state after the op (NULL for deletes). */
+            after?: unknown;
+        };
+        CommitMessage: {
+            message?: string;
+        };
+        CommitRef: {
+            commit_id: components["schemas"]["Id"];
+            /** Format: int64 */
+            seq: number;
+        };
+        Commit: {
+            id: components["schemas"]["Id"];
+            /** Format: int64 */
+            seq: number;
+            /** Format: int64 */
+            parent_seq?: number | null;
+            source_session_id?: components["schemas"]["Id"] | null;
+            /** @enum {string} */
+            kind: "merge" | "revert";
+            reverts_commit_id?: components["schemas"]["Id"] | null;
+            message?: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        CommitWithOps: {
+            commit: components["schemas"]["Commit"];
+            ops: components["schemas"]["SessionOp"][];
+        };
+        ConflictsResponse: {
+            error: string;
+            conflicts: components["schemas"]["EntityRef"][];
         };
         SolveResult: {
             iterations: number;
@@ -1634,6 +1898,222 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    createSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateSessionResponse"];
+                };
+            };
+        };
+    };
+    getSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionState"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getSessionOps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOp"][];
+                };
+            };
+        };
+    };
+    abandonSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Abandoned */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+            /** @description Session is already merged */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    mergeSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CommitMessage"];
+            };
+        };
+        responses: {
+            /** @description Merged */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommitRef"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            /** @description Conflict — abandon and start over */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConflictsResponse"];
+                };
+            };
+        };
+    };
+    listCommits: {
+        parameters: {
+            query?: {
+                limit?: number;
+                /** @description Return commits whose seq is strictly less than this value (cursor pagination). */
+                before_seq?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Commit"][];
+                };
+            };
+        };
+    };
+    getCommit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommitWithOps"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    revertCommit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["CommitMessage"];
+            };
+        };
+        responses: {
+            /** @description Reverted */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommitRef"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            /** @description Conflict — later commits have touched these entities */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConflictsResponse"];
+                };
+            };
         };
     };
     listControlPointVisiblePhotos: {

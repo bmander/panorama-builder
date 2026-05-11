@@ -157,19 +157,6 @@ export function createSolveModal(
     ctx.stroke();
   }
 
-  function pushPoint(iter: number, rms: number): void {
-    chart.iters.push(iter);
-    chart.rms.push(rms);
-    const logRms = Math.log10(Math.max(rms, 1e-30));
-    if (chart.iters.length === 1) {
-      chart.logMin = chart.logMax = logRms;
-    } else {
-      if (logRms < chart.logMin) chart.logMin = logRms;
-      if (logRms > chart.logMax) chart.logMax = logRms;
-    }
-    drawChart();
-  }
-
   function summarize(result: api.SolveResult, dryRun: boolean, kind: 'done' | 'stopped'): string {
     let verdict: string;
     if (result.diverged) verdict = 'DIVERGED — no writeback';
@@ -209,74 +196,40 @@ export function createSolveModal(
 
     setRunning(true);
     progressEl.hidden = false;
-    statusEl.textContent = 'starting…';
+    statusEl.textContent = 'solving…';
     chart.iters.length = 0;
     chart.rms.length = 0;
     chart.logMin = 0;
     chart.logMax = 0;
     drawChart();
 
-    const abort = new AbortController();
-    activeAbort = abort;
-
-    let result: api.SolveResult | null = null;
-    let terminalKind: 'done' | 'stopped' | 'cancelled' | 'error' | null = null;
-    let errorMessage: string | null = null;
-
-    api.solveJointStream(config, ev => {
-      if (ev.kind === 'iter') {
-        pushPoint(ev.iter, ev.rms);
-        statusEl.textContent = `iter ${(ev.iter + 1).toString()}  rms ${ev.rms.toExponential(4)}`;
-      } else if (ev.kind === 'done' || ev.kind === 'stopped') {
-        result = ev.result;
-        terminalKind = ev.kind;
-      } else if (ev.kind === 'cancelled') {
-        terminalKind = 'cancelled';
-      } else {
-        terminalKind = 'error';
-        errorMessage = ev.message;
-      }
-    }, abort.signal).then(() => {
-      // Only clear the slot if it's still ours — close() may have aborted us
-      // and a subsequent run could have already claimed it.
-      if (activeAbort === abort) activeAbort = null;
+    // Streaming solve is disabled under the session-required regime. Fall
+    // back to the synchronous endpoint — no per-iteration progress yet, but
+    // the writeback lands in the user's session journal so they can merge
+    // or abandon it after.
+    api.solveJoint(config).then(result => {
       setRunning(false);
-      if (terminalKind === 'cancelled') {
-        statusEl.textContent = 'cancelled — no changes written';
-        return;
-      }
-      if (terminalKind === 'error') {
-        statusEl.textContent = `error: ${errorMessage ?? 'unknown'}`;
-        return;
-      }
-      if (!result || (terminalKind !== 'done' && terminalKind !== 'stopped')) {
-        statusEl.textContent = 'stream ended without a final event';
-        return;
-      }
-      const r = result;
-      const k = terminalKind;
-      statusEl.textContent = summarize(r, dryRun, k);
-      onComplete(r, dryRun);
+      statusEl.textContent = summarize(result, dryRun, 'done');
+      onComplete(result, dryRun);
     }, (err: unknown) => {
-      if (activeAbort === abort) activeAbort = null;
       setRunning(false);
       statusEl.textContent = `request failed: ${String(err)}`;
-      console.error('solve stream failed:', err);
+      console.error('solve failed:', err);
     });
   });
 
   cancelBtn.addEventListener('click', () => {
+    // Synchronous solve can't be cancelled mid-request without server-side
+    // support; just close the modal — the server will finish and journal
+    // the writeback. The user can abandon the session if they don't want it.
     activeAbort?.abort();
   });
 
   stopBtn.addEventListener('click', () => {
-    // Disable until the server emits 'stopped' (the in-flight loop will
-    // finish its current iter and break at the next ShouldStop check).
+    // No-op: synchronous solve has no mid-run stop. Button stays hidden in
+    // the new flow but the listener is kept so the existing setRunning()
+    // visibility logic doesn't need to grow a special case.
     stopBtn.disabled = true;
-    api.solveJointStop().catch((err: unknown) => {
-      console.error('solve stop failed:', err);
-      stopBtn.disabled = false;
-    });
   });
 
   return { open };

@@ -15,6 +15,7 @@ import { DEFAULT_SIZE_RAD } from './overlay.js';
 import { nullCpRayBearingDeg } from './null-cp-rays.js';
 import { readAspectRatio } from './handlers.js';
 import { cpLifespanFromApi, getElement, isExtantAt, stationHref } from './types.js';
+import { createSessionPanel, createCommitLog } from './session-panel.js';
 import type { ControlPointView, LatLng } from './types.js';
 
 export interface MountIndexPageOptions {
@@ -335,6 +336,10 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   getElement<HTMLButtonElement>('index-solve-btn').addEventListener('click', () => {
     solveModal.open();
   });
+
+  const sessionHost = getElement('session-host');
+  createSessionPanel(sessionHost);
+  createCommitLog(sessionHost);
   const stationsReady = showStationMarkers();
   const cpsReady = showIndexControlPoints();
   if (focusIndexControlPointId) {

@@ -1,17 +1,17 @@
 package main
 
 import (
-	"errors"
 	"io"
-	"log"
 	"net/http"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
 
-// Column lists for the Photo row, kept in one place so the SELECT/RETURNING
-// clauses and the matching scanPhoto helper can't drift apart.
+// Writes (POST/PUT/DELETE, including blob upload) require an open session
+// and journal their effect there. Reads (GET) and the blob download stay
+// session-agnostic; getPhoto applies the session overlay when a header is
+// present.
+
 const photoCols = `id, station_id, blob_path, mime_type, size_bytes, aspect,
 		photo_az, photo_tilt, photo_roll, size_rad, opacity,
 		lock_photo_az, lock_photo_tilt, lock_photo_roll, lock_size_rad,
@@ -29,46 +29,20 @@ func scanPhoto(row pgx.Row) (Photo, error) {
 }
 
 func (s *Server) postPhoto(w http.ResponseWriter, r *http.Request) {
-	stationID := requireID(w, r, "id")
-	if stationID == "" {
+	sess, ok := s.requireSession(w, r)
+	if !ok {
 		return
 	}
-	var req PhotoPosePatch
-	if !parseJSON(w, r, &req) {
-		return
-	}
-	if msg := validatePhotoPosePatch(req); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
-		return
-	}
-	id := newID()
-	opacity := 1.0
-	if req.Opacity != nil {
-		opacity = *req.Opacity
-	}
-	sizeRad := req.SizeRad
-	if sizeRad == 0 {
-		sizeRad = 0.5236 // ~30 degrees
-	}
-	q := `INSERT INTO photos (id, station_id, aspect, photo_az, photo_tilt, photo_roll, size_rad, opacity,
-			lock_photo_az, lock_photo_tilt, lock_photo_roll, lock_size_rad,
-			dist_k1, dist_k2, lock_dist_k1, lock_dist_k2)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
-			COALESCE($9, false), COALESCE($10, false), COALESCE($11, false), COALESCE($12, false),
-			COALESCE($13, 0), COALESCE($14, 0), COALESCE($15, true), COALESCE($16, true))
-		RETURNING ` + photoCols
-	p, err := scanPhoto(s.db.QueryRow(r.Context(), q, id, stationID, req.Aspect,
-		req.PhotoAz, req.PhotoTilt, req.PhotoRoll, sizeRad, opacity,
-		req.LockPhotoAz, req.LockPhotoTilt, req.LockPhotoRoll, req.LockSizeRad,
-		req.DistK1, req.DistK2, req.LockDistK1, req.LockDistK2))
-	if err != nil {
-		writeErrorFromDB(w, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, p)
+	s.postPhotoInSession(w, r, sess)
 }
 
 func (s *Server) getPhoto(w http.ResponseWriter, r *http.Request) {
+	if sess, ok := s.tryLoadSession(w, r); !ok {
+		return
+	} else if sess != nil {
+		s.getPhotoInSession(w, r, sess)
+		return
+	}
 	id := requireID(w, r, "id")
 	if id == "" {
 		return
@@ -83,133 +57,33 @@ func (s *Server) getPhoto(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) putPhoto(w http.ResponseWriter, r *http.Request) {
-	id := requireID(w, r, "id")
-	if id == "" {
-		return
-	}
-	patch, ok := parsePatch(w, r)
+	sess, ok := s.requireSession(w, r)
 	if !ok {
 		return
 	}
-	b := newUpdateBuilder(id)
-	if v, present, err := patch.Float64("aspect"); present {
-		if err != nil || v <= 0 || v > 100 {
-			writeError(w, http.StatusBadRequest, "aspect must be in (0, 100]")
-			return
-		}
-		b.Set("aspect", v)
-	}
-	for _, key := range []string{"photo_az", "photo_tilt", "photo_roll", "dist_k1", "dist_k2"} {
-		if v, present, err := patch.Float64(key); present {
-			if err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			b.Set(key, v)
-		}
-	}
-	if v, present, err := patch.Float64("size_rad"); present {
-		if err != nil || v < 0 {
-			writeError(w, http.StatusBadRequest, "size_rad must be non-negative")
-			return
-		}
-		b.Set("size_rad", v)
-	}
-	if v, present, err := patch.Float64("opacity"); present {
-		if err != nil || !inRange(v, 0, 1) {
-			writeError(w, http.StatusBadRequest, "opacity must be in [0, 1]")
-			return
-		}
-		b.Set("opacity", v)
-	}
-	for _, key := range []string{
-		"lock_photo_az", "lock_photo_tilt", "lock_photo_roll", "lock_size_rad",
-		"lock_dist_k1", "lock_dist_k2",
-	} {
-		if v, present, err := patch.Bool(key); present {
-			if err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			b.Set(key, v)
-		}
-	}
-	if b.Empty() {
-		writeError(w, http.StatusBadRequest, "no updatable fields")
-		return
-	}
-	p, err := scanPhoto(s.db.QueryRow(r.Context(), b.Query("photos", photoCols), b.Args()...))
-	if err != nil {
-		writeErrorFromDB(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, p)
+	s.putPhotoInSession(w, r, sess)
 }
 
 func (s *Server) deletePhoto(w http.ResponseWriter, r *http.Request) {
-	id := requireID(w, r, "id")
-	if id == "" {
+	sess, ok := s.requireSession(w, r)
+	if !ok {
 		return
 	}
-	tag, err := s.db.Exec(r.Context(), `DELETE FROM photos WHERE id = $1`, id)
-	if err != nil {
-		writeErrorFromDB(w, err)
-		return
-	}
-	if tag.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	_ = s.blobs.deletePhoto(id)
-	w.WriteHeader(http.StatusNoContent)
+	s.deletePhotoInSession(w, r, sess)
 }
 
 func (s *Server) putPhotoBlob(w http.ResponseWriter, r *http.Request) {
-	id := requireID(w, r, "id")
-	if id == "" {
+	sess, ok := s.requireSession(w, r)
+	if !ok {
 		return
 	}
-	mime := r.Header.Get("Content-Type")
-	if !strings.HasPrefix(mime, "image/") {
-		writeError(w, http.StatusBadRequest, "Content-Type must be image/*")
-		return
-	}
-	// Confirm the photo row exists before we accept (and write) up to
-	// maxBlobBytes of body to disk.
-	var exists bool
-	if err := s.db.QueryRow(r.Context(),
-		`SELECT EXISTS (SELECT 1 FROM photos WHERE id = $1)`, id,
-	).Scan(&exists); err != nil {
-		writeErrorFromDB(w, err)
-		return
-	}
-	if !exists {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	n, path, err := s.blobs.writePhoto(id, r.Body, s.maxBlobBytes)
-	if err != nil {
-		if errors.Is(err, errPayloadTooLarge) {
-			writeError(w, http.StatusRequestEntityTooLarge, "blob too large")
-			return
-		}
-		log.Printf("write photo blob %s: %v", id, err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	_, err = s.db.Exec(r.Context(),
-		`UPDATE photos SET blob_path=$2, mime_type=$3, size_bytes=$4, updated_at=NOW() WHERE id=$1`,
-		id, path, mime, n)
-	if err != nil {
-		// Roll back the file write on DB failure.
-		_ = s.blobs.deletePhoto(id)
-		writeErrorFromDB(w, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
+	s.putPhotoBlobInSession(w, r, sess)
 }
 
 func (s *Server) getPhotoBlob(w http.ResponseWriter, r *http.Request) {
+	// Blob bytes live on disk regardless of session — there's no per-session
+	// blob fork. The blob filename is the photo id (validated below) and the
+	// bytes were written by an in-session upload at some point.
 	id := requireID(w, r, "id")
 	if id == "" {
 		return

@@ -10,56 +10,68 @@ import (
 
 // Synchronous solver handlers (joint + single-station + single-CP). The
 // streaming joint variant lives in solve_stream.go. All four take
-// Server.solveMu, so only one solve runs at a time. Writeback uses
-// updated_at as an optimistic-concurrency token; a stale snapshot surfaces
-// as a 409 instead of silently overwriting a concurrent edit.
+// Server.solveMu so only one solve runs at a time. Session-mode solves are
+// preview-only: results are returned to the client but never persisted —
+// the canonical writeback happens at merge time, where the server re-runs
+// the joint solver against the freshly-applied intent state.
 
 func (s *Server) postSolveJoint(w http.ResponseWriter, r *http.Request) {
-	cfg, dryRun, ok := parseSolveConfig(w, r)
+	sess, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	cfg, ok := parseSolveConfig(w, r)
 	if !ok {
 		return
 	}
 	cfg.Mode = solver.ModeJoint
-	s.runSolve(w, r, cfg, dryRun)
+	s.runSolve(w, r, cfg, sess)
 }
 
 func (s *Server) postSolveStation(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
 	id := requireID(w, r, "id")
 	if id == "" {
 		return
 	}
-	cfg, dryRun, ok := parseSolveConfig(w, r)
+	cfg, ok := parseSolveConfig(w, r)
 	if !ok {
 		return
 	}
 	cfg.Mode = solver.ModeSingleStation
 	cfg.FocusID = id
-	s.runSolve(w, r, cfg, dryRun)
+	s.runSolve(w, r, cfg, sess)
 }
 
 func (s *Server) postSolveControlPoint(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
 	id := requireID(w, r, "id")
 	if id == "" {
 		return
 	}
-	cfg, dryRun, ok := parseSolveConfig(w, r)
+	cfg, ok := parseSolveConfig(w, r)
 	if !ok {
 		return
 	}
 	cfg.Mode = solver.ModeSingleControlPoint
 	cfg.FocusID = id
-	s.runSolve(w, r, cfg, dryRun)
+	s.runSolve(w, r, cfg, sess)
 }
 
-func parseSolveConfig(w http.ResponseWriter, r *http.Request) (solver.Config, bool, bool) {
+func parseSolveConfig(w http.ResponseWriter, r *http.Request) (solver.Config, bool) {
 	cfg := solver.Config{}
-	dryRun := false
 	if r.ContentLength == 0 {
-		return cfg, dryRun, true
+		return cfg, true
 	}
 	var req SolveConfig
 	if !parseJSON(w, r, &req) {
-		return cfg, dryRun, false
+		return cfg, false
 	}
 	if req.MaxIters != nil {
 		cfg.MaxIters = *req.MaxIters
@@ -73,18 +85,30 @@ func parseSolveConfig(w http.ResponseWriter, r *http.Request) (solver.Config, bo
 	if req.KRegLambda != nil {
 		cfg.KRegLambda = *req.KRegLambda
 	}
-	if req.DryRun != nil {
-		dryRun = *req.DryRun
-	}
-	return cfg, dryRun, true
+	// req.DryRun is accepted for back-compat but ignored: every session-mode
+	// solve is effectively a dry run (no journal writes).
+	return cfg, true
 }
 
-func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg solver.Config, dryRun bool) {
+func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg solver.Config, sess *Session) {
 	s.solveMu.Lock()
 	defer s.solveMu.Unlock()
 
 	ctx := r.Context()
-	prob, seededCPIDs, exists, err := s.loadProblem(ctx, cfg)
+	var prob solver.Problem
+	var seededCPIDs []string
+	var exists bool
+	var err error
+	if cfg.Mode == solver.ModeJoint {
+		prob, seededCPIDs, err = s.loadJointProblemSession(ctx, sess)
+		exists = true
+	} else {
+		// Single-station / single-CP loaders aren't overlay-aware yet: they
+		// read inputs from main only. Their outputs are still returned to
+		// the client as preview; the canonical writeback is the joint solve
+		// at merge time.
+		prob, seededCPIDs, exists, err = s.loadProblem(ctx, cfg)
+	}
 	if err != nil {
 		log.Printf("solver load: %v", err)
 		writeError(w, http.StatusInternalServerError, "load failed")
@@ -115,19 +139,6 @@ func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg solver.Con
 		}
 		return
 	}
-
-	if !dryRun && !res.Diverged && len(res.Changes) > 0 {
-		if err := s.writebackChanges(ctx, prob, res); err != nil {
-			if errors.Is(err, errConcurrentEdit) {
-				writeError(w, http.StatusConflict, "concurrent edit; refresh and retry")
-				return
-			}
-			log.Printf("solver writeback: %v", err)
-			writeError(w, http.StatusInternalServerError, "writeback failed")
-			return
-		}
-	}
-
 	writeJSON(w, http.StatusOK, toAPISolveResult(res))
 }
 

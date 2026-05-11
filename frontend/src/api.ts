@@ -9,6 +9,7 @@
 
 import type { LatLng } from './types.js';
 import type { components } from './api-types.gen.js';
+import { sessionManager } from './session.js';
 
 const API = '/api';
 
@@ -36,16 +37,56 @@ export type ApiControlPointVisiblePhoto = Schemas['ControlPointVisiblePhoto'];
 export type SolveConfig = Schemas['SolveConfig'];
 export type SolveResult = Schemas['SolveResult'];
 export type EntityChange = Schemas['EntityChange'];
+export type ApiSessionState = Schemas['SessionState'];
+export type ApiSessionOp = Schemas['SessionOp'];
+export type ApiCreateSessionResponse = Schemas['CreateSessionResponse'];
+export type ApiCommitRef = Schemas['CommitRef'];
+export type ApiCommit = Schemas['Commit'];
+export type ApiCommitWithOps = Schemas['CommitWithOps'];
+export type ApiEntityRef = Schemas['EntityRef'];
+
+// SessionConflictError: thrown by mergeSession / revertCommit on a 409 with
+// a conflict list. Callers can branch on `instanceof` to render the conflict
+// UI rather than parsing the message.
+export class SessionConflictError extends Error {
+  constructor(public readonly conflicts: ApiEntityRef[], message: string) {
+    super(message);
+    this.name = 'SessionConflictError';
+  }
+}
 
 // --- Helpers ---
 
+// withSession adds the X-Session-Id header when a session is active.
+function withSession(init: RequestInit): RequestInit {
+  const sid = sessionManager.current();
+  if (sid === null) return init;
+  const headers = new Headers(init.headers);
+  headers.set('X-Session-Id', sid);
+  return { ...init, headers };
+}
+
+// Any non-GET request auto-starts a session before firing, so writes can't
+// silently land on main. The session/commit endpoints themselves are the
+// exception — otherwise createSession would recurse.
+function pathManagesSession(path: string): boolean {
+  return path.startsWith('/sessions') || path.startsWith('/commits');
+}
+
+async function ensureSessionForWrite(method: string, path: string): Promise<void> {
+  if (method === 'GET') return;
+  if (pathManagesSession(path)) return;
+  await sessionManager.ensureStarted();
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  await ensureSessionForWrite(method, path);
   const init: RequestInit = { method };
   if (body !== undefined) {
     init.headers = { 'Content-Type': 'application/json' };
     init.body = JSON.stringify(body);
   }
-  const res = await fetch(API + path, init);
+  const res = await fetch(API + path, withSession(init));
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`${method} ${path} → ${res.status.toString()} ${text}`);
@@ -55,7 +96,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 async function requestVoid(method: string, path: string): Promise<void> {
-  const res = await fetch(API + path, { method });
+  await ensureSessionForWrite(method, path);
+  const res = await fetch(API + path, withSession({ method }));
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`${method} ${path} → ${res.status.toString()} ${text}`);
@@ -104,11 +146,12 @@ export function deletePhoto(id: string): Promise<void> {
 }
 
 export async function uploadPhotoBlob(id: string, blob: Blob): Promise<void> {
-  const res = await fetch(`${API}/photos/${encodeURIComponent(id)}/blob`, {
+  await sessionManager.ensureStarted();
+  const res = await fetch(`${API}/photos/${encodeURIComponent(id)}/blob`, withSession({
     method: 'PUT',
     headers: { 'Content-Type': blob.type || 'image/jpeg' },
     body: blob,
-  });
+  }));
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`PUT /photos/${id}/blob → ${res.status.toString()} ${text}`);
@@ -233,7 +276,7 @@ export async function solveJointStream(
       body: JSON.stringify(config),
     };
     if (signal) init.signal = signal;
-    res = await fetch(`${API}/solve/joint/stream`, init);
+    res = await fetch(`${API}/solve/joint/stream`, withSession(init));
   } catch (err) {
     handleAbort(err);
     return;
@@ -275,11 +318,84 @@ export async function solveJointStream(
 // returns the best iterate so far and the server writes it back. 404 if no
 // solve is currently running (caller should treat as no-op).
 export async function solveJointStop(): Promise<void> {
-  const res = await fetch(`${API}/solve/joint/stop`, { method: 'POST' });
+  const res = await fetch(`${API}/solve/joint/stop`, withSession({ method: 'POST' }));
   if (!res.ok && res.status !== 404) {
     const text = await res.text().catch(() => '');
     throw new Error(`POST /solve/joint/stop → ${res.status.toString()} ${text}`);
   }
+}
+
+// --- Sessions ---
+
+export function createSession(): Promise<ApiCreateSessionResponse> {
+  return request<ApiCreateSessionResponse>('POST', '/sessions');
+}
+
+export function getSession(id: string): Promise<ApiSessionState> {
+  return request<ApiSessionState>('GET', `/sessions/${encodeURIComponent(id)}`);
+}
+
+export function getSessionOps(id: string): Promise<ApiSessionOp[]> {
+  return request<ApiSessionOp[]>('GET', `/sessions/${encodeURIComponent(id)}/ops`);
+}
+
+export function abandonSession(id: string): Promise<void> {
+  return requestVoid('POST', `/sessions/${encodeURIComponent(id)}/abandon`);
+}
+
+// mergeSession: throws SessionConflictError on 409 so the caller can render
+// a conflict UI instead of a generic error banner.
+export async function mergeSession(id: string, message?: string): Promise<ApiCommitRef> {
+  const init: RequestInit = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(message !== undefined ? { message } : {}),
+  };
+  const res = await fetch(`${API}/sessions/${encodeURIComponent(id)}/merge`, init);
+  if (res.status === 409) {
+    const body = await res.json().catch(() => ({ error: 'conflict', conflicts: [] })) as {
+      error: string; conflicts?: ApiEntityRef[];
+    };
+    throw new SessionConflictError(body.conflicts ?? [], body.error);
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`POST /sessions/${id}/merge → ${res.status.toString()} ${text}`);
+  }
+  return res.json() as Promise<ApiCommitRef>;
+}
+
+// --- Commits ---
+
+export function listCommits(beforeSeq?: number, limit = 50): Promise<ApiCommit[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (beforeSeq !== undefined) params.set('before_seq', String(beforeSeq));
+  return request<ApiCommit[]>('GET', `/commits?${params.toString()}`);
+}
+
+export function getCommit(id: string): Promise<ApiCommitWithOps> {
+  return request<ApiCommitWithOps>('GET', `/commits/${encodeURIComponent(id)}`);
+}
+
+// revertCommit: same conflict-as-error semantics as mergeSession.
+export async function revertCommit(id: string, message?: string): Promise<ApiCommitRef> {
+  const init: RequestInit = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(message !== undefined ? { message } : {}),
+  };
+  const res = await fetch(`${API}/commits/${encodeURIComponent(id)}/revert`, init);
+  if (res.status === 409) {
+    const body = await res.json().catch(() => ({ error: 'conflict', conflicts: [] })) as {
+      error: string; conflicts?: ApiEntityRef[];
+    };
+    throw new SessionConflictError(body.conflicts ?? [], body.error);
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`POST /commits/${id}/revert → ${res.status.toString()} ${text}`);
+  }
+  return res.json() as Promise<ApiCommitRef>;
 }
 
 export function solveStation(id: string, config?: SolveConfig): Promise<SolveResult> {

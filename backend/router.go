@@ -50,6 +50,16 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PUT /api/control-point-constraints/{id}", s.putCPConstraint)
 	mux.HandleFunc("DELETE /api/control-point-constraints/{id}", s.deleteCPConstraint)
 
+	mux.HandleFunc("POST /api/sessions", s.postSession)
+	mux.HandleFunc("GET /api/sessions/{id}", s.getSession)
+	mux.HandleFunc("GET /api/sessions/{id}/ops", s.getSessionOps)
+	mux.HandleFunc("POST /api/sessions/{id}/abandon", s.abandonSession)
+	mux.HandleFunc("POST /api/sessions/{id}/merge", s.mergeSession)
+
+	mux.HandleFunc("GET /api/commits", s.listCommits)
+	mux.HandleFunc("GET /api/commits/{id}", s.getCommit)
+	mux.HandleFunc("POST /api/commits/{id}/revert", s.revertCommit)
+
 	// Catch-all: serve static frontend with SPA fallback for unknown paths.
 	mux.HandleFunc("/", s.spaFallback)
 

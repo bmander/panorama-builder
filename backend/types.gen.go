@@ -25,6 +25,45 @@ func (e CPConstraintType) Valid() bool {
 	}
 }
 
+// Defines values for CommitKind.
+const (
+	Merge  CommitKind = "merge"
+	Revert CommitKind = "revert"
+)
+
+// Valid indicates whether the value is a known member of the CommitKind enum.
+func (e CommitKind) Valid() bool {
+	switch e {
+	case Merge:
+		return true
+	case Revert:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CreateSessionResponseStatus.
+const (
+	CreateSessionResponseStatusAbandoned CreateSessionResponseStatus = "abandoned"
+	CreateSessionResponseStatusMerged    CreateSessionResponseStatus = "merged"
+	CreateSessionResponseStatusOpen      CreateSessionResponseStatus = "open"
+)
+
+// Valid indicates whether the value is a known member of the CreateSessionResponseStatus enum.
+func (e CreateSessionResponseStatus) Valid() bool {
+	switch e {
+	case CreateSessionResponseStatusAbandoned:
+		return true
+	case CreateSessionResponseStatusMerged:
+		return true
+	case CreateSessionResponseStatusOpen:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for EntityChangeKind.
 const (
 	EntityChangeKindControlPoint EntityChangeKind = "control_point"
@@ -40,6 +79,102 @@ func (e EntityChangeKind) Valid() bool {
 	case EntityChangeKindPhoto:
 		return true
 	case EntityChangeKindStation:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EntityRefEntityType.
+const (
+	EntityRefEntityTypeControlPoint     EntityRefEntityType = "control_point"
+	EntityRefEntityTypeCpConstraint     EntityRefEntityType = "cp_constraint"
+	EntityRefEntityTypeImageMeasurement EntityRefEntityType = "image_measurement"
+	EntityRefEntityTypePhoto            EntityRefEntityType = "photo"
+	EntityRefEntityTypeStation          EntityRefEntityType = "station"
+)
+
+// Valid indicates whether the value is a known member of the EntityRefEntityType enum.
+func (e EntityRefEntityType) Valid() bool {
+	switch e {
+	case EntityRefEntityTypeControlPoint:
+		return true
+	case EntityRefEntityTypeCpConstraint:
+		return true
+	case EntityRefEntityTypeImageMeasurement:
+		return true
+	case EntityRefEntityTypePhoto:
+		return true
+	case EntityRefEntityTypeStation:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SessionOpEntityType.
+const (
+	SessionOpEntityTypeControlPoint     SessionOpEntityType = "control_point"
+	SessionOpEntityTypeCpConstraint     SessionOpEntityType = "cp_constraint"
+	SessionOpEntityTypeImageMeasurement SessionOpEntityType = "image_measurement"
+	SessionOpEntityTypePhoto            SessionOpEntityType = "photo"
+	SessionOpEntityTypeStation          SessionOpEntityType = "station"
+)
+
+// Valid indicates whether the value is a known member of the SessionOpEntityType enum.
+func (e SessionOpEntityType) Valid() bool {
+	switch e {
+	case SessionOpEntityTypeControlPoint:
+		return true
+	case SessionOpEntityTypeCpConstraint:
+		return true
+	case SessionOpEntityTypeImageMeasurement:
+		return true
+	case SessionOpEntityTypePhoto:
+		return true
+	case SessionOpEntityTypeStation:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SessionOpOp.
+const (
+	Delete SessionOpOp = "delete"
+	Insert SessionOpOp = "insert"
+	Update SessionOpOp = "update"
+)
+
+// Valid indicates whether the value is a known member of the SessionOpOp enum.
+func (e SessionOpOp) Valid() bool {
+	switch e {
+	case Delete:
+		return true
+	case Insert:
+		return true
+	case Update:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SessionStateStatus.
+const (
+	SessionStateStatusAbandoned SessionStateStatus = "abandoned"
+	SessionStateStatusMerged    SessionStateStatus = "merged"
+	SessionStateStatusOpen      SessionStateStatus = "open"
+)
+
+// Valid indicates whether the value is a known member of the SessionStateStatus enum.
+func (e SessionStateStatus) Valid() bool {
+	switch e {
+	case SessionStateStatusAbandoned:
+		return true
+	case SessionStateStatusMerged:
+		return true
+	case SessionStateStatusOpen:
 		return true
 	default:
 		return false
@@ -89,6 +224,47 @@ type CPConstraintPatch struct {
 // CPConstraintType plumb: cp_a and cp_b share est_lat and est_lng (vertical line);
 // level: cp_a and cp_b share est_alt (horizontal alignment).
 type CPConstraintType string
+
+// Commit defines model for Commit.
+type Commit struct {
+	CreatedAt time.Time `json:"created_at"`
+
+	// ID 13-character base32 server-assigned id
+	ID              ID         `json:"id"`
+	Kind            CommitKind `json:"kind"`
+	Message         *string    `json:"message,omitempty"`
+	ParentSeq       *int64     `json:"parent_seq,omitempty"`
+	RevertsCommitID *ID        `json:"reverts_commit_id,omitempty"`
+	Seq             int64      `json:"seq"`
+	SourceSessionID *ID        `json:"source_session_id,omitempty"`
+}
+
+// CommitKind defines model for Commit.Kind.
+type CommitKind string
+
+// CommitMessage defines model for CommitMessage.
+type CommitMessage struct {
+	Message *string `json:"message,omitempty"`
+}
+
+// CommitRef defines model for CommitRef.
+type CommitRef struct {
+	// CommitID 13-character base32 server-assigned id
+	CommitID ID    `json:"commit_id"`
+	Seq      int64 `json:"seq"`
+}
+
+// CommitWithOps defines model for CommitWithOps.
+type CommitWithOps struct {
+	Commit Commit      `json:"commit"`
+	Ops    []SessionOp `json:"ops"`
+}
+
+// ConflictsResponse defines model for ConflictsResponse.
+type ConflictsResponse struct {
+	Conflicts []EntityRef `json:"conflicts"`
+	Error     string      `json:"error"`
+}
 
 // ControlPoint A real-world landmark with a user-seeded location estimate
 // (est_lat / est_lng / est_alt) and image-measurement observations
@@ -194,6 +370,23 @@ type ControlPointVisiblePhotos struct {
 	Photos []ControlPointVisiblePhoto `json:"photos"`
 }
 
+// CreateSessionResponse defines model for CreateSessionResponse.
+type CreateSessionResponse struct {
+	// BaseSeq HEAD seq the session forked from (0 if commit log is empty)
+	BaseSeq   int64     `json:"base_seq"`
+	CreatedAt time.Time `json:"created_at"`
+
+	// ID 13-character base32 server-assigned id
+	ID ID `json:"id"`
+
+	// NextSeq Next per-session op sequence to be assigned
+	NextSeq int64                       `json:"next_seq"`
+	Status  CreateSessionResponseStatus `json:"status"`
+}
+
+// CreateSessionResponseStatus defines model for CreateSessionResponse.Status.
+type CreateSessionResponseStatus string
+
 // CreateStationRequest POST body. lat/lng/captured_at are required; other fields default if omitted.
 type CreateStationRequest struct {
 	// Alt defaults to 0 when omitted
@@ -221,6 +414,18 @@ type EntityChange struct {
 
 // EntityChangeKind defines model for EntityChange.Kind.
 type EntityChangeKind string
+
+// EntityRef One entity touched by a session, optionally annotated with the
+// last-commit seq that updated it on main.
+type EntityRef struct {
+	// EntityID 13-character base32 server-assigned id
+	EntityID   ID                  `json:"entity_id"`
+	EntityType EntityRefEntityType `json:"entity_type"`
+	LastSeq    *int64              `json:"last_seq,omitempty"`
+}
+
+// EntityRefEntityType defines model for EntityRef.EntityType.
+type EntityRefEntityType string
 
 // Error defines model for Error.
 type Error struct {
@@ -366,6 +571,50 @@ type PhotoUpdate struct {
 	SizeRad       *float64 `json:"size_rad,omitempty"`
 }
 
+// SessionOp defines model for SessionOp.
+type SessionOp struct {
+	// After Row state after the op (NULL for deletes).
+	After interface{} `json:"after,omitempty"`
+
+	// Before Row state before the op (NULL for inserts).
+	Before interface{} `json:"before,omitempty"`
+
+	// EntityID 13-character base32 server-assigned id
+	EntityID   ID                  `json:"entity_id"`
+	EntityType SessionOpEntityType `json:"entity_type"`
+	Op         SessionOpOp         `json:"op"`
+	Seq        int64               `json:"seq"`
+}
+
+// SessionOpEntityType defines model for SessionOp.EntityType.
+type SessionOpEntityType string
+
+// SessionOpOp defines model for SessionOp.Op.
+type SessionOpOp string
+
+// SessionState defines model for SessionState.
+type SessionState struct {
+	BaseSeq int64 `json:"base_seq"`
+
+	// Conflicts Touched entities whose entity_commits.last_seq exceeds
+	// base_seq — these are the entities that block a merge.
+	Conflicts []EntityRef `json:"conflicts"`
+	CreatedAt time.Time   `json:"created_at"`
+
+	// ID 13-character base32 server-assigned id
+	ID      ID    `json:"id"`
+	NextSeq int64 `json:"next_seq"`
+
+	// OpCount number of journaled ops (= next_seq - 1)
+	OpCount         int64              `json:"op_count"`
+	Status          SessionStateStatus `json:"status"`
+	TouchedEntities []EntityRef        `json:"touched_entities"`
+	UpdatedAt       time.Time          `json:"updated_at"`
+}
+
+// SessionStateStatus defines model for SessionState.Status.
+type SessionStateStatus string
+
 // SolveConfig Optional knobs for the solver. Defaults are used when omitted.
 type SolveConfig struct {
 	// DryRun When true, run the solver but skip the DB writeback. The response
@@ -466,6 +715,14 @@ type BadRequest = Error
 // NotFound defines model for NotFound.
 type NotFound = Error
 
+// ListCommitsParams defines parameters for ListCommits.
+type ListCommitsParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// BeforeSeq Return commits whose seq is strictly less than this value (cursor pagination).
+	BeforeSeq *int `form:"before_seq,omitempty" json:"before_seq,omitempty"`
+}
+
 // ListControlPointsParams defines parameters for ListControlPoints.
 type ListControlPointsParams struct {
 	// Bbox Bounding box as `minLng,minLat,maxLng,maxLat`. Filter is
@@ -481,6 +738,9 @@ type ListStationsParams struct {
 	// stations ordered by created_at DESC.
 	Bbox *string `form:"bbox,omitempty" json:"bbox,omitempty"`
 }
+
+// RevertCommitJSONRequestBody defines body for RevertCommit for application/json ContentType.
+type RevertCommitJSONRequestBody = CommitMessage
 
 // CreateCPConstraintJSONRequestBody defines body for CreateCPConstraint for application/json ContentType.
 type CreateCPConstraintJSONRequestBody = CPConstraintCreate
@@ -502,6 +762,9 @@ type UpdatePhotoJSONRequestBody = PhotoUpdate
 
 // CreateImageMeasurementJSONRequestBody defines body for CreateImageMeasurement for application/json ContentType.
 type CreateImageMeasurementJSONRequestBody = ImageMeasurementPatch
+
+// MergeSessionJSONRequestBody defines body for MergeSession for application/json ContentType.
+type MergeSessionJSONRequestBody = CommitMessage
 
 // SolveControlPointJSONRequestBody defines body for SolveControlPoint for application/json ContentType.
 type SolveControlPointJSONRequestBody = SolveConfig

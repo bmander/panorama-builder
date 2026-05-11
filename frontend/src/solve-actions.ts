@@ -1,21 +1,20 @@
-// After a successful solve we re-fetch the hydrated station and replay it
-// over the scene-graph. The /solve handler returns the diff in result.changes,
-// but the simplest correct way to mirror it is to re-hydrate; the cost is one
-// extra GET per solve, which is fine for a button-driven flow.
+// Session-mode solves are preview-only on the server. We rehydrate after a
+// solve and overlay result.changes on top of the fetched main+intent view
+// so the preview is visible until reload.
 
 import * as api from './api.js';
 import { getElement } from './types.js';
 
 export interface SolveActionsDeps {
   getCurrentStationId: () => string;
-  rehydrate: () => Promise<void>;
+  rehydrate: (preview?: api.SolveResult) => Promise<void>;
   reportError: (label: string, err: unknown) => void;
 }
 
 export function attachSolveActions(deps: SolveActionsDeps): void {
   const { getCurrentStationId, rehydrate, reportError } = deps;
 
-  async function applySolveResultByRefetch(label: string, run: () => Promise<api.SolveResult>): Promise<void> {
+  async function runAndApply(label: string, run: () => Promise<api.SolveResult>): Promise<void> {
     let result: api.SolveResult;
     try {
       result = await run();
@@ -28,7 +27,7 @@ export function attachSolveActions(deps: SolveActionsDeps): void {
       return;
     }
     try {
-      await rehydrate();
+      await rehydrate(result);
     } catch (err) {
       reportError('reload after solve', err);
     }
@@ -38,7 +37,7 @@ export function attachSolveActions(deps: SolveActionsDeps): void {
   const solveJointBtn = getElement<HTMLButtonElement>('solve-joint-btn');
   solveStationBtn.addEventListener('click', () => {
     solveStationBtn.disabled = true;
-    void applySolveResultByRefetch('solve station', () => api.solveStation(getCurrentStationId()))
+    void runAndApply('solve station', () => api.solveStation(getCurrentStationId()))
       .finally(() => { solveStationBtn.disabled = false; });
   });
   solveJointBtn.addEventListener('click', () => {
@@ -46,7 +45,7 @@ export function attachSolveActions(deps: SolveActionsDeps): void {
     // Joint mode has hundreds of params and est_alt converges slowly. The
     // default cap (30) is too tight here; 200 gets meter-scale alt moves on
     // typical scenes without taking more than a couple seconds.
-    void applySolveResultByRefetch('joint solve', () => api.solveJoint({ max_iters: 200 }))
+    void runAndApply('joint solve', () => api.solveJoint({ max_iters: 200 }))
       .finally(() => { solveJointBtn.disabled = false; });
   });
 }

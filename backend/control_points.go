@@ -25,39 +25,11 @@ func scanControlPoint(row pgx.Row) (ControlPoint, error) {
 }
 
 func (s *Server) postControlPoint(w http.ResponseWriter, r *http.Request) {
-	var req ControlPointPatch
-	if !parseJSON(w, r, &req) {
+	sess, ok := s.requireSession(w, r)
+	if !ok {
 		return
 	}
-	if msg := validateControlPointPatch(req); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
-		return
-	}
-	desc := ""
-	if req.Description != nil {
-		desc = *req.Description
-	}
-	notes := ""
-	if req.Notes != nil {
-		notes = *req.Notes
-	}
-	id := newID()
-	q := `INSERT INTO control_points (id, description, notes, est_lat, est_lng, est_alt, started_at, ended_at,
-		started_after, ended_before,
-		lock_est_lat, lock_est_lng, lock_est_alt)
-	      VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
-		COALESCE($9, false), COALESCE($10, false),
-		COALESCE($11, false), COALESCE($12, false), COALESCE($13, false))
-	      RETURNING ` + controlPointCols
-	cp, err := scanControlPoint(s.db.QueryRow(r.Context(), q, id, desc, notes,
-		req.EstLat, req.EstLng, req.EstAlt, req.StartedAt, req.EndedAt,
-		req.StartedAfter, req.EndedBefore,
-		req.LockEstLat, req.LockEstLng, req.LockEstAlt))
-	if err != nil {
-		writeErrorFromDB(w, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, cp)
+	s.postControlPointInSession(w, r, sess)
 }
 
 func (s *Server) listControlPoints(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +84,12 @@ func (s *Server) listControlPoints(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getControlPoint(w http.ResponseWriter, r *http.Request) {
+	if sess, ok := s.tryLoadSession(w, r); !ok {
+		return
+	} else if sess != nil {
+		s.getControlPointInSession(w, r, sess)
+		return
+	}
 	id := requireID(w, r, "id")
 	if id == "" {
 		return
@@ -126,95 +104,19 @@ func (s *Server) getControlPoint(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) putControlPoint(w http.ResponseWriter, r *http.Request) {
-	id := requireID(w, r, "id")
-	if id == "" {
-		return
-	}
-	patch, ok := parsePatch(w, r)
+	sess, ok := s.requireSession(w, r)
 	if !ok {
 		return
 	}
-	b := newUpdateBuilder(id)
-	if v, present, err := patch.String("description"); present {
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		b.Set("description", v)
-	}
-	if v, present, err := patch.String("notes"); present {
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		b.Set("notes", v)
-	}
-	if v, present, err := patch.NullableFloat64("est_lat"); present {
-		if err != nil || (v != nil && !validLat(*v)) {
-			writeError(w, http.StatusBadRequest, "est_lat out of range")
-			return
-		}
-		b.Set("est_lat", v)
-	}
-	if v, present, err := patch.NullableFloat64("est_lng"); present {
-		if err != nil || (v != nil && !validLng(*v)) {
-			writeError(w, http.StatusBadRequest, "est_lng out of range")
-			return
-		}
-		b.Set("est_lng", v)
-	}
-	if v, present, err := patch.NullableFloat64("est_alt"); present {
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		b.Set("est_alt", v)
-	}
-	for _, key := range []string{"started_at", "ended_at"} {
-		if v, present, err := patch.NullableTime(key); present {
-			if err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			b.Set(key, v)
-		}
-	}
-	for _, key := range []string{"started_after", "ended_before", "lock_est_lat", "lock_est_lng", "lock_est_alt"} {
-		if v, present, err := patch.Bool(key); present {
-			if err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
-			b.Set(key, v)
-		}
-	}
-	if b.Empty() {
-		writeError(w, http.StatusBadRequest, "no updatable fields")
-		return
-	}
-	cp, err := scanControlPoint(s.db.QueryRow(r.Context(), b.Query("control_points", controlPointCols), b.Args()...))
-	if err != nil {
-		writeErrorFromDB(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, cp)
+	s.putControlPointInSession(w, r, sess)
 }
 
 func (s *Server) deleteControlPoint(w http.ResponseWriter, r *http.Request) {
-	id := requireID(w, r, "id")
-	if id == "" {
+	sess, ok := s.requireSession(w, r)
+	if !ok {
 		return
 	}
-	tag, err := s.db.Exec(r.Context(), `DELETE FROM control_points WHERE id = $1`, id)
-	if err != nil {
-		writeErrorFromDB(w, err)
-		return
-	}
-	if tag.RowsAffected() == 0 {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
+	s.deleteControlPointInSession(w, r, sess)
 }
 
 func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Request) {
