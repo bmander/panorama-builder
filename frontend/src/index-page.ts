@@ -346,7 +346,7 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   });
   getElement('index-top-right').hidden = false;
   getElement<HTMLButtonElement>('index-solve-btn').addEventListener('click', () => {
-    solveModal.open();
+    solveModal.open({ start: api.solveJointStream, title: 'Solve all (joint)' });
   });
 
   createSessionPanel(getElement('session-host'));

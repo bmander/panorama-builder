@@ -240,10 +240,6 @@ export function deleteCPConstraint(id: string): Promise<void> {
 
 // --- Solver ---
 
-export function solveJoint(config?: SolveConfig): Promise<SolveResult> {
-  return request<SolveResult>('POST', '/solve/joint', config ?? {});
-}
-
 // Streaming variant: one event per GN iteration, then a final terminal
 // event. The promise resolves when the stream closes (which happens after
 // the final event, or when the caller aborts via signal). Pass an
@@ -257,7 +253,8 @@ export type SolveProgressEvent =
   | { readonly kind: 'cancelled' }
   | { readonly kind: 'error'; readonly message: string };
 
-export async function solveJointStream(
+async function solveStream(
+  path: string,
   config: SolveConfig,
   onEvent: (e: SolveProgressEvent) => void,
   signal?: AbortSignal,
@@ -281,14 +278,14 @@ export async function solveJointStream(
       body: JSON.stringify(config),
     };
     if (signal) init.signal = signal;
-    res = await fetch(`${API}/solve/joint/stream`, withSession(init));
+    res = await fetch(`${API}${path}`, withSession(init));
   } catch (err) {
     handleAbort(err);
     return;
   }
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => '');
-    throw new Error(`POST /solve/joint/stream → ${res.status.toString()} ${text}`);
+    throw new Error(`POST ${path} → ${res.status.toString()} ${text}`);
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -319,14 +316,34 @@ export async function solveJointStream(
   }
 }
 
+export function solveJointStream(
+  config: SolveConfig,
+  onEvent: (e: SolveProgressEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  return solveStream('/solve/joint/stream', config, onEvent, signal);
+}
+
+export function solveStationStream(
+  stationId: string,
+  config: SolveConfig,
+  onEvent: (e: SolveProgressEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  return solveStream(
+    `/solve/stations/${encodeURIComponent(stationId)}/stream`,
+    config, onEvent, signal);
+}
+
 // Signal an in-flight streaming solve to stop gracefully — the solver
 // returns the best iterate so far and the server writes it back. 404 if no
-// solve is currently running (caller should treat as no-op).
-export async function solveJointStop(): Promise<void> {
-  const res = await fetch(`${API}/solve/joint/stop`, withSession({ method: 'POST' }));
+// solve is currently running (caller should treat as no-op). Shared across
+// solver modes since only one runs at a time.
+export async function solveStop(): Promise<void> {
+  const res = await fetch(`${API}/solve/stop`, withSession({ method: 'POST' }));
   if (!res.ok && res.status !== 404) {
     const text = await res.text().catch(() => '');
-    throw new Error(`POST /solve/joint/stop → ${res.status.toString()} ${text}`);
+    throw new Error(`POST /solve/stop → ${res.status.toString()} ${text}`);
   }
 }
 
@@ -401,10 +418,6 @@ export async function revertCommit(id: string, message?: string): Promise<ApiCom
     throw new Error(`POST /commits/${id}/revert → ${res.status.toString()} ${text}`);
   }
   return res.json() as Promise<ApiCommitRef>;
-}
-
-export function solveStation(id: string, config?: SolveConfig): Promise<SolveResult> {
-  return request<SolveResult>('POST', `/solve/stations/${encodeURIComponent(id)}`, config ?? {});
 }
 
 export function solveControlPoint(id: string, config?: SolveConfig): Promise<SolveResult> {

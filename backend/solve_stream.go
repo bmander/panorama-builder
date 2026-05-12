@@ -9,17 +9,16 @@ import (
 	"github.com/bmander/panorama-builder/backend/solver"
 )
 
-// postSolveJointStream is the SSE counterpart to postSolveJoint: emits one
-// event per Gauss-Newton iteration and a terminal event with the final
-// SolveResult.
-//
-// Event stream:
+// SSE solver streams. Both endpoints emit:
 //
 //	data: {"kind":"iter","iter":N,"rms":R,"accepted":bool}\n\n
 //	data: {"kind":"done","result":{...SolveResult JSON...}}\n\n
 //	data: {"kind":"stopped","result":{...SolveResult JSON...}}\n\n
 //	data: {"kind":"cancelled"}\n\n
 //	data: {"kind":"error","message":"..."}\n\n
+//
+// /api/solve/stop signals the current run to break gracefully — see
+// postSolveStop. Only one solve is in flight at a time (Server.solveMu).
 func (s *Server) postSolveJointStream(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.requireSession(w, r)
 	if !ok {
@@ -30,10 +29,55 @@ func (s *Server) postSolveJointStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg.Mode = solver.ModeJoint
-	// User-interruptible loop; the cap mainly guards against pathological
-	// non-converging configurations.
+	s.streamSolve(w, r, sess, cfg)
+}
+
+func (s *Server) postSolveStationStream(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	id := requireID(w, r, "id")
+	if id == "" {
+		return
+	}
+	cfg, ok := parseSolveConfig(w, r)
+	if !ok {
+		return
+	}
+	cfg.Mode = solver.ModeSingleStation
+	cfg.FocusID = id
+	s.streamSolve(w, r, sess, cfg)
+}
+
+func (s *Server) streamSolve(w http.ResponseWriter, r *http.Request, sess *Session, cfg solver.Config) {
+	// Streaming runs are user-cancellable via Cancel/Stop, so the cap mainly
+	// guards against pathological non-converging configurations.
 	if cfg.MaxIters == 0 {
 		cfg.MaxIters = 1000
+	}
+	s.solveMu.Lock()
+	defer s.solveMu.Unlock()
+
+	ctx := r.Context()
+	var prob solver.Problem
+	var seededCPIDs []string
+	var exists bool
+	var err error
+	if cfg.Mode == solver.ModeJoint {
+		prob, seededCPIDs, err = s.loadJointProblemSession(ctx, sess)
+		exists = true
+	} else {
+		prob, seededCPIDs, exists, err = s.loadProblem(ctx, cfg)
+	}
+	if err != nil {
+		log.Printf("solver load: %v", err)
+		writeError(w, http.StatusInternalServerError, "load failed")
+		return
+	}
+	if !exists {
+		writeError(w, http.StatusNotFound, "focus entity not found")
+		return
 	}
 
 	flusher, ok := w.(http.Flusher)
@@ -41,10 +85,6 @@ func (s *Server) postSolveJointStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
-
-	s.solveMu.Lock()
-	defer s.solveMu.Unlock()
-
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -62,14 +102,6 @@ func (s *Server) postSolveJointStream(w http.ResponseWriter, r *http.Request) {
 	}
 	sendError := func(msg string) {
 		sendEvent(map[string]string{"kind": "error", "message": msg})
-	}
-
-	ctx := r.Context()
-	prob, seededCPIDs, err := s.loadJointProblemSession(ctx, sess)
-	if err != nil {
-		log.Printf("solver load: %v", err)
-		sendError("load failed")
-		return
 	}
 
 	stopCh := make(chan struct{}, 1)
@@ -100,7 +132,12 @@ func (s *Server) postSolveJointStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	res, err := solver.SolveJointWithSeed(prob, seededCPIDs, cfg)
+	var res solver.Result
+	if cfg.Mode == solver.ModeJoint {
+		res, err = solver.SolveJointWithSeed(prob, seededCPIDs, cfg)
+	} else {
+		res, err = solver.Solve(prob, cfg)
+	}
 	if err != nil {
 		sendError(err.Error())
 		return
@@ -124,10 +161,11 @@ func (s *Server) postSolveJointStream(w http.ResponseWriter, r *http.Request) {
 	sendEvent(map[string]any{"kind": terminalKind, "result": toAPISolveResult(res)})
 }
 
-// postSolveJointStop signals the in-flight streaming solve to break at the
-// next iteration boundary. The handler then emits a "stopped" terminal
-// event with the best iterate so far; no writeback.
-func (s *Server) postSolveJointStop(w http.ResponseWriter, r *http.Request) {
+// postSolveStop signals the in-flight streaming solve to break at the next
+// iteration boundary. The handler then emits a "stopped" terminal event
+// with the best iterate so far; no writeback. Shared across all streaming
+// endpoints since only one solve runs at a time.
+func (s *Server) postSolveStop(w http.ResponseWriter, r *http.Request) {
 	s.activeStopMu.Lock()
 	ch := s.activeStop
 	s.activeStopMu.Unlock()

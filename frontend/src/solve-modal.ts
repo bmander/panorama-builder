@@ -1,15 +1,28 @@
-// Index-view "Solve" modal. Streams the joint solve as SSE so the chart
+// Shared "Solve" modal. Streams a Gauss-Newton solve as SSE so the chart
 // fills in per iteration. During a run the user can:
 //   - Cancel — abort the fetch; the server detects the disconnect, the
 //     solver breaks, no result is delivered.
-//   - Stop here — POST to /stop; the solver returns the best iterate so
-//     far and emits a "stopped" terminal event.
+//   - Stop here — POST to /solve/stop; the solver returns the best iterate
+//     so far and emits a "stopped" terminal event.
+//
+// The streaming endpoint (joint vs. single-station) is selected by the
+// SolveRun handle the caller passes to open().
 
 import { getElement } from './types.js';
 import * as api from './api.js';
 
+// Caller-supplied bridge to a specific streaming endpoint.
+export interface SolveRun {
+  start: (
+    cfg: api.SolveConfig,
+    onEvent: (e: api.SolveProgressEvent) => void,
+    signal: AbortSignal,
+  ) => Promise<void>;
+  title: string;
+}
+
 export interface SolveModal {
-  open(): void;
+  open(run: SolveRun): void;
 }
 
 export interface CreateSolveModalOptions {
@@ -30,6 +43,7 @@ export function createSolveModal(
   { onComplete }: CreateSolveModalOptions,
 ): SolveModal {
   const modalEl = getElement('solve-modal');
+  const titleEl = getElement('solve-title');
   const closeXBtn = getElement<HTMLButtonElement>('solve-close');
   const closeBtn = getElement<HTMLButtonElement>('solve-close-btn');
   const cancelBtn = getElement<HTMLButtonElement>('solve-cancel-btn');
@@ -44,6 +58,7 @@ export function createSolveModal(
   const chartEl = getElement<HTMLCanvasElement>('solve-loss-chart');
 
   let activeAbort: AbortController | null = null;
+  let activeRun: SolveRun | null = null;
   const chart: ChartState = { iters: [], rms: [], logMin: 0, logMax: 0 };
 
   function setRunning(running: boolean): void {
@@ -68,7 +83,9 @@ export function createSolveModal(
     statusEl.textContent = '';
   }
 
-  function open(): void {
+  function open(run: SolveRun): void {
+    activeRun = run;
+    titleEl.textContent = run.title;
     progressEl.hidden = true;
     statusEl.textContent = '';
     chart.iters.length = 0;
@@ -178,7 +195,8 @@ export function createSolveModal(
   }
 
   runBtn.addEventListener('click', () => {
-    if (activeAbort) return;
+    if (activeAbort || !activeRun) return;
+    const run = activeRun;
     const tol = parseFloat(tolEl.value);
     if (!Number.isFinite(tol) || tol <= 0) { tolEl.focus(); return; }
     const relImproveTol = parseFloat(relImproveTolEl.value);
@@ -217,7 +235,7 @@ export function createSolveModal(
     let terminalKind: 'done' | 'stopped' | 'cancelled' | 'error' | null = null;
     let errorMessage: string | null = null;
 
-    api.solveJointStream(base, ev => {
+    run.start(base, ev => {
       if (ev.kind === 'iter') {
         pushPoint(ev.iter, ev.rms);
         statusEl.textContent = `iter ${(ev.iter + 1).toString()}  rms ${ev.rms.toExponential(4)}`;
@@ -263,7 +281,7 @@ export function createSolveModal(
     // Disabled until the server emits a terminal event — the in-flight
     // loop will finish its current iter and break at the next ShouldStop.
     stopBtn.disabled = true;
-    api.solveJointStop().catch((err: unknown) => {
+    api.solveStop().catch((err: unknown) => {
       console.error('solve stop failed:', err);
       stopBtn.disabled = false;
     });

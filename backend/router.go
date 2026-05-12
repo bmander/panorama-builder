@@ -34,8 +34,9 @@ func (s *Server) routes() http.Handler {
 
 	mux.HandleFunc("POST /api/solve/joint", s.postSolveJoint)
 	mux.HandleFunc("POST /api/solve/joint/stream", s.postSolveJointStream)
-	mux.HandleFunc("POST /api/solve/joint/stop", s.postSolveJointStop)
+	mux.HandleFunc("POST /api/solve/stop", s.postSolveStop)
 	mux.HandleFunc("POST /api/solve/stations/{id}", s.postSolveStation)
+	mux.HandleFunc("POST /api/solve/stations/{id}/stream", s.postSolveStationStream)
 	mux.HandleFunc("POST /api/solve/control-points/{id}", s.postSolveControlPoint)
 
 	mux.HandleFunc("POST /api/control-points", s.postControlPoint)
