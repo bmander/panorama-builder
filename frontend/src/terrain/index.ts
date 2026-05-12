@@ -14,7 +14,6 @@
 
 import * as THREE from 'three';
 import type { LatLng } from '../types.js';
-import { sunDirection } from '../solar.js';
 import { latLngToCameraRelativeMeters } from '../geo.js';
 import {
   getCurvatureEnabled,
@@ -24,25 +23,8 @@ import {
   setRefractionEnabled,
   subscribeCurvatureChange,
 } from '../curvature.js';
-import {
-  buildRingGeometry,
-  computeRings,
-  ringBounds,
-} from './geometry.js';
-import {
-  fetchCamGroundElev,
-  loadRingTiles,
-  prefetchRingTiles,
-  stitchImageryCanvas,
-} from './tiles.js';
-
-const WIREFRAME_COLOR = 0x88aaff;
-const WIREFRAME_OPACITY = 0.35;
-const DIR_LIGHT_INTENSITY = 2.5;
-const AMBIENT_LIGHT_INTENSITY = 0.7;
-// Far enough that direction is the only thing that matters; lambert ignores
-// magnitude but Three.js still uses the position vector to build the direction.
-const DIR_LIGHT_DISTANCE = 1000;
+import { buildTerrainSnapshot } from './builder.js';
+import { createTerrainSceneLayer } from './scene-layer.js';
 
 export type TerrainMode = 'off' | 'wireframe' | 'shaded';
 
@@ -81,45 +63,6 @@ export interface CreateTerrainViewOptions {
   requestRender: () => void;
 }
 
-// Adjacent rings cut cleanly on a shared vertex grid — see computeRings'
-// invariant. No polygon-offset bias needed.
-function makeMaterial(
-  mode: Exclude<TerrainMode, 'off'>,
-  texture: THREE.Texture | null,
-): THREE.Material {
-  if (mode === 'wireframe') {
-    return new THREE.MeshBasicMaterial({
-      color: WIREFRAME_COLOR,
-      wireframe: true,
-      transparent: true,
-      opacity: WIREFRAME_OPACITY,
-      depthWrite: false,
-    });
-  }
-  const lambert = new THREE.MeshLambertMaterial({
-    map: texture,
-    side: THREE.DoubleSide,
-  });
-  // Heightfield normals all point ~up, so distant peaks above the camera
-  // render via the back face — and Three.js samples the same UV from both
-  // sides, which looks horizontally mirrored to the viewer. Flip UV.x on
-  // back-facing fragments so the imagery reads correctly looking up.
-  lambert.onBeforeCompile = (shader) => {
-    shader.fragmentShader = shader.fragmentShader.replace(
-      '#include <map_fragment>',
-      `#ifdef USE_MAP
-        vec2 _terrainUv = gl_FrontFacing ? vMapUv : vec2(1.0 - vMapUv.x, vMapUv.y);
-        vec4 sampledDiffuseColor = texture2D( map, _terrainUv );
-        diffuseColor *= sampledDiffuseColor;
-      #endif`,
-    );
-  };
-  // Stable cache key so Three.js shares one compiled program across all our
-  // ring materials instead of recompiling per instance.
-  lambert.customProgramCacheKey = (): string => 'terrain-backface-uv-flip';
-  return lambert;
-}
-
 export function createTerrainView({ scene, requestRender }: CreateTerrainViewOptions): TerrainView {
   let mode: TerrainMode = 'off';
   let location: LatLng | null = null;
@@ -130,44 +73,12 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
   // Inner ring at zoom 11 covers ~50–80 km on a side; rebuilding when the
   // camera has moved 5 km from the build origin keeps a comfortable margin.
   const REBUILD_DIST_THRESHOLD_M = 5000;
-  // All ring meshes ride on this group. group.position carries both the
-  // camera-height y-offset and the camera-vs-builtLocation x/z translation.
-  const terrainGroup = new THREE.Group();
-  scene.add(terrainGroup);
-  let meshes: THREE.Mesh[] = [];
-  // Parallel to `meshes`. Kept separately so swapMaterials (wireframe ↔ shaded)
-  // can rebuild a Lambert material with the same imagery `map` without going
-  // back to the network.
-  let textures: THREE.Texture[] = [];
-  let buildId = 0;
+  const sceneLayer = createTerrainSceneLayer({ scene });
+  let currentAbort: AbortController | null = null;
   let cameraMSL = 0;
   let camGroundElevAtBuilt = 0;
   let sunAz = Math.PI;       // default: due south
   let sunAlt = Math.PI / 4;  // default: 45° up
-
-  // Lights are added on first transition out of 'off' and stay in the scene
-  // afterwards. MeshBasicMaterial (wireframe + photo overlays) ignores lights,
-  // so leaving them on permanently is harmless.
-  let dirLight: THREE.DirectionalLight | null = null;
-  let ambientLight: THREE.AmbientLight | null = null;
-
-  function ensureLights(): void {
-    if (dirLight) return;
-    dirLight = new THREE.DirectionalLight(0xffffff, DIR_LIGHT_INTENSITY);
-    ambientLight = new THREE.AmbientLight(0xffffff, AMBIENT_LIGHT_INTENSITY);
-    scene.add(dirLight);
-    scene.add(ambientLight);
-    applySunDirection();
-  }
-
-  function applySunDirection(): void {
-    if (!dirLight) return;
-    const d = sunDirection(sunAz, sunAlt);
-    dirLight.position.set(d.x * DIR_LIGHT_DISTANCE, d.y * DIR_LIGHT_DISTANCE, d.z * DIR_LIGHT_DISTANCE);
-    // Below-horizon: kill direct light so only ambient remains. Otherwise the
-    // sun illuminates the underside of terrain, which looks like moonlight.
-    dirLight.intensity = sunAlt > 0 ? DIR_LIGHT_INTENSITY : 0;
-  }
 
   function applyGroupTransform(): void {
     // Vertex Y is stored as (vertex_MSL − camGroundElevAtBuilt); shifting the
@@ -179,142 +90,48 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       // a vertex stored at the origin (the build point) renders at exactly
       // that offset from the live camera.
       const o = latLngToCameraRelativeMeters(builtLocation, location);
-      terrainGroup.position.set(o.x, groupY, o.z);
+      sceneLayer.setGroupPosition(o.x, groupY, o.z);
     } else {
-      terrainGroup.position.set(0, groupY, 0);
+      sceneLayer.setGroupPosition(0, groupY, 0);
     }
-  }
-
-  function disposeMeshes(): void {
-    for (const m of meshes) {
-      terrainGroup.remove(m);
-      m.geometry.dispose();
-      (m.material as THREE.Material).dispose();
-    }
-    for (const t of textures) t.dispose();
-    meshes = [];
-    textures = [];
-  }
-
-  function applyVisibility(): void {
-    const visible = mode !== 'off';
-    for (const m of meshes) m.visible = visible;
-  }
-
-  // Swap each mesh's material in place — used when toggling between wireframe
-  // and shaded without regenerating the (expensive) geometry.
-  function swapMaterials(toMode: Exclude<TerrainMode, 'off'>): void {
-    meshes.forEach((m, ringIndex) => {
-      const old = m.material as THREE.Material;
-      m.material = makeMaterial(toMode, textures[ringIndex] ?? null);
-      old.dispose();
-    });
   }
 
   async function rebuild(camLoc: LatLng, buildMode: Exclude<TerrainMode, 'off'>): Promise<void> {
-    const myBuildId = ++buildId;
-    // computeRings() returns innermost first (z=14 → z=8), which is the
-    // same order display proceeds in: the camera's immediate surroundings
-    // land first, then progressively wider rings fill in toward the horizon.
-    const rings = computeRings();
-    const factor = getCurvatureFactor();
-    const innermost = rings[0]!;
+    currentAbort?.abort();
+    const controller = new AbortController();
+    currentAbort = controller;
 
-    // Kick the elevation-anchor fetch off first so it sits at the head of
-    // the browser's tile queue — every subsequent ring build needs it.
-    const camGroundElevPromise = fetchCamGroundElev(camLoc, innermost);
-    for (const spec of rings) prefetchRingTiles(camLoc, spec);
-
-    const camGroundElev = await camGroundElevPromise;
-    if (myBuildId !== buildId) return;
-
-    // Each ring's hole is the next-finer ring's outer rectangle — pure
-    // function of camLoc + spec, no tile data needed. The innermost ring
-    // (index 0) has no finer neighbor and so no hole.
-    const holes = rings.map((_, i) => {
-      const innerSpec = rings[i - 1];
-      return innerSpec ? ringBounds(camLoc, innerSpec) : undefined;
-    });
-
-    interface Built { geometry: THREE.BufferGeometry; texture: THREE.Texture }
-    const disposeBuilt = (b: Built | null): void => {
-      if (b) { b.geometry.dispose(); b.texture.dispose(); }
-    };
-
-    // Build every ring concurrently. Each disposes its own products on
-    // cancellation; the orchestrator only consumes results in inner-first
-    // order so display proceeds strictly inner→outer.
-    const buildPromises = rings.map(async (spec, i): Promise<Built | null> => {
-      const { demTiles, imageryTiles } = await loadRingTiles(camLoc, spec);
-      if (myBuildId !== buildId) return null;
-      const geom = buildRingGeometry(camLoc, spec, factor, demTiles, camGroundElev, holes[i]);
-      const canvas = stitchImageryCanvas(camLoc, spec, imageryTiles);
-
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.BufferAttribute(geom.positions, 3));
-      geometry.setAttribute('uv', new THREE.BufferAttribute(geom.uvs, 2));
-      geometry.setIndex(new THREE.BufferAttribute(geom.indices, 1));
-      // Normals required for Lambert lighting; cheap enough to always compute so
-      // wireframe→shaded swaps don't need a rebuild.
-      geometry.computeVertexNormals();
-      geometry.computeBoundingSphere();
-
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.anisotropy = 4;
-      // The canvas is drawn with north at y=0 already, so disable the default
-      // flip so UV.y = j/(ny-1) lines up directly: j=0 (north vertex) → UV.y=0
-      // → canvas top → north tile.
-      texture.flipY = false;
-
-      if (myBuildId !== buildId) {
-        geometry.dispose();
-        texture.dispose();
-        return null;
-      }
-      return { geometry, texture };
-    });
-
-    // Defer disposing the previous build until the first new ring is in
-    // hand: keeps old terrain on screen during the build instead of
-    // showing a blank scene.
-    let swapped = false;
-    for (let i = 0; i < buildPromises.length; i++) {
-      const result = await buildPromises[i]!;
-      if (myBuildId !== buildId) {
-        disposeBuilt(result);
-        for (let j = i + 1; j < buildPromises.length; j++) {
-          void buildPromises[j]!.then(disposeBuilt);
+    try {
+      // Defer disposing the previous build until the first new ring is in
+      // hand: keeps old terrain on screen during the build instead of
+      // showing a blank scene.
+      let swapped = false;
+      for await (const ring of buildTerrainSnapshot(
+        { camLoc, curvatureFactor: getCurvatureFactor() },
+        controller.signal,
+      )) {
+        if (!swapped) {
+          sceneLayer.clear();
+          builtLocation = camLoc;
+          camGroundElevAtBuilt = ring.camGroundElev;
+          applyGroupTransform();
+          sceneLayer.setVisible(mode !== 'off');
+          swapped = true;
         }
-        return;
+        sceneLayer.attachRing(ring, buildMode);
+        requestRender();
       }
-      if (!result) continue;
-      if (!swapped) {
-        disposeMeshes();
-        builtLocation = camLoc;
-        camGroundElevAtBuilt = camGroundElev;
-        applyGroupTransform();
-        applyVisibility();
-        swapped = true;
-      }
-      const mesh = new THREE.Mesh(result.geometry, makeMaterial(buildMode, result.texture));
-      mesh.frustumCulled = false; // bounding sphere is huge; we always want it on screen
-      // Always draw before photo overlays (which use depthTest:false to stay on
-      // top regardless of whether they physically intersect terrain).
-      mesh.renderOrder = -1;
-      terrainGroup.add(mesh);
-      meshes.push(mesh);
-      textures.push(result.texture);
-      requestRender();
+    } finally {
+      // Drop the reference if we're the most recent rebuild; a newer rebuild
+      // would have already swapped the slot to its own controller.
+      if (currentAbort === controller) currentAbort = null;
     }
   }
 
   function maybeRebuild(): void {
     if (mode === 'off' || !location) {
-      // Bump buildId to cancel any in-flight rebuild; otherwise its
-      // remaining attaches would land in a scene we just emptied.
-      ++buildId;
-      disposeMeshes();
+      currentAbort?.abort();
+      sceneLayer.clear();
       builtLocation = null;
       applyGroupTransform();
       requestRender();
@@ -347,7 +164,7 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       // Trigger a real rebuild only when the camera leaves the safe zone of
       // the current build (e.g., the first location after startup, or the
       // user dropping a faraway pin).
-      if (meshes.length === 0 || distSqFromBuilt() >= REBUILD_DIST_THRESHOLD_M * REBUILD_DIST_THRESHOLD_M) {
+      if (sceneLayer.ringCount() === 0 || distSqFromBuilt() >= REBUILD_DIST_THRESHOLD_M * REBUILD_DIST_THRESHOLD_M) {
         maybeRebuild();
       }
     },
@@ -355,12 +172,11 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       if (mode === value) return;
       const prev = mode;
       mode = value;
-      if (value !== 'off') ensureLights();
       // Wireframe↔shaded with live meshes: just swap materials, keep geometry.
       // Anything involving 'off' (or starting from no meshes) goes through rebuild.
-      if (meshes.length > 0 && prev !== 'off' && value !== 'off') {
-        swapMaterials(value);
-        applyVisibility();
+      if (sceneLayer.ringCount() > 0 && prev !== 'off' && value !== 'off') {
+        sceneLayer.swapMaterials(value);
+        sceneLayer.setVisible(true);
         requestRender();
       } else {
         maybeRebuild();
@@ -378,7 +194,7 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       if (sunAz === az && sunAlt === alt) return;
       sunAz = az;
       sunAlt = alt;
-      applySunDirection();
+      sceneLayer.setSunDirection(az, alt);
       if (mode === 'shaded') requestRender();
     },
     setCameraMSL(meters) {
