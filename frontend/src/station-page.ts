@@ -212,23 +212,25 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
 
   // CPs visible in the photo viewer. Same set drives column rendering and
   // the matcher hit-test, so what you see is what you can click.
-  // Lifespan filter applies in both modes: a CP that didn't exist when the
-  // photographer was here shouldn't render even if some image measurement
-  // happens to reference it.
+  // Lifespan filter applies to non-observed CPs only: a CP that the
+  // photographer actually marked here is direct evidence it existed at the
+  // captured moment, and overrides any stale lifespan bound (e.g. a
+  // "started after THIS-date" hint set from a sibling station with the
+  // same captured_at).
   function getVisibleControlPoints(): ControlPointView[] {
     const capturedAt = stationFields.getCapturedAt();
     const capturedMs = capturedAt !== null ? new Date(capturedAt).getTime() : null;
-    const all = overlays.controlPoints.list().filter(cp => {
-      if (cp.estLat === null || cp.estLng === null) return false;
-      if (capturedMs !== null && !isExtantAt(cp, capturedMs)) return false;
-      return true;
-    });
-    if (showAllCPs) return all;
     const observed = new Set<string>();
     for (const im of overlays.measurements.list()) {
       if (im.controlPointId) observed.add(im.controlPointId);
     }
-    return all.filter(cp => observed.has(cp.id));
+    return overlays.controlPoints.list().filter(cp => {
+      if (cp.estLat === null || cp.estLng === null) return false;
+      const isObserved = observed.has(cp.id);
+      if (!showAllCPs && !isObserved) return false;
+      if (capturedMs !== null && !isObserved && !isExtantAt(cp, capturedMs)) return false;
+      return true;
+    });
   }
 
   // Reused empty array so the no-op guard inside observationRays.update
