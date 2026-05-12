@@ -15,6 +15,7 @@
 import * as THREE from 'three';
 import type { LatLng } from '../types.js';
 import { latLngToCameraRelativeMeters } from '../geo.js';
+import { applyGroupTransform as applyAnchoredTransform } from '../camera-anchored.js';
 import {
   getCurvatureEnabled,
   getCurvatureFactor,
@@ -81,19 +82,12 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
   let sunAlt = Math.PI / 4;  // default: 45° up
 
   function applyGroupTransform(): void {
-    // Vertex Y is stored as (vertex_MSL − camGroundElevAtBuilt); shifting the
-    // group by (camGroundElevAtBuilt − cameraMSL) puts the vertex at viewer
+    // Vertex Y is stored as (vertex_MSL − camGroundElevAtBuilt), so the
+    // build-time vertical reference fed to the shared anchored-transform
+    // helper IS camGroundElevAtBuilt: the helper shifts y by
+    // (builtCameraMSL − cameraMSL), putting each vertex at viewer
     // y = vertex_MSL − cameraMSL.
-    const groupY = camGroundElevAtBuilt - cameraMSL;
-    if (location && builtLocation) {
-      // Translate by the build origin's position in the current camera frame:
-      // a vertex stored at the origin (the build point) renders at exactly
-      // that offset from the live camera.
-      const o = latLngToCameraRelativeMeters(builtLocation, location);
-      sceneLayer.setGroupPosition(o.x, groupY, o.z);
-    } else {
-      sceneLayer.setGroupPosition(0, groupY, 0);
-    }
+    applyAnchoredTransform(sceneLayer.group, builtLocation, camGroundElevAtBuilt, location, cameraMSL);
   }
 
   async function rebuild(camLoc: LatLng, buildMode: Exclude<TerrainMode, 'off'>): Promise<void> {

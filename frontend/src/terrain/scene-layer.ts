@@ -16,7 +16,9 @@ export interface TerrainRingMesh {
 }
 
 export interface TerrainSceneLayer {
-  setGroupPosition(x: number, y: number, z: number): void;
+  // All ring meshes ride on this group. Exposed so the orchestrator can run
+  // the shared camera-anchored transform (see ../camera-anchored.ts) on it.
+  readonly group: THREE.Group;
   attachRing(
     ring: { spec: RingSpec; geometry: THREE.BufferGeometry; texture: THREE.Texture },
     mode: TerrainMaterialMode,
@@ -31,8 +33,6 @@ export interface TerrainSceneLayer {
 export function createTerrainSceneLayer(
   { scene }: { scene: THREE.Scene },
 ): TerrainSceneLayer {
-  // All ring meshes ride on this group. group.position carries both the
-  // camera-height y-offset and the camera-vs-builtLocation x/z translation.
   const terrainGroup = new THREE.Group();
   scene.add(terrainGroup);
 
@@ -55,9 +55,7 @@ export function createTerrainSceneLayer(
   applySunDirection(Math.PI, Math.PI / 4);
 
   return {
-    setGroupPosition(x, y, z) {
-      terrainGroup.position.set(x, y, z);
-    },
+    group: terrainGroup,
     attachRing({ spec, geometry, texture }, mode) {
       const mesh = new THREE.Mesh(geometry, makeTerrainMaterial(mode, texture));
       mesh.frustumCulled = false; // bounding sphere is huge; we always want it on screen
