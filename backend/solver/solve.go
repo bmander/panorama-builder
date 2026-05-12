@@ -868,6 +868,15 @@ func (c *solveContext) computeOneObsResidual(k int) (float64, float64) {
 	azPred, elPred := ProjectPOI(pose, o.U, o.V)
 	azTgt, elTgt := BearingENU(dE, dN, dU)
 
+	return ResidualFromBearings(azPred, elPred, azTgt, elTgt)
+}
+
+// ResidualFromBearings combines predicted and target viewer-frame
+// directions into the two-row angular residual the solver minimizes.
+// The az row is weighted by cos(el_target) so 1° at the horizon weighs
+// more arc-length than 1° near the zenith; the floor on cos(el) keeps
+// the polar singularity bounded.
+func ResidualFromBearings(azPred, elPred, azTgt, elTgt float64) (azRow, elRow float64) {
 	cosEl := math.Cos(elTgt)
 	if math.Abs(cosEl) < minCosEl {
 		cosEl = math.Copysign(minCosEl, cosEl)
@@ -875,7 +884,6 @@ func (c *solveContext) computeOneObsResidual(k int) (float64, float64) {
 			cosEl = minCosEl
 		}
 	}
-
 	return WrapPi(azPred-azTgt) * cosEl, elPred - elTgt
 }
 

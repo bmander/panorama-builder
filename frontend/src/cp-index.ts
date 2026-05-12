@@ -1,7 +1,15 @@
 import * as api from './api.js';
+import { radToDeg } from './mathx.js';
 import { cpHref, cpLabel, fmtAlt, fmtCpLatLng, getElement, makeListCell } from './types.js';
 
-function renderList(cps: readonly api.ApiControlPoint[]): void {
+function fmtFit(rad: number): string {
+  return `${radToDeg(rad).toFixed(3)}°`;
+}
+
+function renderList(
+  cps: readonly api.ApiControlPoint[],
+  fits: ReadonlyMap<string, api.ApiControlPointFit>,
+): void {
   const list = getElement('list');
   list.replaceChildren();
   if (cps.length === 0) {
@@ -15,11 +23,11 @@ function renderList(cps: readonly api.ApiControlPoint[]): void {
     (a.description || '').toLowerCase().localeCompare((b.description || '').toLowerCase()),
   );
   for (const cp of sorted) {
-    list.appendChild(renderRow(cp));
+    list.appendChild(renderRow(cp, fits.get(cp.id)));
   }
 }
 
-function renderRow(cp: api.ApiControlPoint): HTMLElement {
+function renderRow(cp: api.ApiControlPoint, fit: api.ApiControlPointFit | undefined): HTMLElement {
   const li = document.createElement('li');
   const a = document.createElement('a');
   a.href = cpHref(cp.id);
@@ -30,14 +38,26 @@ function renderRow(cp: api.ApiControlPoint): HTMLElement {
     cp.lock_est_lat && cp.lock_est_lng, unlocated);
   const elev = makeListCell('col-elev', fmtAlt(cp.est_alt),
     cp.lock_est_alt, cp.est_alt === null);
-  li.append(a, loc, elev);
+  const fitCell = makeListCell('col-fit', fit ? fmtFit(fit.fit_rms_rad) : '—',
+    false, fit === undefined);
+  const obsCell = makeListCell('col-obs', fit ? String(fit.observation_count) : '—',
+    false, fit === undefined);
+  if (fit) {
+    fitCell.title = 'RMS angular residual';
+    obsCell.title = 'observations';
+  }
+  li.append(a, loc, elev, fitCell, obsCell);
   return li;
 }
 
 async function main(): Promise<void> {
   try {
-    const cps = await api.listControlPoints();
-    renderList(cps);
+    const [cps, fits] = await Promise.all([
+      api.listControlPoints(),
+      api.listControlPointFits(),
+    ]);
+    const fitsByID = new Map(fits.control_points.map(f => [f.id, f]));
+    renderList(cps, fitsByID);
   } catch (err) {
     console.error('list control points failed:', err);
     const list = getElement('list');

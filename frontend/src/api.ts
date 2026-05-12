@@ -35,6 +35,8 @@ export type ApiControlPointObservations = Schemas['ControlPointObservations'];
 export type ApiControlPointImageObservation = Schemas['ControlPointImageObservation'];
 export type ApiControlPointVisiblePhotos = Schemas['ControlPointVisiblePhotos'];
 export type ApiControlPointVisiblePhoto = Schemas['ControlPointVisiblePhoto'];
+export type ApiControlPointFits = Schemas['ControlPointFits'];
+export type ApiControlPointFit = Schemas['ControlPointFit'];
 export type SolveConfig = Schemas['SolveConfig'];
 export type SolveResult = Schemas['SolveResult'];
 export type EntityChange = Schemas['EntityChange'];
@@ -211,6 +213,10 @@ export function listControlPointVisiblePhotos(id: string): Promise<ApiControlPoi
   return request<ApiControlPointVisiblePhotos>(
     'GET', `/control-points/${encodeURIComponent(id)}/visible-photos`,
   );
+}
+
+export function listControlPointFits(): Promise<ApiControlPointFits> {
+  return request<ApiControlPointFits>('GET', '/control-point-fits');
 }
 
 export function updateControlPoint(id: string, body: ControlPointPatch): Promise<ApiControlPoint> {

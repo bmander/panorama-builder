@@ -46,6 +46,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/control-points/{id}", s.deleteControlPoint)
 	mux.HandleFunc("GET /api/control-points/{id}/observations", s.listControlPointObservations)
 	mux.HandleFunc("GET /api/control-points/{id}/visible-photos", s.listControlPointVisiblePhotos)
+	mux.HandleFunc("GET /api/control-point-fits", s.listControlPointFits)
 
 	mux.HandleFunc("POST /api/control-point-constraints", s.postCPConstraint)
 	mux.HandleFunc("GET /api/control-point-constraints", s.listCPConstraints)

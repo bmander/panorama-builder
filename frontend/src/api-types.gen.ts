@@ -257,6 +257,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/control-point-fits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List per-CP goodness-of-fit (angular residual RMS)
+         * @description For every control point with a known est_lat/est_lng and at least
+         *     one image measurement, returns the RMS angular residual between
+         *     each observation's ray and the bearing from its station to the
+         *     stored estimate. Same residual definition the solver minimizes.
+         *     Surfaces a "two locations conflated into one CP" signal: tiny
+         *     residuals mean observations agree on a single point; large ones
+         *     mean they don't. est_alt NULL is treated as 0 (matches the
+         *     solver). CPs without observations are omitted.
+         */
+        get: operations["listControlPointFits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/control-point-constraints": {
         parameters: {
             query?: never;
@@ -809,6 +836,22 @@ export interface components {
         };
         ControlPointVisiblePhotos: {
             photos: components["schemas"]["ControlPointVisiblePhoto"][];
+        };
+        /**
+         * @description Goodness-of-fit summary for one CP. fit_rms_rad is the RMS angular
+         *     residual (radians) between every observation's image-plane ray and
+         *     the bearing from its station to the CP's stored estimate — same
+         *     residual the solver minimizes. observation_count is the number of
+         *     image measurements that contributed.
+         */
+        ControlPointFit: {
+            id: components["schemas"]["Id"];
+            /** Format: double */
+            fit_rms_rad: number;
+            observation_count: number;
+        };
+        ControlPointFits: {
+            control_points: components["schemas"]["ControlPointFit"][];
         };
         HydratedStation: {
             station: components["schemas"]["Station"];
@@ -1715,6 +1758,26 @@ export interface operations {
                 content?: never;
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    listControlPointFits: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControlPointFits"];
+                };
+            };
         };
     };
     listCPConstraints: {

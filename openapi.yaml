@@ -404,6 +404,27 @@ paths:
         '204': { description: Deleted }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /control-point-fits:
+    get:
+      tags: [control-points]
+      summary: List per-CP goodness-of-fit (angular residual RMS)
+      description: |
+        For every control point with a known est_lat/est_lng and at least
+        one image measurement, returns the RMS angular residual between
+        each observation's ray and the bearing from its station to the
+        stored estimate. Same residual definition the solver minimizes.
+        Surfaces a "two locations conflated into one CP" signal: tiny
+        residuals mean observations agree on a single point; large ones
+        mean they don't. est_alt NULL is treated as 0 (matches the
+        solver). CPs without observations are omitted.
+      operationId: listControlPointFits
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ControlPointFits' }
+
   /control-point-constraints:
     post:
       tags: [cp-constraints]
@@ -1053,6 +1074,28 @@ components:
         photos:
           type: array
           items: { $ref: '#/components/schemas/ControlPointVisiblePhoto' }
+
+    ControlPointFit:
+      type: object
+      description: |
+        Goodness-of-fit summary for one CP. fit_rms_rad is the RMS angular
+        residual (radians) between every observation's image-plane ray and
+        the bearing from its station to the CP's stored estimate — same
+        residual the solver minimizes. observation_count is the number of
+        image measurements that contributed.
+      required: [id, fit_rms_rad, observation_count]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        fit_rms_rad: { type: number, format: double, minimum: 0 }
+        observation_count: { type: integer, minimum: 1 }
+
+    ControlPointFits:
+      type: object
+      required: [control_points]
+      properties:
+        control_points:
+          type: array
+          items: { $ref: '#/components/schemas/ControlPointFit' }
 
     HydratedStation:
       type: object

@@ -302,6 +302,24 @@ type ControlPoint struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 
+// ControlPointFit Goodness-of-fit summary for one CP. fit_rms_rad is the RMS angular
+// residual (radians) between every observation's image-plane ray and
+// the bearing from its station to the CP's stored estimate — same
+// residual the solver minimizes. observation_count is the number of
+// image measurements that contributed.
+type ControlPointFit struct {
+	FitRmsRad float64 `json:"fit_rms_rad"`
+
+	// ID 13-character base32 server-assigned id
+	ID               ID  `json:"id"`
+	ObservationCount int `json:"observation_count"`
+}
+
+// ControlPointFits defines model for ControlPointFits.
+type ControlPointFits struct {
+	ControlPoints []ControlPointFit `json:"control_points"`
+}
+
 // ControlPointImageObservation defines model for ControlPointImageObservation.
 type ControlPointImageObservation struct {
 	Aspect float64 `json:"aspect"`
