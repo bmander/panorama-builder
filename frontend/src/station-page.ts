@@ -985,6 +985,10 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
 
   viewer.setCanvasVisible(true);
   hud.setVisible(true);
+  // Start the rAF loop before hydrate so the grid sky paints immediately and
+  // each terrain ring / photo texture appears as it arrives, instead of the
+  // canvas staying black until every parallel fetch resolves.
+  viewer.start();
 
   await hydrateFromAPI(stationId);
   overlays.photos.setSelected(null);
@@ -1001,5 +1005,4 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   sync.markLoaded();
   hud.refresh();
   refreshSelectionUI();
-  viewer.start();
 }
