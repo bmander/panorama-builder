@@ -86,9 +86,15 @@ h2 { font-size: 14px; color: #aaa; margin: 32px 0 8px; font-weight: normal;
 .cp-list .empty, .photos-list .empty { grid-column: 1 / -1; color: #888;
                                         font-style: italic; padding: 6px 8px;
                                         background: rgba(255,255,255,0.04); }
-.photos-list li.header { background: transparent; padding: 4px 8px;
+.cp-list li.header, .photos-list li.header { background: transparent; padding: 4px 8px;
                           color: #aaa; font-size: 10px;
                           text-transform: uppercase; letter-spacing: 0.05em; }
+.cp-list .hdr { font: inherit; color: inherit; background: transparent;
+                 border: 0; padding: 0; cursor: pointer; text-align: left;
+                 letter-spacing: inherit; text-transform: inherit; }
+.cp-list .hdr:hover { color: #fff; }
+.cp-list .hdr.active { color: #fff; }
+.cp-list .sort-arrow { display: inline-block; width: 1ch; }
 main.wide { max-width: 960px; }
 .lock-mark { font-size: 11px; line-height: 1; color: #d0a060; }
 .lock-mark::before { content: "\1F512"; }
@@ -113,7 +119,7 @@ button.danger:disabled { opacity: 0.5; cursor: default; }
   dl { font-size: 18px; gap: 10px 20px; }
   .observations li { font-size: 18px; padding: 10px 12px; }
   .cp-list li, .photos-list li { font-size: 18px; padding: 10px 12px; }
-  .photos-list li.header { font-size: 14px; padding: 6px 10px; }
+  .cp-list li.header, .photos-list li.header { font-size: 14px; padding: 6px 10px; }
   .actions { margin-top: 40px; }
   button.danger { padding: 12px 20px; }
 }
