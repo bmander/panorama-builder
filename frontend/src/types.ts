@@ -271,8 +271,37 @@ export function fmtCpLatLng(lat: number | null, lng: number | null): string {
   return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 }
 
+export function fmtAlt(alt: number | null): string {
+  return alt === null ? '—' : `${alt.toFixed(1)} m`;
+}
+
 // Display label for a CP — the description, or "(unnamed)" if blank.
 export const cpLabel = (description: string): string => description || '(unnamed)';
+
+// Display label for a station — its name, or a short-id stub if untitled.
+export const stationLabel = (id: string, name: string | null): string =>
+  name ?? `(untitled ${id.slice(0, 6)})`;
+
+// Builds one `.col` cell in a `.cp-list` row. See cp.css for the CSS hooks
+// (`.val`, `.val.unlocated`, `.lock-mark`).
+export function makeListCell(
+  className: string, value: string, locked: boolean, unlocated = false,
+): HTMLElement {
+  const cell = document.createElement('span');
+  cell.className = `col ${className}`;
+  const val = document.createElement('span');
+  val.className = 'val';
+  if (unlocated) val.classList.add('unlocated');
+  val.textContent = value;
+  cell.append(val);
+  if (locked) {
+    const mark = document.createElement('span');
+    mark.className = 'lock-mark';
+    mark.setAttribute('aria-label', 'locked');
+    cell.append(mark);
+  }
+  return cell;
+}
 
 // 13-char base32 IDs from `crypto/rand` on the backend. Shared so the two
 // regex sites that validate them (URL params, popstate handler) and the

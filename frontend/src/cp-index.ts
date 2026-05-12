@@ -1,5 +1,5 @@
 import * as api from './api.js';
-import { cpHref, cpLabel, fmtCpLatLng, getElement } from './types.js';
+import { cpHref, cpLabel, fmtAlt, fmtCpLatLng, getElement, makeListCell } from './types.js';
 
 function renderList(cps: readonly api.ApiControlPoint[]): void {
   const list = getElement('list');
@@ -15,25 +15,23 @@ function renderList(cps: readonly api.ApiControlPoint[]): void {
     (a.description || '').toLowerCase().localeCompare((b.description || '').toLowerCase()),
   );
   for (const cp of sorted) {
-    const li = document.createElement('li');
-    const a = document.createElement('a');
-    a.href = cpHref(cp.id);
-    a.className = 'desc';
-    a.textContent = cpLabel(cp.description);
-    const meta = document.createElement('span');
-    meta.className = 'meta';
-    if (cp.est_lat === null || cp.est_lng === null) meta.classList.add('unlocated');
-    meta.textContent = fmtCpLatLng(cp.est_lat, cp.est_lng);
-    li.append(a, meta);
-    const lockCount = +cp.lock_est_lat + +cp.lock_est_lng + +cp.lock_est_alt;
-    if (lockCount > 0) {
-      const lock = document.createElement('span');
-      lock.className = lockCount === 3 ? 'locks full' : 'locks partial';
-      lock.textContent = lockCount === 3 ? 'locked' : 'partial lock';
-      li.append(lock);
-    }
-    list.appendChild(li);
+    list.appendChild(renderRow(cp));
   }
+}
+
+function renderRow(cp: api.ApiControlPoint): HTMLElement {
+  const li = document.createElement('li');
+  const a = document.createElement('a');
+  a.href = cpHref(cp.id);
+  a.className = 'desc';
+  a.textContent = cpLabel(cp.description);
+  const unlocated = cp.est_lat === null || cp.est_lng === null;
+  const loc = makeListCell('col-loc', fmtCpLatLng(cp.est_lat, cp.est_lng),
+    cp.lock_est_lat && cp.lock_est_lng, unlocated);
+  const elev = makeListCell('col-elev', fmtAlt(cp.est_alt),
+    cp.lock_est_alt, cp.est_alt === null);
+  li.append(a, loc, elev);
+  return li;
 }
 
 async function main(): Promise<void> {

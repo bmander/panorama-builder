@@ -289,6 +289,18 @@ func (s *Server) listStationsInSession(w http.ResponseWriter, r *http.Request, s
 		func(st Station) string { return st.ID })
 }
 
+func (s *Server) listPhotosInSession(w http.ResponseWriter, r *http.Request, sess *Session) {
+	ctx := r.Context()
+	overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	writeListInSession(w, overlay, entityPhoto,
+		func() ([]Photo, error) { return s.allPhotos(ctx) },
+		func(p Photo) string { return p.ID })
+}
+
 // --- Photos ---
 
 func (s *Server) postPhotoInSession(w http.ResponseWriter, r *http.Request, sess *Session) {

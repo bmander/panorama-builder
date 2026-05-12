@@ -21,6 +21,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/stations/{id}", s.deleteStation)
 
 	mux.HandleFunc("POST /api/stations/{id}/photos", s.postPhoto)
+	mux.HandleFunc("GET /api/photos", s.listPhotos)
 	mux.HandleFunc("GET /api/photos/{id}", s.getPhoto)
 	mux.HandleFunc("PUT /api/photos/{id}", s.putPhoto)
 	mux.HandleFunc("DELETE /api/photos/{id}", s.deletePhoto)
@@ -95,26 +96,45 @@ func (s *Server) spaFallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad path", http.StatusBadRequest)
 		return
 	}
+	// HTML responses always revalidate. Without this, a browser that cached
+	// an older route's response (e.g. the SPA fallback before /stations had
+	// its own page) keeps replaying the stale HTML until the heuristic TTL
+	// expires. Static assets keep their normal Last-Modified caching.
+	serveHTML := func(filename string) {
+		w.Header().Set("Cache-Control", "no-cache")
+		http.ServeFile(w, r, filepath.Join(s.staticDir, filename))
+	}
 	full := filepath.Join(s.staticDir, clean)
 	info, err := os.Stat(full)
 	if err == nil && !info.IsDir() {
+		if strings.HasSuffix(clean, ".html") {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		http.ServeFile(w, r, full)
 		return
 	}
 	// Control-point listing lives at /cp; detail pages at /cp/<id>. The
 	// detail page reads the id from location.pathname at startup.
 	if clean == "/cp" || clean == "/cp/" {
-		http.ServeFile(w, r, filepath.Join(s.staticDir, "cp-index.html"))
+		serveHTML("cp-index.html")
 		return
 	}
 	if strings.HasPrefix(clean, "/cp/") {
-		http.ServeFile(w, r, filepath.Join(s.staticDir, "cp.html"))
+		serveHTML("cp.html")
+		return
+	}
+	if clean == "/stations" || clean == "/stations/" {
+		serveHTML("stations-index.html")
+		return
+	}
+	if clean == "/photos" || clean == "/photos/" {
+		serveHTML("photos-index.html")
 		return
 	}
 	if clean == "/history" || clean == "/history/" {
-		http.ServeFile(w, r, filepath.Join(s.staticDir, "history.html"))
+		serveHTML("history.html")
 		return
 	}
 	// Fallback: SPA's index.
-	http.ServeFile(w, r, filepath.Join(s.staticDir, "index.html"))
+	serveHTML("index.html")
 }

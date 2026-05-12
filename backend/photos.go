@@ -28,6 +28,21 @@ func scanPhoto(row pgx.Row) (Photo, error) {
 	return p, err
 }
 
+func (s *Server) listPhotos(w http.ResponseWriter, r *http.Request) {
+	if sess, ok := s.tryLoadSession(w, r); !ok {
+		return
+	} else if sess != nil {
+		s.listPhotosInSession(w, r, sess)
+		return
+	}
+	out, err := s.allPhotos(r.Context())
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (s *Server) postPhoto(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.requireSession(w, r)
 	if !ok {

@@ -1,6 +1,8 @@
 import * as api from './api.js';
 import { degToRad } from './mathx.js';
-import { cpLabel, formatLocalDateTime, getElement, indexCpHref, stationHref } from './types.js';
+import {
+  cpLabel, fmtAlt, formatLocalDateTime, getElement, indexCpHref, stationHref, stationLabel,
+} from './types.js';
 
 const CP_ID_RE = /^\/cp\/([A-Z2-7]{13})$/;
 
@@ -202,7 +204,7 @@ function attachAltEditor(cp: api.ApiControlPoint, host: HTMLElement): () => void
   host.title = 'Click to edit';
   const renderText = (v: number | null): void => {
     host.classList.toggle('empty', v === null);
-    host.textContent = v === null ? 'click to set' : `${v.toFixed(1)} m`;
+    host.textContent = v === null ? 'click to set' : fmtAlt(v);
   };
   return attachInlineEditor<number | null, HTMLInputElement>({
     host,
@@ -384,10 +386,6 @@ function attachDeleteButton(cp: api.ApiControlPoint, obsCount: number): void {
       },
     );
   });
-}
-
-function stationLabel(stationId: string, stationName: string | null): string {
-  return stationName ?? `(untitled ${stationId.slice(0, 6)})`;
 }
 
 function appendObservationItem(

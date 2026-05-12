@@ -163,6 +163,23 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /photos:
+    get:
+      tags: [photos]
+      summary: List all photos
+      description: |
+        Returns every photo in the system (or session overlay when an
+        `X-Session-Id` header is set), ordered by created_at ASC.
+      operationId: listPhotos
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Photo' }
+
   /photos/{id}:
     parameters:
       - $ref: '#/components/parameters/PhotoId'

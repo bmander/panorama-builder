@@ -133,6 +133,10 @@ export function deleteStation(id: string): Promise<void> {
 
 // --- Photos ---
 
+export function listPhotos(): Promise<ApiPhoto[]> {
+  return request<ApiPhoto[]>('GET', '/photos');
+}
+
 export function createPhoto(stationId: string, init: PhotoPosePatch): Promise<ApiPhoto> {
   return request<ApiPhoto>('POST', `/stations/${encodeURIComponent(stationId)}/photos`, init);
 }
