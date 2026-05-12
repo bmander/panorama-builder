@@ -3,7 +3,6 @@ html, body { margin: 0; min-height: 100%; background: #111; color: #fff;
 main { max-width: 640px; margin: 0 auto; padding: 32px; }
 .back { color: #5080ff; text-decoration: none; font-size: 12px; }
 .back:hover { text-decoration: underline; }
-.nav { display: flex; gap: 16px; align-items: baseline; }
 h1 { font-size: 22px; margin: 16px 0 24px; word-break: break-word; }
 h1.editable { cursor: text; border-radius: 3px;
               padding: 2px 6px; margin-left: -6px; margin-right: -6px; }
