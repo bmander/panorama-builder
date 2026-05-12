@@ -17,8 +17,14 @@ import type { LatLng } from '../types.js';
 import { sunDirection } from '../solar.js';
 import { latLngToCameraRelativeMeters } from '../geo.js';
 import {
-  CURVATURE_FACTOR_GEOMETRIC,
-  CURVATURE_FACTOR_REFRACTED,
+  getCurvatureEnabled,
+  getCurvatureFactor,
+  getRefractionEnabled,
+  setCurvatureEnabled,
+  setRefractionEnabled,
+  subscribeCurvatureChange,
+} from '../curvature.js';
+import {
   buildRingGeometry,
   computeRings,
   ringBounds,
@@ -133,13 +139,6 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
   let cameraHeight = 0;
   let sunAz = Math.PI;       // default: due south
   let sunAlt = Math.PI / 4;  // default: 45° up
-  let curvatureEnabled = true;
-  let refractionEnabled = true;
-
-  function curvatureFactor(): number {
-    if (!curvatureEnabled) return 0;
-    return refractionEnabled ? CURVATURE_FACTOR_REFRACTED : CURVATURE_FACTOR_GEOMETRIC;
-  }
 
   // Lights are added on first transition out of 'off' and stay in the scene
   // afterwards. MeshBasicMaterial (wireframe + photo overlays) ignores lights,
@@ -209,7 +208,7 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
     // same order display proceeds in: the camera's immediate surroundings
     // land first, then progressively wider rings fill in toward the horizon.
     const rings = computeRings();
-    const factor = curvatureFactor();
+    const factor = getCurvatureFactor();
     const innermost = rings[0]!;
 
     // Kick the elevation-anchor fetch off first so it sits at the head of
@@ -314,6 +313,10 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
     void rebuild(location, mode);
   }
 
+  // Rebuild terrain whenever the curvature factor effectively changes
+  // (curvature on/off, or refraction toggled while curvature is on).
+  subscribeCurvatureChange(maybeRebuild);
+
   // Distance² from current location to the build origin, in m². Used to
   // decide whether a rebuild is needed instead of just translating.
   function distSqFromBuilt(): number {
@@ -354,20 +357,13 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       }
     },
     getMode: () => mode,
-    setCurvatureEnabled(enabled) {
-      if (curvatureEnabled === enabled) return;
-      curvatureEnabled = enabled;
-      maybeRebuild();
-    },
-    getCurvatureEnabled: () => curvatureEnabled,
-    setRefractionEnabled(enabled) {
-      if (refractionEnabled === enabled) return;
-      refractionEnabled = enabled;
-      // No-op visually while curvature is off — the factor stays 0. Skip the
-      // rebuild; the new value will apply next time curvature is turned on.
-      if (curvatureEnabled) maybeRebuild();
-    },
-    getRefractionEnabled: () => refractionEnabled,
+    // Curvature / refraction state lives in ../curvature.js so the CP
+    // renderers can read the same factor. subscribeCurvatureChange above
+    // rebuilds terrain when the effective factor moves.
+    setCurvatureEnabled,
+    getCurvatureEnabled,
+    setRefractionEnabled,
+    getRefractionEnabled,
     setSunDirection(az, alt) {
       if (sunAz === az && sunAlt === alt) return;
       sunAz = az;

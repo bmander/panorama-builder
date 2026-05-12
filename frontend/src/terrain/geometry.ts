@@ -6,9 +6,14 @@ import {
   tileXToLng,
   tileYToLat,
 } from '../dem.js';
-import { M_PER_DEG_LAT, R_EARTH } from '../geo.js';
+import { M_PER_DEG_LAT } from '../geo.js';
 import { clamp, degToRad } from '../mathx.js';
 import type { LatLng } from '../types.js';
+
+export {
+  CURVATURE_FACTOR_GEOMETRIC,
+  CURVATURE_FACTOR_REFRACTED,
+} from '../curvature.js';
 
 // Ring layout is derived from a single target angular resolution. A pixel of
 // size R subtends ≤ θ at distance ≥ R/θ. At zoom z, tile width T = 40_075_000
@@ -58,19 +63,6 @@ export function computeRings(): readonly RingSpec[] {
   }
   return out;
 }
-
-// Curvature + standard atmospheric refraction. The geometric drop below the
-// tangent plane at distance d from the camera is d²/(2R) (small-angle
-// approximation; correct to <0.2 % at 525 km). Light refracts back toward
-// Earth, raising apparent positions by k·d²/(2R); the surveyor's k = 0.14
-// (the "0.0675 d² km" rule of thumb) cancels part of the drop. Net y-offset:
-// −(1 − k) · d² / (2R), which reaches 73 m at 33 km, 608 m at 95 km, and
-// ~25 km at the outermost ring's horizon.
-const SURVEY_REFRACTION_K = 0.14;
-// drop = factor · d². Curvature off → 0 (flat plane). Curvature on,
-// refraction off → full geometric drop. Both on → drop reduced by k.
-export const CURVATURE_FACTOR_GEOMETRIC = 1 / (2 * R_EARTH);
-export const CURVATURE_FACTOR_REFRACTED = (1 - SURVEY_REFRACTION_K) / (2 * R_EARTH);
 
 // Outer-edge rectangle of a ring in its own zoom's tile-fractional coords.
 // The next-coarser ring uses this to carve a matching hole, halving each

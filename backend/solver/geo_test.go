@@ -75,6 +75,104 @@ func TestBearingENUDueDirections(t *testing.T) {
 	}
 }
 
+func TestLLAECEFRoundTrip(t *testing.T) {
+	cases := []struct {
+		name          string
+		lat, lng, alt float64
+	}{
+		{"equator prime meridian", 0, 0, 0},
+		{"equator with alt", 0, 45, 1234.5},
+		{"mid-lat seattle", 47.6097, -122.3331, 100},
+		{"southern hemisphere", -33.87, 151.21, 12},
+		{"high northern", 78.22, 15.65, -5},
+		{"deep south", -78.22, -15.65, 2500},
+		{"sub-meter delta", 47.6097, -122.3331, 100.001},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			x, y, z := LLAToECEF(c.lat, c.lng, c.alt)
+			lat, lng, alt := ECEFToLLA(x, y, z)
+			if math.Abs(lat-c.lat) > 1e-9 {
+				t.Errorf("lat: got %v want %v (Δ=%v)", lat, c.lat, lat-c.lat)
+			}
+			if math.Abs(lng-c.lng) > 1e-9 {
+				t.Errorf("lng: got %v want %v (Δ=%v)", lng, c.lng, lng-c.lng)
+			}
+			if math.Abs(alt-c.alt) > 1e-3 {
+				t.Errorf("alt: got %v want %v (Δ=%v)", alt, c.alt, alt-c.alt)
+			}
+		})
+	}
+}
+
+func TestLocalENUBasisOrthonormal(t *testing.T) {
+	cases := []struct{ lat, lng float64 }{
+		{0, 0}, {47.61, -122.33}, {-33.87, 151.21}, {78.0, 15.0},
+	}
+	dot := func(a, b [3]float64) float64 {
+		return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]
+	}
+	for _, c := range cases {
+		b := LocalENUBasis(c.lat, c.lng)
+		// Each axis is unit length.
+		if math.Abs(dot(b.East, b.East)-1) > 1e-12 {
+			t.Errorf("east not unit at (%v,%v): |east|²=%v", c.lat, c.lng, dot(b.East, b.East))
+		}
+		if math.Abs(dot(b.North, b.North)-1) > 1e-12 {
+			t.Errorf("north not unit at (%v,%v): |north|²=%v", c.lat, c.lng, dot(b.North, b.North))
+		}
+		if math.Abs(dot(b.Up, b.Up)-1) > 1e-12 {
+			t.Errorf("up not unit at (%v,%v): |up|²=%v", c.lat, c.lng, dot(b.Up, b.Up))
+		}
+		// Pairwise orthogonality.
+		if math.Abs(dot(b.East, b.North)) > 1e-12 {
+			t.Errorf("east·north ≠ 0 at (%v,%v): %v", c.lat, c.lng, dot(b.East, b.North))
+		}
+		if math.Abs(dot(b.East, b.Up)) > 1e-12 {
+			t.Errorf("east·up ≠ 0 at (%v,%v): %v", c.lat, c.lng, dot(b.East, b.Up))
+		}
+		if math.Abs(dot(b.North, b.Up)) > 1e-12 {
+			t.Errorf("north·up ≠ 0 at (%v,%v): %v", c.lat, c.lng, dot(b.North, b.Up))
+		}
+		// Rlocal is in the WGS84 sphere-of-mean-curvature ballpark (~6.36–6.40 Mm).
+		if b.Rlocal < 6.35e6 || b.Rlocal > 6.40e6 {
+			t.Errorf("Rlocal out of range at lat=%v: %v", c.lat, b.Rlocal)
+		}
+	}
+}
+
+func TestBearingFromStationToCPRefraction(t *testing.T) {
+	// Two points at the same altitude (alt=10m) separated by 2 km of north.
+	// Geometric drop = d²/(2R) ≈ 2000²/(2·6.37e6) ≈ 31.4 cm. Refraction
+	// raises the apparent target by k·d²/(2R) = 0.14·31.4 cm ≈ 4.4 cm. So
+	// the predicted elevation should be slightly negative (target appears
+	// below the local horizon) but less negative than the pure geometric
+	// drop would imply.
+	const sLat, sLng = 47.6097, -122.3331
+	const cAlt = 10.0
+	cLat := sLat + 2000.0/MPerDegLat
+	az, el := BearingFromStationToCP(sLat, sLng, cAlt, cLat, sLng, cAlt)
+
+	// Azimuth: due north → 0.
+	if math.Abs(az) > 1e-6 {
+		t.Errorf("az: got %v want ~0 for due north", az)
+	}
+	// Pure geometric drop in radians ≈ d/(2R) = 1000/6.37e6 ≈ 1.57e-4.
+	// With refraction k=0.14, apparent drop = 0.86·d/(2R) ≈ 1.35e-4.
+	// elPred should be ≈ -1.35e-4. Allow 5% slack for the WGS84 vs
+	// spherical Earth and the ellipsoidal vs planar projection.
+	wantEl := -0.86 * 2000.0 / (2 * 6.371e6)
+	if math.Abs(el-wantEl)/math.Abs(wantEl) > 0.05 {
+		t.Errorf("el: got %v want ~%v (within 5%%)", el, wantEl)
+	}
+	// Sanity: refraction should make the predicted elevation less negative
+	// than the no-refraction (pure geometric) drop.
+	geometricDrop := -2000.0 / (2 * 6.371e6)
+	if el <= geometricDrop {
+		t.Errorf("refraction not raising apparent target: el=%v, geometricDrop=%v", el, geometricDrop)
+	}
+}
+
 func TestProjectPOICenterMatchesPose(t *testing.T) {
 	// (u, v) = (0.5, 0.5) is the photo center; az/el should equal photo_az/tilt.
 	cases := []struct {

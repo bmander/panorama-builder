@@ -104,23 +104,35 @@ type slot struct {
 	regWeight float64
 }
 
-// solveContext bundles everything the inner GN loop needs. Working values
-// (stationENU, photoPose, cpENU) live in arrays parallel to problem's slices
-// for O(1) ID lookup via the maps.
+// solveContext bundles everything the inner GN loop needs. Position state
+// is split into a frozen origin (LLA + cached ECEF + local ENU basis) and
+// a mutable per-entity offset (meters in the entity's *own* local tangent
+// plane) — the residual then evaluates each observation in the station's
+// own ENU, so a long baseline no longer inherits the gauge origin's tilt.
+// composeChanges diffs the post-reconciliation result against the raw
+// input value cached in problem.ControlPoints[i], so a class snap surfaces
+// even when the solver itself never moved that slot.
 type solveContext struct {
 	cfg     Config
 	problem Problem
-
-	gaugeLat, gaugeLng float64
 
 	stationIdx map[string]int
 	photoIdx   map[string]int
 	cpIdx      map[string]int
 
-	// Mutable working state (all in ENU meters / radians).
-	stationENU [][3]float64 // (east, north, up); up is read-only (no slot)
-	photoPose  []Pose
-	cpENU      [][3]float64 // (east, north, up)
+	stationOriginLLA  [][3]float64 // (lat°, lng°, alt m)
+	stationOriginECEF [][3]float64
+	stationBasis      []ENUBasis
+	stationOffset     [][3]float64 // slot east/north/up writes here
+
+	photoPose []Pose
+
+	// Post-reconciliation per CP. The raw pre-reconciliation value lives on
+	// problem.ControlPoints[i].{EstLat,EstLng,EstAlt} (never mutated).
+	cpOriginLLA  [][3]float64
+	cpOriginECEF [][3]float64
+	cpBasis      []ENUBasis
+	cpOffset     [][3]float64
 
 	obs        []Observation // observations in scope for this mode
 	slots      []slot        // free parameters (post mode + lock filtering)
@@ -134,12 +146,6 @@ type solveContext struct {
 	// corresponding lock_est_* set; locked classes get no slot.
 	cpAxisRep     [3]map[string]string
 	cpClassMember [3]map[string][]int
-
-	// cpENUOriginal is the cpENU snapshot taken before reconciliation broadcasts
-	// shared-axis values across class members. composeChanges diffs against
-	// this so non-rep members emit a change that reflects both the
-	// reconciliation step and any solver iteration that followed.
-	cpENUOriginal [][3]float64
 
 	// Sparsity index: slotObs[k] = obs indices whose 2-row block depends on
 	// slot k; slotRegRow[k] = the slot's Tikhonov row (or -1). Built once in
@@ -352,48 +358,51 @@ func buildContext(problem Problem, cfg Config) (*solveContext, error) {
 		c.cpIdx[cp.ID] = i
 	}
 
-	gaugeStation, fullyLockedCount := pickGaugeStation(problem.Stations)
+	_, fullyLockedCount := pickGaugeStation(problem.Stations)
 
 	if cfg.Mode == ModeJoint && fullyLockedCount < 2 {
 		return nil, ErrUnderconstrainedGauge
 	}
 
-	switch {
-	case gaugeStation != nil:
-		c.gaugeLat, c.gaugeLng = gaugeStation.Lat, gaugeStation.Lng
-	case cfg.Mode == ModeSingleStation:
-		idx, ok := c.stationIdx[cfg.FocusID]
-		if !ok {
+	if cfg.Mode == ModeSingleStation {
+		if _, ok := c.stationIdx[cfg.FocusID]; !ok {
 			return nil, ErrFocusNotFound
 		}
-		c.gaugeLat, c.gaugeLng = problem.Stations[idx].Lat, problem.Stations[idx].Lng
-	case len(problem.Stations) > 0:
-		c.gaugeLat, c.gaugeLng = problem.Stations[0].Lat, problem.Stations[0].Lng
-	default:
-		return nil, ErrFocusNotFound
 	}
 
-	c.stationENU = make([][3]float64, len(problem.Stations))
+	c.stationOriginLLA = make([][3]float64, len(problem.Stations))
+	c.stationOriginECEF = make([][3]float64, len(problem.Stations))
+	c.stationBasis = make([]ENUBasis, len(problem.Stations))
+	c.stationOffset = make([][3]float64, len(problem.Stations))
 	for i, s := range problem.Stations {
-		e, n, u := LatLngAltToENU(s.Lat, s.Lng, s.Alt, c.gaugeLat, c.gaugeLng, 0)
-		c.stationENU[i] = [3]float64{e, n, u}
+		c.stationOriginLLA[i] = [3]float64{s.Lat, s.Lng, s.Alt}
+		x, y, z := LLAToECEF(s.Lat, s.Lng, s.Alt)
+		c.stationOriginECEF[i] = [3]float64{x, y, z}
+		c.stationBasis[i] = LocalENUBasis(s.Lat, s.Lng)
 	}
+
 	c.photoPose = make([]Pose, len(problem.Photos))
 	for i, p := range problem.Photos {
 		c.photoPose[i] = p.Pose
 	}
-	c.cpENU = make([][3]float64, len(problem.ControlPoints))
-	for i, cp := range problem.ControlPoints {
-		e, n, u := LatLngAltToENU(cp.EstLat, cp.EstLng, cp.EstAlt, c.gaugeLat, c.gaugeLng, 0)
-		c.cpENU[i] = [3]float64{e, n, u}
-	}
 
-	// Snapshot pre-reconciliation cpENU; composeChanges diffs against this.
-	c.cpENUOriginal = make([][3]float64, len(c.cpENU))
-	copy(c.cpENUOriginal, c.cpENU)
+	c.cpOriginLLA = make([][3]float64, len(problem.ControlPoints))
+	c.cpOffset = make([][3]float64, len(problem.ControlPoints))
+	for i, cp := range problem.ControlPoints {
+		c.cpOriginLLA[i] = [3]float64{cp.EstLat, cp.EstLng, cp.EstAlt}
+	}
 
 	c.buildCPAxisClasses()
 	c.reconcileCPClasses()
+
+	// Reconciliation may have snapped CP origins; derive ECEF + basis last.
+	c.cpOriginECEF = make([][3]float64, len(problem.ControlPoints))
+	c.cpBasis = make([]ENUBasis, len(problem.ControlPoints))
+	for i, lla := range c.cpOriginLLA {
+		x, y, z := LLAToECEF(lla[0], lla[1], lla[2])
+		c.cpOriginECEF[i] = [3]float64{x, y, z}
+		c.cpBasis[i] = LocalENUBasis(lla[0], lla[1])
+	}
 
 	if err := c.scopeAndSlots(); err != nil {
 		return nil, err
@@ -526,38 +535,57 @@ func (c *solveContext) buildCPAxisClasses() {
 }
 
 // classAxisLock returns (locked, lockedValue) for the axis class containing
-// the rep CP id. Locked when any member has the corresponding axis lock; the
-// returned value is the locked member's cpENU value on that axis (the first
-// such found).
+// the rep CP id. Locked when any member has the corresponding axis lock;
+// the returned value is the locked member's geodetic component on that
+// axis (lat for axisNorth, lng for axisEast, alt for axisUp), taken from
+// the input problem.
 func (c *solveContext) classAxisLock(axis int, repID string) (bool, float64) {
 	members := c.cpClassMember[axis][repID]
 	for _, idx := range members {
 		cp := c.problem.ControlPoints[idx]
-		var locked bool
 		switch axis {
 		case axisNorth:
-			locked = cp.Locks.EstLat
+			if cp.Locks.EstLat {
+				return true, cp.EstLat
+			}
 		case axisEast:
-			locked = cp.Locks.EstLng
+			if cp.Locks.EstLng {
+				return true, cp.EstLng
+			}
 		case axisUp:
-			locked = cp.Locks.EstAlt
-		}
-		if locked {
-			return true, c.cpENU[idx][axis]
+			if cp.Locks.EstAlt {
+				return true, cp.EstAlt
+			}
 		}
 	}
 	return false, 0
 }
 
-// reconcileCPClasses snaps every class member's cpENU value on each axis to a
-// single chosen value: the locked member's value if any is locked, else the
-// rep's. This guarantees cpENU is internally consistent before the solver
-// reads any residuals — without it, a free class with two members at
-// different starting heights would enter the solver with two different cpENU
-// values that get clobbered by the first writeSlot broadcast.
+// llaIdxFor maps an axisEast/axisNorth/axisUp class index to the
+// corresponding [lat,lng,alt] component in cpOriginLLA / cpProblemLLA.
+func llaIdxFor(axis int) int {
+	switch axis {
+	case axisNorth:
+		return 0 // lat
+	case axisEast:
+		return 1 // lng
+	case axisUp:
+		return 2 // alt
+	}
+	return -1
+}
+
+// reconcileCPClasses snaps every class member's origin LLA on each
+// constrained axis to a single chosen value (the locked member's, else the
+// rep's). After reconciliation the slot offset (which broadcasts across
+// class members) gives identical effective positions on the constrained
+// axis for all members. Without this step, two members of a free class
+// with different starting altitudes would enter the solver with different
+// origin LLAs but a common offset — and silently disagree.
 func (c *solveContext) reconcileCPClasses() {
 	for a := 0; a < 3; a++ {
 		seen := map[string]struct{}{}
+		llaIdx := llaIdxFor(a)
 		for _, cp := range c.problem.ControlPoints {
 			rep := c.cpAxisRep[a][cp.ID]
 			if _, done := seen[rep]; done {
@@ -573,10 +601,10 @@ func (c *solveContext) reconcileCPClasses() {
 			if locked {
 				v = lockedVal
 			} else {
-				v = c.cpENU[c.cpIdx[rep]][a]
+				v = c.cpOriginLLA[c.cpIdx[rep]][llaIdx]
 			}
 			for _, idx := range members {
-				c.cpENU[idx][a] = v
+				c.cpOriginLLA[idx][llaIdx] = v
 			}
 		}
 	}
@@ -710,11 +738,11 @@ func (c *solveContext) writeSlot(k int, v float64) {
 		idx := c.stationIdx[s.id]
 		switch s.name {
 		case "east":
-			c.stationENU[idx][0] = v
+			c.stationOffset[idx][axisEast] = v
 		case "north":
-			c.stationENU[idx][1] = v
+			c.stationOffset[idx][axisNorth] = v
 		case "up":
-			c.stationENU[idx][2] = v
+			c.stationOffset[idx][axisUp] = v
 		}
 	case "photo":
 		idx := c.photoIdx[s.id]
@@ -736,7 +764,7 @@ func (c *solveContext) writeSlot(k int, v float64) {
 		c.photoPose[idx] = p
 	case "control_point":
 		for _, idx := range s.cpMembers {
-			c.cpENU[idx][s.cpAxis] = v
+			c.cpOffset[idx][s.cpAxis] = v
 		}
 	}
 }
@@ -748,11 +776,11 @@ func (c *solveContext) readSlot(k int) float64 {
 		idx := c.stationIdx[s.id]
 		switch s.name {
 		case "east":
-			return c.stationENU[idx][0]
+			return c.stationOffset[idx][axisEast]
 		case "north":
-			return c.stationENU[idx][1]
+			return c.stationOffset[idx][axisNorth]
 		case "up":
-			return c.stationENU[idx][2]
+			return c.stationOffset[idx][axisUp]
 		}
 	case "photo":
 		idx := c.photoIdx[s.id]
@@ -775,14 +803,25 @@ func (c *solveContext) readSlot(k int) float64 {
 		idx := c.cpIdx[s.id]
 		switch s.name {
 		case "east":
-			return c.cpENU[idx][0]
+			return c.cpOffset[idx][axisEast]
 		case "north":
-			return c.cpENU[idx][1]
+			return c.cpOffset[idx][axisNorth]
 		case "up":
-			return c.cpENU[idx][2]
+			return c.cpOffset[idx][axisUp]
 		}
 	}
 	return 0
+}
+
+// currentECEF returns origin + offset·basis. The zero-offset shortcut
+// matters at solve start (every entity has offset 0) and for any locked
+// entity (offset stays 0 throughout).
+func currentECEF(origin [3]float64, basis ENUBasis, off [3]float64) [3]float64 {
+	if off == ([3]float64{}) {
+		return origin
+	}
+	x, y, z := ApplyOffsetECEF(origin, basis, off[axisEast], off[axisNorth], off[axisUp])
+	return [3]float64{x, y, z}
 }
 
 func (c *solveContext) readState() []float64 {
@@ -803,6 +842,12 @@ func (c *solveContext) applyState(state []float64) {
 // observation. Uses cached entity indices (obsStationIdx/PhotoIdx/CPIdx) so
 // the inner FD loop never touches the per-ID maps.
 //
+// The CP-relative position is computed in the *station's* own local ENU:
+// reconstruct each entity's effective ECEF (origin + slot offset · basis),
+// take the ECEF delta, project into the station's basis, and add the
+// k=0.14 atmospheric refraction correction. The geometric Earth-curvature
+// drop is implicit in the ECEF math; only refraction needs an explicit term.
+//
 // az-row = WrapPi(az_pred − az_target) · cos(el_target),
 // el-row = el_pred − el_target. The cos(el) weight makes 1° at the horizon
 // weigh more arc-length than 1° near the zenith.
@@ -813,9 +858,12 @@ func (c *solveContext) computeOneObsResidual(k int) (float64, float64) {
 	sIdx := c.obsStationIdx[k]
 	cpIdx := c.obsCPIdx[k]
 
-	dE := c.cpENU[cpIdx][0] - c.stationENU[sIdx][0]
-	dN := c.cpENU[cpIdx][1] - c.stationENU[sIdx][1]
-	dU := c.cpENU[cpIdx][2] - c.stationENU[sIdx][2]
+	sECEF := currentECEF(c.stationOriginECEF[sIdx], c.stationBasis[sIdx], c.stationOffset[sIdx])
+	cECEF := currentECEF(c.cpOriginECEF[cpIdx], c.cpBasis[cpIdx], c.cpOffset[cpIdx])
+	basis := c.stationBasis[sIdx]
+	dE, dN, dU := ProjectECEFDeltaToLocalENU(
+		cECEF[0]-sECEF[0], cECEF[1]-sECEF[1], cECEF[2]-sECEF[2], basis)
+	dU += RefractionK * (dE*dE + dN*dN) / (2 * basis.Rlocal)
 
 	azPred, elPred := ProjectPOI(pose, o.U, o.V)
 	azTgt, elTgt := BearingENU(dE, dN, dU)
@@ -1018,13 +1066,14 @@ func (c *solveContext) solveNormalEquations(J *mat.Dense, r []float64, live []in
 	return dx, true
 }
 
-// composeChanges diffs the initial vs. final state and emits one
-// EntityChange per touched entity, with positions converted back to lat/lng.
-//
-// Because the ENU projection is flat-earth and axis-aligned, the mapping is
-// independent per axis: north ↔ lat, east ↔ lng, up ↔ alt. We can therefore
-// translate each slot's before/after directly without consulting other slots
-// of the same entity.
+// composeChanges emits one EntityChange per entity whose effective LLA (or
+// photo intrinsic) moved by more than the FD scale. Photo slots use the raw
+// initial/final slot values; station and CP positions are reconstructed
+// from origin + slot-offset and round-tripped through ECEFToLLA so the
+// emitted lat/lng/alt reflect the per-station tangent-plane semantics
+// (and the CP "before" column carries the pre-reconciliation problem
+// value, so a snap surfaces even when the solver itself didn't move that
+// member's slot).
 func (c *solveContext) composeChanges(initial, final []float64) []EntityChange {
 	type acc struct {
 		before map[string]float64
@@ -1042,11 +1091,9 @@ func (c *solveContext) composeChanges(initial, final []float64) []EntityChange {
 	photos := map[string]*acc{}
 	cps := map[string]*acc{}
 
-	cosLat0 := math.Cos(c.gaugeLat * math.Pi / 180)
-
+	// Photo slots: scalar before/after, no LLA round-trip.
 	for k, s := range c.slots {
-		if s.kind == "control_point" {
-			// CPs diffed via cpENU below — slot vector only carries the rep.
+		if s.kind != "photo" {
 			continue
 		}
 		bf := initial[k]
@@ -1054,48 +1101,72 @@ func (c *solveContext) composeChanges(initial, final []float64) []EntityChange {
 		if math.Abs(bf-af) <= s.scale {
 			continue
 		}
-		switch s.kind {
-		case "station":
-			a := get(stations, s.id)
-			switch s.name {
-			case "north":
-				a.before["lat"] = c.gaugeLat + bf/MPerDegLat
-				a.after["lat"] = c.gaugeLat + af/MPerDegLat
-			case "east":
-				a.before["lng"] = c.gaugeLng + bf/(MPerDegLat*cosLat0)
-				a.after["lng"] = c.gaugeLng + af/(MPerDegLat*cosLat0)
-			case "up":
-				a.before["alt"] = bf
-				a.after["alt"] = af
-			}
-		case "photo":
-			a := get(photos, s.id)
-			a.before[s.name] = bf
-			a.after[s.name] = af
+		a := get(photos, s.id)
+		a.before[s.name] = bf
+		a.after[s.name] = af
+	}
+
+	// Stations: round-trip current ECEF to LLA, diff against problem input.
+	for i, st := range c.problem.Stations {
+		off := c.stationOffset[i]
+		if off == ([3]float64{}) {
+			continue
+		}
+		ecef := currentECEF(c.stationOriginECEF[i], c.stationBasis[i], off)
+		afterLat, afterLng, afterAlt := ECEFToLLA(ecef[0], ecef[1], ecef[2])
+		a := get(stations, st.ID)
+		emitLLADiff(a.before, a.after, "",
+			[3]float64{st.Lat, st.Lng, st.Alt},
+			[3]float64{afterLat, afterLng, afterAlt})
+		if len(a.after) == 0 {
+			delete(stations, st.ID)
 		}
 	}
 
-	// Per-CP per-axis diff against the pre-reconciliation snapshot — captures
-	// both reconciliation and any iteration that followed.
-	for i, cp := range c.problem.ControlPoints {
-		for axis := 0; axis < 3; axis++ {
-			before := c.cpENUOriginal[i][axis]
-			after := c.cpENU[i][axis]
-			if math.Abs(before-after) <= fdEpsPosM {
-				continue
-			}
-			a := get(cps, cp.ID)
-			switch axis {
-			case axisEast:
-				a.before["est_lng"] = c.gaugeLng + before/(MPerDegLat*cosLat0)
-				a.after["est_lng"] = c.gaugeLng + after/(MPerDegLat*cosLat0)
-			case axisNorth:
-				a.before["est_lat"] = c.gaugeLat + before/MPerDegLat
-				a.after["est_lat"] = c.gaugeLat + after/MPerDegLat
-			case axisUp:
-				a.before["est_alt"] = before
-				a.after["est_alt"] = after
-			}
+	// CPs: per-axis "after" value is sourced from the rep of each CP's axis
+	// class so members on a shared axis emit bit-exact equal output. Locked
+	// classes shortcut to the rep's origin LLA (already snapped to the
+	// user's value in reconcileCPClasses), bypassing ECEF round-trip
+	// roundoff (~µm). lockedRep[axis][rep] memoizes classAxisLock so
+	// emission is O(n_CP·3) hash lookups instead of O(n_CP·n_member·3).
+	afterLLA := make([][3]float64, len(c.problem.ControlPoints))
+	for i := range c.problem.ControlPoints {
+		// Unmoved CPs (locked or out-of-scope) keep their post-reconciliation
+		// origin LLA verbatim, skipping the ECEF round-trip and its ~µm noise.
+		if c.cpOffset[i] == ([3]float64{}) {
+			afterLLA[i] = c.cpOriginLLA[i]
+			continue
+		}
+		ecef := currentECEF(c.cpOriginECEF[i], c.cpBasis[i], c.cpOffset[i])
+		lat, lng, alt := ECEFToLLA(ecef[0], ecef[1], ecef[2])
+		afterLLA[i] = [3]float64{lat, lng, alt}
+	}
+	var lockedRep [3]map[string]bool
+	for axis := 0; axis < 3; axis++ {
+		lockedRep[axis] = make(map[string]bool, len(c.cpClassMember[axis]))
+		for repID := range c.cpClassMember[axis] {
+			locked, _ := c.classAxisLock(axis, repID)
+			lockedRep[axis][repID] = locked
+		}
+	}
+	cpAxisAfter := func(cp ControlPoint, axis int) float64 {
+		repID := c.cpAxisRep[axis][cp.ID]
+		repIdx := c.cpIdx[repID]
+		if lockedRep[axis][repID] {
+			return c.cpOriginLLA[repIdx][llaIdxFor(axis)]
+		}
+		return afterLLA[repIdx][llaIdxFor(axis)]
+	}
+	for _, cp := range c.problem.ControlPoints {
+		afterLat := cpAxisAfter(cp, axisNorth)
+		afterLng := cpAxisAfter(cp, axisEast)
+		afterAlt := cpAxisAfter(cp, axisUp)
+		a := get(cps, cp.ID)
+		emitLLADiff(a.before, a.after, "est_",
+			[3]float64{cp.EstLat, cp.EstLng, cp.EstAlt},
+			[3]float64{afterLat, afterLng, afterAlt})
+		if len(a.after) == 0 {
+			delete(cps, cp.ID)
 		}
 	}
 
@@ -1110,6 +1181,30 @@ func (c *solveContext) composeChanges(initial, final []float64) []EntityChange {
 		out = append(out, EntityChange{Kind: "control_point", ID: id, Before: a.before, After: a.after})
 	}
 	return out
+}
+
+// emitLLADiff writes before/after entries (`prefix`+lat|lng|alt) for any
+// axis whose change exceeds fdEpsPosM in linear meters at the entity's own
+// latitude. Used by composeChanges (prefix `""` for stations, `"est_"` for
+// CPs) and by mergeSeededCPChanges.
+func emitLLADiff(
+	before, after map[string]float64,
+	prefix string,
+	beforeLLA, afterLLA [3]float64,
+) {
+	if math.Abs(afterLLA[0]-beforeLLA[0])*MPerDegLat > fdEpsPosM {
+		before[prefix+"lat"] = beforeLLA[0]
+		after[prefix+"lat"] = afterLLA[0]
+	}
+	cosLat := math.Cos(beforeLLA[0] * math.Pi / 180)
+	if math.Abs(afterLLA[1]-beforeLLA[1])*MPerDegLat*cosLat > fdEpsPosM {
+		before[prefix+"lng"] = beforeLLA[1]
+		after[prefix+"lng"] = afterLLA[1]
+	}
+	if math.Abs(afterLLA[2]-beforeLLA[2]) > fdEpsPosM {
+		before[prefix+"alt"] = beforeLLA[2]
+		after[prefix+"alt"] = afterLLA[2]
+	}
 }
 
 func clampSize(v float64) float64 {

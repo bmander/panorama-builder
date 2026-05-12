@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import type { LatLng } from './types.js';
 import { applyGroupTransform } from './camera-anchored.js';
 import { makeCanvasTexture } from './canvas-texture.js';
+import { curvatureDrop, subscribeCurvatureChange } from './curvature.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
 import { norm2 } from './mathx.js';
 
@@ -90,7 +91,7 @@ export function createDotLayer({ scene, requestRender }: CreateDotLayerOptions):
       for (let i = 0; i < N; i++) {
         const d = lastDots[i]!;
         const { x, z } = latLngToCameraRelativeMeters(d.anchor, lastCamLoc);
-        const y = d.altitude - lastCameraHeight;
+        const y = d.altitude - lastCameraHeight - curvatureDrop(x * x + z * z);
         positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
         colors[i * 3] = d.color.r; colors[i * 3 + 1] = d.color.g; colors[i * 3 + 2] = d.color.b;
       }
@@ -106,6 +107,11 @@ export function createDotLayer({ scene, requestRender }: CreateDotLayerOptions):
     }
     applyGroupTransform(group, builtCamLoc, builtCameraHeight, lastCamLoc, lastCameraHeight);
   }
+
+  subscribeCurvatureChange(() => {
+    rebuild();
+    requestRender();
+  });
 
   return {
     setVisible(visible) { group.visible = visible; },
@@ -144,7 +150,7 @@ export function findHitDot<T extends { anchor: LatLng; altitude: number }>(
   const halfH = viewportHeight / 2;
   for (const dot of dots) {
     const { x, z } = latLngToCameraRelativeMeters(dot.anchor, cameraLocation);
-    const y = dot.altitude - cameraHeight;
+    const y = dot.altitude - cameraHeight - curvatureDrop(x * x + z * z);
     _projected.set(x, y, z).project(camera);
     if (_projected.z > 1) continue;
     const dPx = norm2((_projected.x - ndc.x) * halfW, (_projected.y - ndc.y) * halfH);

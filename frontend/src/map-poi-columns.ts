@@ -16,6 +16,7 @@
 
 import * as THREE from 'three';
 import type { LatLng, ControlPointView } from './types.js';
+import { curvatureDrop, subscribeCurvatureChange } from './curvature.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
 import { createDotLayer } from './dot-layer.js';
 import type { Dot } from './dot-layer.js';
@@ -109,12 +110,13 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
       const color = highlighted ? colorSelected : colorDefault;
       const lineMaterial = highlighted ? lineMatSel : lineMat;
       const { x, z } = latLngToCameraRelativeMeters(m.anchor, lastCamLoc);
+      const drop = curvatureDrop(x * x + z * z);
       if (m.altitude === null) {
-        addLine(lineMaterial, x, -COLUMN_HALF_HEIGHT, z, x, COLUMN_HALF_HEIGHT, z);
+        addLine(lineMaterial, x, -COLUMN_HALF_HEIGHT - drop, z, x, COLUMN_HALF_HEIGHT - drop, z);
         continue;
       }
       dotList.push({ anchor: m.anchor, altitude: m.altitude, color });
-      const y = m.altitude - lastCameraHeight;
+      const y = m.altitude - lastCameraHeight - drop;
       for (const poi of m.observations) {
         poi.getWorldPosition(scratch);
         addLine(lineMaterial, x, y, z, scratch.x, scratch.y, scratch.z);
@@ -131,6 +133,9 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
   ): void {
     lineGroup.add(makeOverlayLine([ax, ay, az, bx, by, bz], mat));
   }
+
+  // Dots are baked by dot-layer, which subscribes independently.
+  subscribeCurvatureChange(rebuild);
 
   return {
     setVisible(visible) { dots.setVisible(visible); lineGroup.visible = visible; },
@@ -172,15 +177,16 @@ export function findHitColumn(
   for (const cp of controlPoints) {
     if (cp.estLat === null || cp.estLng === null) continue;
     const { x, z } = latLngToCameraRelativeMeters({ lat: cp.estLat, lng: cp.estLng }, cameraLocation);
+    const drop = curvatureDrop(x * x + z * z);
     let dist: number;
     if (cp.estAlt !== null) {
-      const y = cp.estAlt - cameraHeight;
+      const y = cp.estAlt - cameraHeight - drop;
       _proj.set(x, y, z).project(camera);
       if (_proj.z > 1) continue;
       dist = norm2(_proj.x - ndc.x, _proj.y - ndc.y);
     } else {
-      _colBot.set(x, -COLUMN_HIT_HALF_HEIGHT, z);
-      _colTop.set(x, COLUMN_HIT_HALF_HEIGHT, z);
+      _colBot.set(x, -COLUMN_HIT_HALF_HEIGHT - drop, z);
+      _colTop.set(x, COLUMN_HIT_HALF_HEIGHT - drop, z);
       dist = ndcDistToProjectedSegment(ndc, _colBot, _colTop, camera, false);
     }
     if (dist < bestDist) {

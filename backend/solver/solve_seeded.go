@@ -1,7 +1,5 @@
 package solver
 
-import "math"
-
 type cpSnap struct{ lat, lng, alt float64 }
 
 // SolveJointWithSeed runs a single-CP pre-solve for each id in seededCPIDs
@@ -94,10 +92,10 @@ func applyCPAfter(cp *ControlPoint, changes []EntityChange) {
 }
 
 // mergeSeededCPChanges replaces joint-phase control_point entries for any
-// seeded CP with a synthetic entry whose Before is the pre-pre-solve value.
-// Per-axis emission matches composeChanges' fdEpsPosM threshold (in ENU
-// meters, with cos(lat) for longitude) so a seeded CP whose pre-solve and
-// joint phase both produced no movement leaves the DB row untouched.
+// seeded CP with a synthetic entry whose Before is the pre-pre-solve value
+// (so a seeded CP that pre-solve refined and joint left alone still
+// persists). emitLLADiff applies the same per-axis fdEpsPosM threshold as
+// composeChanges, evaluated at the CP's own latitude.
 func mergeSeededCPChanges(jointChanges []EntityChange, problem Problem, cpIdx map[string]int, snap map[string]cpSnap) []EntityChange {
 	out := make([]EntityChange, 0, len(jointChanges)+len(snap))
 	for _, c := range jointChanges {
@@ -108,42 +106,17 @@ func mergeSeededCPChanges(jointChanges []EntityChange, problem Problem, cpIdx ma
 		}
 		out = append(out, c)
 	}
-	cosLat0 := math.Cos(gaugeLatFor(problem) * math.Pi / 180)
-	const epsLatDeg = fdEpsPosM / MPerDegLat
 	for id, s := range snap {
 		cp := problem.ControlPoints[cpIdx[id]]
 		before := map[string]float64{}
 		after := map[string]float64{}
-		if math.Abs(cp.EstLat-s.lat) > epsLatDeg {
-			before["est_lat"] = s.lat
-			after["est_lat"] = cp.EstLat
-		}
-		if math.Abs(cp.EstLng-s.lng) > epsLatDeg/cosLat0 {
-			before["est_lng"] = s.lng
-			after["est_lng"] = cp.EstLng
-		}
-		if math.Abs(cp.EstAlt-s.alt) > fdEpsPosM {
-			before["est_alt"] = s.alt
-			after["est_alt"] = cp.EstAlt
-		}
+		emitLLADiff(before, after, "est_",
+			[3]float64{s.lat, s.lng, s.alt},
+			[3]float64{cp.EstLat, cp.EstLng, cp.EstAlt})
 		if len(after) == 0 {
 			continue
 		}
 		out = append(out, EntityChange{Kind: "control_point", ID: id, Before: before, After: after})
 	}
 	return out
-}
-
-// gaugeLatFor mirrors buildContext's gauge selection just enough to scale
-// the longitude threshold consistently with composeChanges.
-func gaugeLatFor(problem Problem) float64 {
-	for _, s := range problem.Stations {
-		if s.Locks.Lat && s.Locks.Lng {
-			return s.Lat
-		}
-	}
-	if len(problem.Stations) > 0 {
-		return problem.Stations[0].Lat
-	}
-	return 0
 }

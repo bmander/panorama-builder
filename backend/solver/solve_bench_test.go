@@ -68,11 +68,9 @@ func buildJointBenchWorld(stationCount, cpCount int, seed int64) synth.World {
 
 	visibleIn := make([][]int, cpCount)
 	for ci, cp := range cps {
-		cpE, cpN, cpU := solver.LatLngAltToENU(cp.EstLat, cp.EstLng, cp.EstAlt, gaugeLat, gaugeLng, 0)
 		for pi, p := range photos {
 			st := stationsByID(stations, p.StationID)
-			stE, stN, _ := solver.LatLngAltToENU(st.Lat, st.Lng, 0, gaugeLat, gaugeLng, 0)
-			az, el := solver.BearingENU(cpE-stE, cpN-stN, cpU)
+			az, el := solver.BearingFromStationToCP(st.Lat, st.Lng, 0, cp.EstLat, cp.EstLng, cp.EstAlt)
 			u, v, ok := synth.InverseProjectToUV(p.Pose, az, el)
 			if !ok {
 				continue
