@@ -17,6 +17,7 @@ type Schemas = components['schemas'];
 
 export type ApiStation = Schemas['Station'];
 export type ApiPhoto = Schemas['Photo'];
+export type ApiPhotoListItem = Schemas['PhotoListItem'];
 export type ApiImageMeasurement = Schemas['ImageMeasurement'];
 export type ApiControlPoint = Schemas['ControlPoint'];
 export type ApiHydratedStation = Schemas['HydratedStation'];
@@ -133,8 +134,8 @@ export function deleteStation(id: string): Promise<void> {
 
 // --- Photos ---
 
-export function listPhotos(): Promise<ApiPhoto[]> {
-  return request<ApiPhoto[]>('GET', '/photos');
+export function listPhotos(): Promise<ApiPhotoListItem[]> {
+  return request<ApiPhotoListItem[]>('GET', '/photos');
 }
 
 export function createPhoto(stationId: string, init: PhotoPosePatch): Promise<ApiPhoto> {

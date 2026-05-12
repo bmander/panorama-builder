@@ -19,7 +19,7 @@ function createObservationClip(m: api.ApiControlPointImageObservation): HTMLElem
   const top = CLIP_SIZE_PX / 2 - (1 - m.v) * scaledH;
   const a = document.createElement('a');
   a.className = 'clip';
-  a.href = stationHref(m.station_id, m.id);
+  a.href = stationHref(m.station_id, { focusImageId: m.id });
   const img = document.createElement('img');
   img.src = api.photoBlobUrl(m.photo_id);
   img.alt = '';
@@ -417,7 +417,7 @@ function renderObservations(obs: api.ApiControlPointObservations): void {
     const meta = document.createElement('span');
     meta.className = 'meta';
     const a = document.createElement('a');
-    a.href = stationHref(m.station_id, m.id);
+    a.href = stationHref(m.station_id, { focusImageId: m.id });
     a.textContent = stationLabel(m.station_id, m.station_name);
     const captured = document.createElement('span');
     captured.className = 'captured-at';
@@ -453,7 +453,7 @@ function renderVisiblePhotos(
     const meta = document.createElement('span');
     meta.className = 'meta';
     const a = document.createElement('a');
-    a.href = stationHref(p.station_id);
+    a.href = stationHref(p.station_id, { focusControlPointId: cp.id });
     a.textContent = stationLabel(p.station_id, p.station_name);
     const captured = document.createElement('span');
     captured.className = 'captured-at';

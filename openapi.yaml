@@ -166,10 +166,13 @@ paths:
   /photos:
     get:
       tags: [photos]
-      summary: List all photos
+      summary: List all photos with per-photo observation counts
       description: |
         Returns every photo in the system (or session overlay when an
-        `X-Session-Id` header is set), ordered by created_at ASC.
+        `X-Session-Id` header is set), ordered by created_at ASC. Each
+        item also carries `observation_count` — the number of image
+        measurements anchored on that photo (counted from the main DB
+        only, so in-session inserts/deletes are not reflected).
       operationId: listPhotos
       responses:
         '200':
@@ -178,7 +181,7 @@ paths:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/Photo' }
+                items: { $ref: '#/components/schemas/PhotoListItem' }
 
   /photos/{id}:
     parameters:
@@ -915,6 +918,16 @@ components:
         lock_dist_k2: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    PhotoListItem:
+      type: object
+      description: |
+        Listing-only wrapper around Photo that adds the count of image
+        measurements anchored on this photo.
+      required: [photo, observation_count]
+      properties:
+        photo: { $ref: '#/components/schemas/Photo' }
+        observation_count: { type: integer, minimum: 0 }
 
     ImageMeasurement:
       type: object

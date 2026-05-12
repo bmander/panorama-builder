@@ -527,6 +527,13 @@ type Photo struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// PhotoListItem Listing-only wrapper around Photo that adds the count of image
+// measurements anchored on this photo.
+type PhotoListItem struct {
+	ObservationCount int   `json:"observation_count"`
+	Photo            Photo `json:"photo"`
+}
+
 // PhotoPosePatch POST body for `POST /stations/{id}/photos`. Pose fields are
 // required; opacity / lock_* / dist_k* default if omitted.
 type PhotoPosePatch struct {

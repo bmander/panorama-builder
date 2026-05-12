@@ -308,11 +308,17 @@ export function makeListCell(
 // CP-page id parser stay in sync.
 export const ID_RE = /^[A-Z2-7]{13}$/;
 
-// Optional `focusImageId` deep-links the station page to recenter the 360°
-// camera on a specific image measurement after hydrate.
-export function stationHref(stationId: string, focusImageId?: string): string {
+// Optional focus deep-links the station page to recenter the 360° camera
+// on a specific entity after hydrate. focusImageId and focusControlPointId
+// are mutually exclusive in practice; if both are set the station page
+// applies focusControlPointId.
+export function stationHref(
+  stationId: string,
+  opts: { focusImageId?: string; focusControlPointId?: string } = {},
+): string {
   const params = new URLSearchParams({ sta: stationId });
-  if (focusImageId) params.set('focus', focusImageId);
+  if (opts.focusImageId) params.set(FOCUS_QUERY_PARAM, opts.focusImageId);
+  if (opts.focusControlPointId) params.set(FOCUS_CP_QUERY_PARAM, opts.focusControlPointId);
   return `/world?${params.toString()}`;
 }
 
@@ -322,6 +328,7 @@ export function parseStaFromURL(): string | null {
   return sta && ID_RE.test(sta) ? sta : null;
 }
 export const FOCUS_QUERY_PARAM = 'focus';
+export const FOCUS_CP_QUERY_PARAM = 'focus_cp';
 
 // Index map deep-link: pan/zoom and open the popup for a specific control point.
 export const indexCpHref = (cpId: string): string => `/?cp=${cpId}`;

@@ -103,9 +103,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List all photos
+         * List all photos with per-photo observation counts
          * @description Returns every photo in the system (or session overlay when an
-         *     `X-Session-Id` header is set), ordered by created_at ASC.
+         *     `X-Session-Id` header is set), ordered by created_at ASC. Each
+         *     item also carries `observation_count` — the number of image
+         *     measurements anchored on that photo (counted from the main DB
+         *     only, so in-session inserts/deletes are not reflected).
          */
         get: operations["listPhotos"];
         put?: never;
@@ -693,6 +696,14 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /**
+         * @description Listing-only wrapper around Photo that adds the count of image
+         *     measurements anchored on this photo.
+         */
+        PhotoListItem: {
+            photo: components["schemas"]["Photo"];
+            observation_count: number;
         };
         /**
          * @description Reticle anchor on a photo at (u, v): the user identifies that
@@ -1369,7 +1380,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Photo"][];
+                    "application/json": components["schemas"]["PhotoListItem"][];
                 };
             };
         };

@@ -35,12 +35,26 @@ func (s *Server) listPhotos(w http.ResponseWriter, r *http.Request) {
 		s.listPhotosInSession(w, r, sess)
 		return
 	}
-	out, err := s.allPhotos(r.Context())
+	ctx := r.Context()
+	photos, err := s.allPhotos(ctx)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	counts, err := s.observationCountsByPhoto(ctx)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, photosWithCounts(photos, counts))
+}
+
+func photosWithCounts(photos []Photo, counts map[string]int) []PhotoListItem {
+	out := make([]PhotoListItem, len(photos))
+	for i, p := range photos {
+		out[i] = PhotoListItem{Photo: p, ObservationCount: counts[p.ID]}
+	}
+	return out
 }
 
 func (s *Server) postPhoto(w http.ResponseWriter, r *http.Request) {

@@ -50,6 +50,7 @@ import { attachSolveActions } from './solve-actions.js';
 export interface MountStationPageOptions {
   initialStationId: string;
   focusImageMeasurementId: string | null;
+  focusControlPointId: string | null;
 }
 
 const SHIFT_WHEEL_LOG_PER_PX = 0.005;
@@ -59,6 +60,10 @@ const FOCUS_FOV_DEG = 25;
 
 export async function mountStationPage(opts: MountStationPageOptions): Promise<void> {
   const { initialStationId, focusImageMeasurementId } = opts;
+  // Mutable so the URL-driven CP focus relaxes the lifespan / show-all-CPs
+  // filter only while we're still on the station that owns this deep-link.
+  // Cleared whenever applyStation swaps to a different station id.
+  let focusedCpId = opts.focusControlPointId;
   // Mutable so loadStation(newId) can swap which station this mount is
   // bound to without recreating viewer / listeners / modals.
   let stationId = initialStationId;
@@ -226,7 +231,9 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     }
     return overlays.controlPoints.list().filter(cp => {
       if (cp.estLat === null || cp.estLng === null) return false;
-      const isObserved = observed.has(cp.id);
+      // A focus_cp deep-link forces the CP to show through both gates.
+      const forced = cp.id === focusedCpId;
+      const isObserved = forced || observed.has(cp.id);
       if (!showAllCPs && !isObserved) return false;
       if (capturedMs !== null && !isObserved && !isExtantAt(cp, capturedMs)) return false;
       return true;
@@ -800,6 +807,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   // station-clicks should pushState first; popstate just calls this.
   async function applyStation(newId: string, prefetched?: ApiHydratedStation): Promise<void> {
     if (newId === stationId) return;
+    focusedCpId = null;
     stationId = newId;
     syncViewOnMapHref();
     clearStationData();
@@ -962,6 +970,19 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     return true;
   }
 
+  function focusCameraOnControlPoint(id: string): boolean {
+    const cp = overlays.controlPoints.getById(id);
+    if (cp?.estLat == null || cp.estLng == null || cp.estAlt == null) return false;
+    const camLoc = getCameraLocation();
+    if (!camLoc) return false;
+    const { x, z } = latLngToCameraRelativeMeters({ lat: cp.estLat, lng: cp.estLng }, camLoc);
+    const y = cp.estAlt - terrain.getCameraMSL();
+    const { az, alt } = vecToAzAlt(x, y, z);
+    viewer.setAzAlt(az, alt);
+    viewer.setFov(FOCUS_FOV_DEG);
+    return true;
+  }
+
   viewer.setCanvasVisible(true);
   hud.setVisible(true);
 
@@ -969,7 +990,11 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   overlays.photos.setSelected(null);
   overlays.measurements.setSelected(null);
   admin.setVisible(true);
-  if (focusImageMeasurementId && !focusCameraOnImageMeasurement(focusImageMeasurementId)) {
+  if (focusedCpId) {
+    if (!focusCameraOnControlPoint(focusedCpId)) {
+      console.warn('focus control point not resolvable:', focusedCpId);
+    }
+  } else if (focusImageMeasurementId && !focusCameraOnImageMeasurement(focusImageMeasurementId)) {
     console.warn('focus image measurement not found:', focusImageMeasurementId);
   }
 

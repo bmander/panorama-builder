@@ -234,18 +234,24 @@ func (s *Server) getStationInSession(w http.ResponseWriter, r *http.Request, ses
 
 // Bbox filters from the non-session endpoints are dropped here — the index
 // page calls these without a bbox.
+func mergeListInSession[T any](
+	overlay sessionOverlay, entityType string,
+	fetchAll func() ([]T, error), idOf func(T) string,
+) ([]T, error) {
+	base, err := fetchAll()
+	if err != nil {
+		return nil, err
+	}
+	return mergeOverlay(base, overlay[entityType],
+		idOf, decodeJSON[T], func(T) bool { return true })
+}
+
 func writeListInSession[T any](
 	w http.ResponseWriter, overlay sessionOverlay,
 	entityType string,
 	fetchAll func() ([]T, error), idOf func(T) string,
 ) {
-	base, err := fetchAll()
-	if err != nil {
-		writeErrorFromDB(w, err)
-		return
-	}
-	out, err := mergeOverlay(base, overlay[entityType],
-		idOf, decodeJSON[T], func(T) bool { return true })
+	out, err := mergeListInSession(overlay, entityType, fetchAll, idOf)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -296,9 +302,19 @@ func (s *Server) listPhotosInSession(w http.ResponseWriter, r *http.Request, ses
 		writeErrorFromDB(w, err)
 		return
 	}
-	writeListInSession(w, overlay, entityPhoto,
+	photos, err := mergeListInSession(overlay, entityPhoto,
 		func() ([]Photo, error) { return s.allPhotos(ctx) },
 		func(p Photo) string { return p.ID })
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	counts, err := s.observationCountsByPhoto(ctx)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, photosWithCounts(photos, counts))
 }
 
 // --- Photos ---

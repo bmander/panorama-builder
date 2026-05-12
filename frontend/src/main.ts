@@ -5,7 +5,8 @@
 //   /world (no sta)    → redirect to /.
 
 import {
-  FOCUS_QUERY_PARAM, ID_RE, INDEX_CP_QUERY_PARAM, INDEX_STATION_QUERY_PARAM,
+  FOCUS_CP_QUERY_PARAM, FOCUS_QUERY_PARAM,
+  ID_RE, INDEX_CP_QUERY_PARAM, INDEX_STATION_QUERY_PARAM,
   getElement, parseStaFromURL,
 } from './types.js';
 import { mountStationPage } from './station-page.js';
@@ -33,6 +34,7 @@ if (location.pathname === '/world') {
     void mountStationPage({
       initialStationId: sta,
       focusImageMeasurementId: focusParam(FOCUS_QUERY_PARAM),
+      focusControlPointId: focusParam(FOCUS_CP_QUERY_PARAM),
     });
   }
 } else {

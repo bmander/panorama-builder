@@ -292,6 +292,28 @@ func (s *Server) imageMeasurementsByControlPoint(ctx context.Context, cpID strin
 	return out, rows.Err()
 }
 
+// observationCountsByPhoto returns, for every photo with at least one
+// image measurement, the count of measurements anchored on that photo.
+// Reads from main only; in-session inserts/deletes are not reflected.
+func (s *Server) observationCountsByPhoto(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT photo_id, COUNT(*) FROM image_measurements GROUP BY photo_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
+
 // allPhotos returns every photo row from main. The visible-photos endpoint
 // needs the full set so the overlay can append session-only inserts.
 func (s *Server) allPhotos(ctx context.Context) ([]Photo, error) {
