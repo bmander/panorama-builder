@@ -29,13 +29,20 @@ export function fetchTileElevations(
 ): Promise<Float32Array | null> {
   const k = tileKey(z, x, y);
   return cache.fetch(k, async () => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
+    let bitmap: ImageBitmap;
     try {
-      await new Promise<void>((resolve, reject) => {
-        img.onload = (): void => { resolve(); };
-        img.onerror = (): void => { reject(new Error(`Failed to load DEM ${k}`)); };
-        img.src = `${TILE_URL}/${k}.png`;
+      const res = await fetch(`${TILE_URL}/${k}.png`);
+      if (!res.ok) throw new Error(`HTTP ${res.status.toString()}`);
+      // colorSpaceConversion:'none' + premultiplyAlpha:'none' keeps the raw
+      // 8-bit PNG bytes intact. The Terrarium encoding packs elevation as
+      // R*256 + G + B/256, so any browser color-management nudge on R is
+      // worth 256 m per unit — that's what shows up as isolated downward
+      // pixel spikes at the pixels where the round-trip would have flipped a
+      // byte. Decoding via createImageBitmap with these flags (rather than
+      // HTMLImageElement + drawImage) bypasses the color-managed path.
+      bitmap = await createImageBitmap(await res.blob(), {
+        colorSpaceConversion: 'none',
+        premultiplyAlpha: 'none',
       });
     } catch (err) {
       console.warn('[dem] tile fetch failed:', err);
@@ -45,8 +52,11 @@ export function fetchTileElevations(
     const canvas = document.createElement('canvas');
     canvas.width = TILE_PX;
     canvas.height = TILE_PX;
-    const ctx = canvas.getContext('2d')!;
-    ctx.drawImage(img, 0, 0);
+    // willReadFrequently: software-backed canvas. The GPU-backed path can
+    // also subtly perturb readback bytes; the software backend is bit-exact.
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
     const pixels = ctx.getImageData(0, 0, TILE_PX, TILE_PX).data;
 
     const elev = new Float32Array(TILE_PX * TILE_PX);
@@ -54,7 +64,14 @@ export function fetchTileElevations(
       const r = pixels[i * 4]!;
       const g = pixels[i * 4 + 1]!;
       const b = pixels[i * 4 + 2]!;
-      elev[i] = r * 256 + g + b / 256 - 32768;
+      const e = r * 256 + g + b / 256 - 32768;
+      // Real Earth elevations live in roughly [-432, 8848] m; the Terrarium
+      // encoding can produce values down to -32768. Mark anything beyond a
+      // generous land envelope as no-data so the geometry can substitute a
+      // plane-level fallback instead of rendering a kilometre-deep spike.
+      // Bathymetry rules out a -1500 floor in coastal scenes but this app
+      // photographs land, and the alternative is unboundedly tall artifacts.
+      elev[i] = (e < -1500 || e > 9000) ? NaN : e;
     }
     return elev;
   });

@@ -136,11 +136,16 @@ export function buildRingGeometry(
   // Precompute per-row and per-column geometry once. Each row's tile + sub-pixel
   // depends only on j; each column's depends only on i; and the world-meters
   // wx / wz follow from those. Pulls 410k function calls out of the inner loop.
+  // Trailing vertex (j = ny-1) lands on tileJ = radiusTiles*2 + 1 by raw
+  // modulo — one tile past the fetched window. Clamp back to the last loaded
+  // tile so its samplesPerTile-th sub-index trips the `=== samplesPerTile`
+  // branch and reads pixel TILE_PX-1, the eastern/southern edge.
+  const lastTileIndex = radiusTiles * 2;
   const rowTy = new Int32Array(ny);
   const rowPy = new Int32Array(ny);
   const rowWz = new Float64Array(ny);
   for (let j = 0; j < ny; j++) {
-    const tileJ = Math.floor(j / samplesPerTile);
+    const tileJ = Math.min(Math.floor(j / samplesPerTile), lastTileIndex);
     const subJ = j - tileJ * samplesPerTile;
     const ty = cy - radiusTiles + tileJ;
     const py = (subJ === samplesPerTile) ? TILE_PX - 1 : subJ * stride;
@@ -153,7 +158,7 @@ export function buildRingGeometry(
   const colPx = new Int32Array(nx);
   const colWx = new Float64Array(nx);
   for (let i = 0; i < nx; i++) {
-    const tileI = Math.floor(i / samplesPerTile);
+    const tileI = Math.min(Math.floor(i / samplesPerTile), lastTileIndex);
     const subI = i - tileI * samplesPerTile;
     const tx = cx - radiusTiles + tileI;
     const px = (subI === samplesPerTile) ? TILE_PX - 1 : subI * stride;
@@ -163,6 +168,9 @@ export function buildRingGeometry(
     colWx[i] = (lng - camLoc.lng) * M_PER_DEG_LAT * cosLat;
   }
 
+  // Both no-data fallbacks (missing tile, NaN pixel) collapse to
+  // camGroundElev so the vertex lands at `-drop` — the local ground plane
+  // curving away with distance — instead of hanging far below it.
   for (let j = 0; j < ny; j++) {
     const ty = rowTy[j]!;
     const py = rowPy[j]!;
@@ -171,7 +179,8 @@ export function buildRingGeometry(
       const tx = colTx[i]!;
       const px = colPx[i]!;
       const tile = demTiles.get(tileKey(zoom, tx, ty));
-      const elev = tile ? tile[py * TILE_PX + px]! : 0;
+      const raw = tile ? tile[py * TILE_PX + px]! : NaN;
+      const elev = Number.isNaN(raw) ? camGroundElev : raw;
       const idx = (j * nx + i) * 3;
       const wx = colWx[i]!;
       const drop = curvatureFactor * (wx * wx + wz * wz);
