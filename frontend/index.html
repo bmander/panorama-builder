@@ -184,8 +184,8 @@
       <label class="settings-check" title="When checked, the solver leaves this station's lat and lng untouched. Joint mode needs ≥2 stations locked to fix the gauge."><input type="checkbox" id="station-lock-pos"> lock location</label>
     </div>
     <div class="settings-row station-pos">
-      <label class="settings-inline">alt <input type="number" id="station-alt" step="0.1"> m</label>
-      <label class="settings-check" title="When checked, the solver treats this station's elevation as a fixed input."><input type="checkbox" id="station-lock-alt"> lock elevation</label>
+      <label class="settings-inline" title="Camera elevation in metres above mean sea level.">alt <input type="number" id="station-alt" step="0.1"> m MSL</label>
+      <label class="settings-check" title="When checked, the solver treats this station's elevation (metres above mean sea level) as a fixed input."><input type="checkbox" id="station-lock-alt"> lock elevation</label>
     </div>
     <div class="settings-row station-pos">
       <label class="settings-inline" title="When the photographer's camera was set up at this site. Used by the index-map time filter to decide which CPs were extant at the time of capture.">captured at <input type="datetime-local" id="station-captured-at" step="60"></label>

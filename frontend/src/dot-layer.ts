@@ -40,7 +40,7 @@ export interface Dot {
 }
 
 export interface DotLayer {
-  update(camLoc: LatLng | null, cameraHeight: number, dots: readonly Dot[]): void;
+  update(camLoc: LatLng | null, cameraMSL: number, dots: readonly Dot[]): void;
   setVisible(visible: boolean): void;
 }
 
@@ -69,10 +69,10 @@ export function createDotLayer({ scene, requestRender }: CreateDotLayerOptions):
   let points: THREE.Points | null = null;
 
   let lastCamLoc: LatLng | null = null;
-  let lastCameraHeight = 0;
+  let lastCameraMSL = 0;
   let lastDots: readonly Dot[] = [];
   let builtCamLoc: LatLng | null = null;
-  let builtCameraHeight = 0;
+  let builtCameraMSL = 0;
 
   function clearPoints(): void {
     if (points === null) return;
@@ -91,7 +91,7 @@ export function createDotLayer({ scene, requestRender }: CreateDotLayerOptions):
       for (let i = 0; i < N; i++) {
         const d = lastDots[i]!;
         const { x, z } = latLngToCameraRelativeMeters(d.anchor, lastCamLoc);
-        const y = d.altitude - lastCameraHeight - curvatureDrop(x * x + z * z);
+        const y = d.altitude - lastCameraMSL - curvatureDrop(x * x + z * z);
         positions[i * 3] = x; positions[i * 3 + 1] = y; positions[i * 3 + 2] = z;
         colors[i * 3] = d.color.r; colors[i * 3 + 1] = d.color.g; colors[i * 3 + 2] = d.color.b;
       }
@@ -103,9 +103,9 @@ export function createDotLayer({ scene, requestRender }: CreateDotLayerOptions):
       points.frustumCulled = false;
       group.add(points);
       builtCamLoc = lastCamLoc;
-      builtCameraHeight = lastCameraHeight;
+      builtCameraMSL = lastCameraMSL;
     }
-    applyGroupTransform(group, builtCamLoc, builtCameraHeight, lastCamLoc, lastCameraHeight);
+    applyGroupTransform(group, builtCamLoc, builtCameraMSL, lastCamLoc, lastCameraMSL);
   }
 
   subscribeCurvatureChange(() => {
@@ -115,14 +115,14 @@ export function createDotLayer({ scene, requestRender }: CreateDotLayerOptions):
 
   return {
     setVisible(visible) { group.visible = visible; },
-    update(camLoc, cameraHeight, dots) {
-      if (camLoc === lastCamLoc && cameraHeight === lastCameraHeight && dots === lastDots) return;
+    update(camLoc, cameraMSL, dots) {
+      if (camLoc === lastCamLoc && cameraMSL === lastCameraMSL && dots === lastDots) return;
       const dataChanged = dots !== lastDots;
       lastCamLoc = camLoc;
-      lastCameraHeight = cameraHeight;
+      lastCameraMSL = cameraMSL;
       lastDots = dots;
       if (dataChanged || builtCamLoc === null) rebuild();
-      else applyGroupTransform(group, builtCamLoc, builtCameraHeight, camLoc, cameraHeight);
+      else applyGroupTransform(group, builtCamLoc, builtCameraMSL, camLoc, cameraMSL);
       requestRender();
     },
   };
@@ -141,7 +141,7 @@ export function findHitDot<T extends { anchor: LatLng; altitude: number }>(
   viewportHeight: number,
   camera: THREE.Camera,
   cameraLocation: LatLng,
-  cameraHeight: number,
+  cameraMSL: number,
   dots: readonly T[],
 ): T | null {
   let best: T | null = null;
@@ -150,7 +150,7 @@ export function findHitDot<T extends { anchor: LatLng; altitude: number }>(
   const halfH = viewportHeight / 2;
   for (const dot of dots) {
     const { x, z } = latLngToCameraRelativeMeters(dot.anchor, cameraLocation);
-    const y = dot.altitude - cameraHeight - curvatureDrop(x * x + z * z);
+    const y = dot.altitude - cameraMSL - curvatureDrop(x * x + z * z);
     _projected.set(x, y, z).project(camera);
     if (_projected.z > 1) continue;
     const dPx = norm2((_projected.x - ndc.x) * halfW, (_projected.y - ndc.y) * halfH);

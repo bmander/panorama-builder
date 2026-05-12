@@ -43,7 +43,11 @@ export interface AzAltSnapshot {
   // Angular subtense per source-image pixel (rad). Null when no photo is
   // selected or its texture's pixel width isn't yet known.
   readonly selectedRadPerPixel: number | null;
-  readonly cameraHeight: number;
+  // Camera elevation in metres above mean sea level (the viewer's y=0).
+  readonly cameraMSL: number;
+  // Derived: cameraMSL minus the DEM ground elevation at the mesh build
+  // location. Useful in the HUD; renderers should use cameraMSL.
+  readonly cameraHeightAboveGround: number;
 }
 
 // Bearings of an overlay's left/right edges as viewer-azimuths.

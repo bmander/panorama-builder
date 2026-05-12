@@ -164,7 +164,8 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       fov: viewer.camera.fov,
       selectedSizeRad: sel ? overlayData(sel).sizeRad : null,
       selectedRadPerPixel,
-      cameraHeight: terrain.getCameraHeight(),
+      cameraMSL: terrain.getCameraMSL(),
+      cameraHeightAboveGround: terrain.getCameraHeightAboveGround(),
     };
   });
 
@@ -299,12 +300,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
 
   function repushOverlayCameraAnchors(): void {
     const camLoc = getCameraLocation();
-    const cameraHeight = terrain.getCameraHeight();
-    cpColumns.update(camLoc, cameraHeight, cachedCpMarkers);
-    stationDots.update(camLoc, cameraHeight, otherStations);
-    stationCones.update(camLoc, cameraHeight, otherCameras, selectedStationId);
-    observationRays.update(camLoc, cameraHeight, cachedObservationRays);
-    cpConstraintLines.update(camLoc, cameraHeight, cachedVisibleCps, cpConstraints, selectedConstraintId);
+    const cameraMSL = terrain.getCameraMSL();
+    cpColumns.update(camLoc, cameraMSL, cachedCpMarkers);
+    stationDots.update(camLoc, cameraMSL, otherStations);
+    stationCones.update(camLoc, cameraMSL, otherCameras, selectedStationId);
+    observationRays.update(camLoc, cameraMSL, cachedObservationRays);
+    cpConstraintLines.update(camLoc, cameraMSL, cachedVisibleCps, cpConstraints, selectedConstraintId);
   }
 
   // Photo overlays are rendered as a sphere around the camera at scene
@@ -319,7 +320,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       return;
     }
     const offset = latLngToCameraRelativeMeters(stationLocation, cameraOverrideLocation);
-    viewer.overlaysGroup.position.set(offset.x, cache.alt - terrain.getCameraHeight(), offset.z);
+    viewer.overlaysGroup.position.set(offset.x, cache.alt - terrain.getCameraMSL(), offset.z);
   }
 
   function applyCameraLocation(loc: LatLng): void {
@@ -331,7 +332,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     if (cameraOverrideLocation) {
       cameraOverrideLocation = null;
       const cache = stationFields.getNameAndAlt();
-      if (cache) terrain.setCameraHeight(cache.alt);
+      if (cache) terrain.setCameraMSL(cache.alt);
     }
     terrain.setLocation(loc);
     settings.refreshSunDirection();
@@ -575,15 +576,18 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       // strides; near the ground, fine. Wheel-up (deltaPx < 0) → forward.
       const camLoc = getCameraLocation();
       if (!camLoc) return;
-      const camAlt = terrain.getCameraHeight();
+      const camMSL = terrain.getCameraMSL();
       const { azimuth, altitude } = viewer.getAzAlt();
-      const stepScale = Math.max(Math.abs(camAlt), 1);
+      // Step scale grows with the camera's height above ground, not its raw
+      // MSL — far inland stations would otherwise get enormous strides simply
+      // because their ground sits at high MSL.
+      const stepScale = Math.max(Math.abs(terrain.getCameraHeightAboveGround()), 1);
       const step = -deltaPx * SHIFT_WHEEL_LOG_PER_PX * stepScale;
       const look = dirFromAzAlt(azimuth, altitude);
 
       cameraOverrideLocation = tangentMetersToLatLng(camLoc, step * look.x, step * look.z);
       terrain.setLocation(cameraOverrideLocation);
-      terrain.setCameraHeight(camAlt + step * look.y);
+      terrain.setCameraMSL(camMSL + step * look.y);
       hud.refresh();
       repushOverlayCameraAnchors();
       updateOverlaysGroupOffset();
@@ -591,7 +595,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     findColumnAtNDC: ndc => {
       if (!stationLocation) return null;
       return findHitColumn(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, stationLocation,
-        terrain.getCameraHeight(), getVisibleControlPoints());
+        terrain.getCameraMSL(), getVisibleControlPoints());
     },
     onHoveredColumnChange: id => { cpColumns.setHoveredMarker(id); },
     onPhotoBodyContextMenu: (overlay, u, v, sx, sy) => {
@@ -615,7 +619,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       const canvas = viewer.renderer.domElement;
       return findHitDot(ndc, STATION_DOT_HIT_PX,
         canvas.clientWidth, canvas.clientHeight, viewer.camera, stationLocation,
-        terrain.getCameraHeight(), otherStations);
+        terrain.getCameraMSL(), otherStations);
     },
     onStationClick: (id, sx, sy) => {
       if (selectedStationId !== id) {
@@ -660,12 +664,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       if (!a || !b) { hide(); return; }
       if (a.estLat === null || a.estLng === null || a.estAlt === null) { hide(); return; }
       if (b.estLat === null || b.estLng === null || b.estAlt === null) { hide(); return; }
-      const cameraHeight = terrain.getCameraHeight();
+      const cameraMSL = terrain.getCameraMSL();
       const axz = latLngToCameraRelativeMeters({ lat: a.estLat, lng: a.estLng }, stationLocation);
       const bxz = latLngToCameraRelativeMeters({ lat: b.estLat, lng: b.estLng }, stationLocation);
       const arr = previewPositions.array as Float32Array;
-      arr[0] = axz.x; arr[1] = a.estAlt - cameraHeight; arr[2] = axz.z;
-      arr[3] = bxz.x; arr[4] = b.estAlt - cameraHeight; arr[5] = bxz.z;
+      arr[0] = axz.x; arr[1] = a.estAlt - cameraMSL; arr[2] = axz.z;
+      arr[3] = bxz.x; arr[4] = b.estAlt - cameraMSL; arr[5] = bxz.z;
       previewPositions.needsUpdate = true;
       previewLine.visible = true;
       viewer.requestRender();
@@ -684,7 +688,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       // recorded altitude. Editing the alt also re-attaches the camera if
       // it had drifted via shift-wheel — the form is for the station, so
       // the user expects to see it from the station after editing.
-      let changed = terrain.setCameraHeight(alt);
+      let changed = terrain.setCameraMSL(alt);
       if (cameraOverrideLocation && stationLocation) {
         cameraOverrideLocation = null;
         terrain.setLocation(stationLocation);
@@ -743,7 +747,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     getStationCache: () => {
       const base = stationFields.getNameAndAlt();
       if (!base) return null;
-      return { ...base, alt: terrain.getCameraHeight() };
+      return { ...base, alt: terrain.getCameraMSL() };
     },
     getOtherStations: () => otherStations,
     setOtherStations: (s) => { otherStations = [...s]; },

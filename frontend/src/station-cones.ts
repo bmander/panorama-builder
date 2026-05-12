@@ -30,7 +30,7 @@ export interface StationCone {
 
 export interface StationCones {
   update(
-    camLoc: LatLng | null, cameraHeight: number,
+    camLoc: LatLng | null, cameraMSL: number,
     cones: readonly StationCone[], selectedStationId: string | null,
   ): void;
   setVisible(visible: boolean): void;
@@ -57,11 +57,11 @@ export function createStationCones(opts: CreateStationConesOptions): StationCone
   const fwd = new THREE.Vector3();
 
   let lastCamLoc: LatLng | null = null;
-  let lastCameraHeight = 0;
+  let lastCameraMSL = 0;
   let lastCones: readonly StationCone[] = [];
   let lastSelectedStationId: string | null = null;
   let builtCamLoc: LatLng | null = null;
-  let builtCameraHeight = 0;
+  let builtCameraMSL = 0;
 
   function writeConeAt(out: Float32Array, base: number, c: StationCone, ax: number, ay: number, az: number): void {
     // buildPoseObject's matrix +Z points back at the origin (lookAt swap),
@@ -123,7 +123,7 @@ export function createStationCones(opts: CreateStationConesOptions): StationCone
       for (const c of lastCones) {
         const offset = latLngToCameraRelativeMeters({ lat: c.fromLat, lng: c.fromLng }, lastCamLoc);
         const ax = offset.x;
-        const ay = c.fromAlt - lastCameraHeight;
+        const ay = c.fromAlt - lastCameraMSL;
         const az = offset.z;
         if (c.stationId === lastSelectedStationId) {
           writeConeAt(selectedPositions, sOff, c, ax, ay, az);
@@ -136,24 +136,24 @@ export function createStationCones(opts: CreateStationConesOptions): StationCone
       if (nDefault > 0) group.add(makeOverlayLineSegments(defaultPositions, mat));
       if (nSelected > 0) group.add(makeOverlayLineSegments(selectedPositions, matSel));
       builtCamLoc = lastCamLoc;
-      builtCameraHeight = lastCameraHeight;
+      builtCameraMSL = lastCameraMSL;
     }
-    applyGroupTransform(group, builtCamLoc, builtCameraHeight, lastCamLoc, lastCameraHeight);
+    applyGroupTransform(group, builtCamLoc, builtCameraMSL, lastCamLoc, lastCameraMSL);
   }
 
   return {
-    update(camLoc, cameraHeight, cones, selectedStationId) {
+    update(camLoc, cameraMSL, cones, selectedStationId) {
       if (
-        camLoc === lastCamLoc && cameraHeight === lastCameraHeight
+        camLoc === lastCamLoc && cameraMSL === lastCameraMSL
         && cones === lastCones && selectedStationId === lastSelectedStationId
       ) return;
       const dataChanged = cones !== lastCones || selectedStationId !== lastSelectedStationId;
       lastCamLoc = camLoc;
-      lastCameraHeight = cameraHeight;
+      lastCameraMSL = cameraMSL;
       lastCones = cones;
       lastSelectedStationId = selectedStationId;
       if (dataChanged || builtCamLoc === null) rebuild();
-      else applyGroupTransform(group, builtCamLoc, builtCameraHeight, camLoc, cameraHeight);
+      else applyGroupTransform(group, builtCamLoc, builtCameraMSL, camLoc, cameraMSL);
       requestRender();
     },
     setVisible(visible) {

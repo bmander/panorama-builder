@@ -63,13 +63,17 @@ export interface TerrainView {
   // clockwise; altitude is radians above the horizon. Negative altitudes are
   // accepted (sun below horizon → terrain falls into ambient-only).
   setSunDirection(az: number, alt: number): void;
-  // Camera height above local ground in meters. Implemented as a y-offset on
-  // every ring mesh — the panorama camera stays at the scene origin so photo
-  // overlays continue to wrap correctly around it.
+  // Camera elevation in meters above mean sea level. Implemented as a y-offset
+  // on every ring mesh (groupY = camGroundElevAtBuilt − cameraMSL) — the
+  // panorama camera stays at the scene origin so photo overlays continue to
+  // wrap correctly around it.
   // Returns true if the value actually changed; lets callers skip downstream
-  // refresh/save work when wheel events repeat the same height.
-  setCameraHeight(meters: number): boolean;
-  getCameraHeight(): number;
+  // refresh/save work when wheel events repeat the same MSL.
+  setCameraMSL(meters: number): boolean;
+  getCameraMSL(): number;
+  // Derived: camera's height above the local DEM ground at the mesh's build
+  // location. HUD-only; renderers should use getCameraMSL().
+  getCameraHeightAboveGround(): number;
 }
 
 export interface CreateTerrainViewOptions {
@@ -136,7 +140,8 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
   // back to the network.
   let textures: THREE.Texture[] = [];
   let buildId = 0;
-  let cameraHeight = 0;
+  let cameraMSL = 0;
+  let camGroundElevAtBuilt = 0;
   let sunAz = Math.PI;       // default: due south
   let sunAlt = Math.PI / 4;  // default: 45° up
 
@@ -165,14 +170,18 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
   }
 
   function applyGroupTransform(): void {
+    // Vertex Y is stored as (vertex_MSL − camGroundElevAtBuilt); shifting the
+    // group by (camGroundElevAtBuilt − cameraMSL) puts the vertex at viewer
+    // y = vertex_MSL − cameraMSL.
+    const groupY = camGroundElevAtBuilt - cameraMSL;
     if (location && builtLocation) {
       // Translate by the build origin's position in the current camera frame:
       // a vertex stored at the origin (the build point) renders at exactly
       // that offset from the live camera.
       const o = latLngToCameraRelativeMeters(builtLocation, location);
-      terrainGroup.position.set(o.x, -cameraHeight, o.z);
+      terrainGroup.position.set(o.x, groupY, o.z);
     } else {
-      terrainGroup.position.set(0, -cameraHeight, 0);
+      terrainGroup.position.set(0, groupY, 0);
     }
   }
 
@@ -283,6 +292,7 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       if (!swapped) {
         disposeMeshes();
         builtLocation = camLoc;
+        camGroundElevAtBuilt = camGroundElev;
         applyGroupTransform();
         applyVisibility();
         swapped = true;
@@ -371,13 +381,14 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       applySunDirection();
       if (mode === 'shaded') requestRender();
     },
-    setCameraHeight(meters) {
-      if (cameraHeight === meters) return false;
-      cameraHeight = meters;
+    setCameraMSL(meters) {
+      if (cameraMSL === meters) return false;
+      cameraMSL = meters;
       applyGroupTransform();
       requestRender();
       return true;
     },
-    getCameraHeight: () => cameraHeight,
+    getCameraMSL: () => cameraMSL,
+    getCameraHeightAboveGround: () => cameraMSL - camGroundElevAtBuilt,
   };
 }

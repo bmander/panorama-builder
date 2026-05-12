@@ -16,7 +16,7 @@ const LINE_COLOR_SELECTED = 0xff5544;
 export interface CPConstraintLines {
   update(
     camLoc: LatLng | null,
-    cameraHeight: number,
+    cameraMSL: number,
     cps: readonly ControlPointView[],
     constraints: readonly CPConstraintView[],
     selectedId: string | null,
@@ -54,15 +54,15 @@ export function createCPConstraintLines(opts: CreateCPConstraintLinesOptions): C
   // Cached last-update args so a curvature toggle can rebuild without
   // waiting for the next data refresh from main.
   let lastCamLoc: LatLng | null = null;
-  let lastCameraHeight = 0;
+  let lastCameraMSL = 0;
   let lastCps: readonly ControlPointView[] = [];
   let lastConstraints: readonly CPConstraintView[] = [];
   let lastSelectedId: string | null = null;
 
-  function endpointFor(cp: ControlPointView, camLoc: LatLng, cameraHeight: number): THREE.Vector3 | null {
+  function endpointFor(cp: ControlPointView, camLoc: LatLng, cameraMSL: number): THREE.Vector3 | null {
     if (cp.estLat === null || cp.estLng === null || cp.estAlt === null) return null;
     const { x, z } = latLngToCameraRelativeMeters({ lat: cp.estLat, lng: cp.estLng }, camLoc);
-    const y = cp.estAlt - cameraHeight - curvatureDrop(x * x + z * z);
+    const y = cp.estAlt - cameraMSL - curvatureDrop(x * x + z * z);
     return new THREE.Vector3(x, y, z);
   }
 
@@ -78,8 +78,8 @@ export function createCPConstraintLines(opts: CreateCPConstraintLinesOptions): C
       const a = cpById.get(k.cpAId);
       const b = cpById.get(k.cpBId);
       if (!a || !b) continue;
-      const va = endpointFor(a, lastCamLoc, lastCameraHeight);
-      const vb = endpointFor(b, lastCamLoc, lastCameraHeight);
+      const va = endpointFor(a, lastCamLoc, lastCameraMSL);
+      const vb = endpointFor(b, lastCamLoc, lastCameraMSL);
       if (!va || !vb) continue;
       const mat = k.id === lastSelectedId ? matSelected : matDefault;
       lineGroup.add(makeOverlayLine([va.x, va.y, va.z, vb.x, vb.y, vb.z], mat));
@@ -92,12 +92,12 @@ export function createCPConstraintLines(opts: CreateCPConstraintLinesOptions): C
 
   return {
     setVisible(visible) { lineGroup.visible = visible; },
-    update(camLoc, cameraHeight, cps, constraints, selectedId) {
-      if (camLoc === lastCamLoc && cameraHeight === lastCameraHeight
+    update(camLoc, cameraMSL, cps, constraints, selectedId) {
+      if (camLoc === lastCamLoc && cameraMSL === lastCameraMSL
         && cps === lastCps && constraints === lastConstraints
         && selectedId === lastSelectedId) return;
       lastCamLoc = camLoc;
-      lastCameraHeight = cameraHeight;
+      lastCameraMSL = cameraMSL;
       lastCps = cps;
       lastConstraints = constraints;
       lastSelectedId = selectedId;

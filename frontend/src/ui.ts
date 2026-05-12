@@ -27,7 +27,7 @@ export function createHud(getSnapshot: () => AzAltSnapshot): Hud {
   const el = getElement('hud');
   function refresh(): void {
     const s = getSnapshot();
-    let text = `azimuth ${deg(s.azimuth)}°  altitude ${deg(s.altitude)}°  fov ${s.fov.toFixed(1)}°  height ${s.cameraHeight.toFixed(1)} m`;
+    let text = `azimuth ${deg(s.azimuth)}°  altitude ${deg(s.altitude)}°  fov ${s.fov.toFixed(1)}°  elev ${s.cameraMSL.toFixed(1)} m MSL (${s.cameraHeightAboveGround.toFixed(1)} m AGL)`;
     if (s.selectedSizeRad != null) text += `  selected ${deg(s.selectedSizeRad)}°`;
     if (s.selectedRadPerPixel != null) text += `  ${formatDms(s.selectedRadPerPixel)}/px`;
     el.textContent = text;

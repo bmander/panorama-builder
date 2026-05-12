@@ -30,7 +30,7 @@ export interface PhotoPreviews {
   // Replaces the active set; group becomes visible whenever there's at
   // least one item and the bake isn't currently suppressing it.
   set(previews: readonly PhotoPreview[]): void;
-  update(camLoc: LatLng | null, cameraHeight: number): void;
+  update(camLoc: LatLng | null, cameraMSL: number): void;
   // Bake's setVisualsVisible(false) flips this on; setVisualsVisible(true)
   // flips it off, restoring effective visibility derived from item count.
   setBakeHidden(hidden: boolean): void;
@@ -117,13 +117,13 @@ export function createPhotoPreviews(opts: CreatePhotoPreviewsOptions): PhotoPrev
       items = previews.map(buildItem);
       applyVisibility();
     },
-    update(camLoc, cameraHeight) {
+    update(camLoc, cameraMSL) {
       if (camLoc === null || items.length === 0) return;
       for (const item of items) {
         const offset = latLngToCameraRelativeMeters(
           { lat: item.preview.fromLat, lng: item.preview.fromLng }, camLoc,
         );
-        _anchorScratch.set(offset.x, item.preview.fromAlt - cameraHeight, offset.z);
+        _anchorScratch.set(offset.x, item.preview.fromAlt - cameraMSL, offset.z);
         placeAt(item.mesh, item.dir, item.preview.photoRoll, _anchorScratch);
       }
     },

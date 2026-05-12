@@ -41,7 +41,7 @@ export type ObservationRay =
     };
 
 export interface ObservationRays {
-  update(camLoc: LatLng | null, cameraHeight: number, rays: readonly ObservationRay[]): void;
+  update(camLoc: LatLng | null, cameraMSL: number, rays: readonly ObservationRay[]): void;
   setVisible(visible: boolean): void;
 }
 
@@ -67,10 +67,10 @@ export function createObservationRays(opts: CreateObservationRaysOptions): Obser
   const localPos = new THREE.Vector3();
 
   let lastCamLoc: LatLng | null = null;
-  let lastCameraHeight = 0;
+  let lastCameraMSL = 0;
   let lastRays: readonly ObservationRay[] = [];
   let builtCamLoc: LatLng | null = null;
-  let builtCameraHeight = 0;
+  let builtCameraMSL = 0;
 
   function rebuild(): void {
     clearLineGroup(group);
@@ -89,7 +89,7 @@ export function createObservationRays(opts: CreateObservationRaysOptions): Obser
       for (const r of lastRays) {
         const offset = latLngToCameraRelativeMeters({ lat: r.fromLat, lng: r.fromLng }, lastCamLoc);
         const sx = offset.x;
-        const sy = r.fromAlt - lastCameraHeight;
+        const sy = r.fromAlt - lastCameraMSL;
         const sz = offset.z;
         if (r.kind === 'null') {
           const pose = buildPoseObject(r.photoAz, r.photoTilt, r.photoRoll);
@@ -106,7 +106,7 @@ export function createObservationRays(opts: CreateObservationRaysOptions): Obser
           nullPositions[iN++] = sz + localPos.z * PURPLE_RAY_LENGTH_M;
         } else {
           const toOffset = latLngToCameraRelativeMeters({ lat: r.toLat, lng: r.toLng }, lastCamLoc);
-          const ey = r.toAlt === null ? 0 : r.toAlt - lastCameraHeight;
+          const ey = r.toAlt === null ? 0 : r.toAlt - lastCameraMSL;
           locPositions[iL++] = sx;
           locPositions[iL++] = sy;
           locPositions[iL++] = sz;
@@ -118,20 +118,20 @@ export function createObservationRays(opts: CreateObservationRaysOptions): Obser
       if (nNull > 0) group.add(makeOverlayLineSegments(nullPositions, purpleMat));
       if (nLoc > 0) group.add(makeOverlayLineSegments(locPositions, grayMat));
       builtCamLoc = lastCamLoc;
-      builtCameraHeight = lastCameraHeight;
+      builtCameraMSL = lastCameraMSL;
     }
-    applyGroupTransform(group, builtCamLoc, builtCameraHeight, lastCamLoc, lastCameraHeight);
+    applyGroupTransform(group, builtCamLoc, builtCameraMSL, lastCamLoc, lastCameraMSL);
   }
 
   return {
-    update(camLoc, cameraHeight, rays) {
-      if (camLoc === lastCamLoc && cameraHeight === lastCameraHeight && rays === lastRays) return;
+    update(camLoc, cameraMSL, rays) {
+      if (camLoc === lastCamLoc && cameraMSL === lastCameraMSL && rays === lastRays) return;
       const dataChanged = rays !== lastRays;
       lastCamLoc = camLoc;
-      lastCameraHeight = cameraHeight;
+      lastCameraMSL = cameraMSL;
       lastRays = rays;
       if (dataChanged || builtCamLoc === null) rebuild();
-      else applyGroupTransform(group, builtCamLoc, builtCameraHeight, camLoc, cameraHeight);
+      else applyGroupTransform(group, builtCamLoc, builtCameraMSL, camLoc, cameraMSL);
       requestRender();
     },
     setVisible(visible) {

@@ -2,7 +2,7 @@
 //
 // Each control point with an estimated lat/lng/alt gets a small sphere at its
 // 3D position (camera-relative meters via latLngToCameraRelativeMeters; world
-// y = est_alt − cameraHeight). Each linked image-measurement (a POI on a photo
+// y = est_alt − cameraMSL). Each linked image-measurement (a POI on a photo
 // overlay) gets a line from the marker to the POI's world position — a visible
 // "residual": short = pose fits the CP well, long = poor fit.
 //
@@ -52,11 +52,11 @@ export interface ControlPointMarker {
 }
 
 export interface ControlPointMarkers {
-  // markers: per-CP positions + linked observation handles. cameraHeight is
-  // the terrain.getCameraHeight() value used to translate est_alt into
-  // viewer-space y (the terrain group is shifted by −cameraHeight, so a CP
-  // at est_alt sits at viewer y = est_alt − cameraHeight).
-  update(camLoc: LatLng | null, cameraHeight: number, markers: readonly ControlPointMarker[]): void;
+  // markers: per-CP positions + linked observation handles. cameraMSL is the
+  // terrain.getCameraMSL() value used to translate est_alt into viewer-space
+  // y. Both est_alt and cameraMSL are metres above mean sea level, so a CP at
+  // est_alt sits at viewer y = est_alt − cameraMSL.
+  update(camLoc: LatLng | null, cameraMSL: number, markers: readonly ControlPointMarker[]): void;
   setHoveredMarker(id: string | null): void;
   setVisible(visible: boolean): void;
 }
@@ -88,7 +88,7 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
   let hoveredId: string | null = null;
   let lastMarkers: readonly ControlPointMarker[] = [];
   let lastCamLoc: LatLng | null = null;
-  let lastCameraHeight = 0;
+  let lastCameraMSL = 0;
 
   function isHighlighted(m: ControlPointMarker): boolean {
     return m.selected || m.id === hoveredId;
@@ -116,13 +116,13 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
         continue;
       }
       dotList.push({ anchor: m.anchor, altitude: m.altitude, color });
-      const y = m.altitude - lastCameraHeight - drop;
+      const y = m.altitude - lastCameraMSL - drop;
       for (const poi of m.observations) {
         poi.getWorldPosition(scratch);
         addLine(lineMaterial, x, y, z, scratch.x, scratch.y, scratch.z);
       }
     }
-    dots.update(lastCamLoc, lastCameraHeight, dotList);
+    dots.update(lastCamLoc, lastCameraMSL, dotList);
     requestRender();
   }
 
@@ -139,9 +139,9 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
 
   return {
     setVisible(visible) { dots.setVisible(visible); lineGroup.visible = visible; },
-    update(camLoc, cameraHeight, markers) {
+    update(camLoc, cameraMSL, markers) {
       lastCamLoc = camLoc;
-      lastCameraHeight = cameraHeight;
+      lastCameraMSL = cameraMSL;
       lastMarkers = markers;
       rebuild();
     },
@@ -169,7 +169,7 @@ export function findHitColumn(
   hitRadius: number,
   camera: THREE.Camera,
   cameraLocation: LatLng,
-  cameraHeight: number,
+  cameraMSL: number,
   controlPoints: readonly ControlPointView[],
 ): { controlPointId: string; latlng: LatLng } | null {
   let bestDist = hitRadius;
@@ -180,7 +180,7 @@ export function findHitColumn(
     const drop = curvatureDrop(x * x + z * z);
     let dist: number;
     if (cp.estAlt !== null) {
-      const y = cp.estAlt - cameraHeight - drop;
+      const y = cp.estAlt - cameraMSL - drop;
       _proj.set(x, y, z).project(camera);
       if (_proj.z > 1) continue;
       dist = norm2(_proj.x - ndc.x, _proj.y - ndc.y);

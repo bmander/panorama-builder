@@ -16,7 +16,7 @@ export interface StationMarker {
 }
 
 export interface StationMarkers {
-  update(camLoc: LatLng | null, cameraHeight: number, markers: readonly StationMarker[]): void;
+  update(camLoc: LatLng | null, cameraMSL: number, markers: readonly StationMarker[]): void;
   setVisible(visible: boolean): void;
 }
 
@@ -31,8 +31,8 @@ export function createStationMarkers({ scene, requestRender }: CreateStationMark
 
   return {
     setVisible(visible) { dots.setVisible(visible); },
-    update(camLoc, cameraHeight, markers) {
-      dots.update(camLoc, cameraHeight, markers.map(m => ({
+    update(camLoc, cameraMSL, markers) {
+      dots.update(camLoc, cameraMSL, markers.map(m => ({
         anchor: m.anchor, altitude: m.altitude, color,
       })));
     },

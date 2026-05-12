@@ -36,7 +36,7 @@ export interface CreateStationFieldsOptions {
   // time, not the one captured at mount time.
   getCurrentStationId: () => string;
   // Fires after every hydrate. Consumer typically does:
-  //   if (terrain.setCameraHeight(alt)) refreshControlPointColumns();
+  //   if (terrain.setCameraMSL(alt)) refreshControlPointColumns();
   onAltitudeChanged: (alt: number) => void;
   // Fires only when a server PUT round-trip returns lat/lng different from
   // the cached values. Consumer typically calls applyCameraLocation(loc).

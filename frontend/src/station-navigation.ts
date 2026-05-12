@@ -135,7 +135,7 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
           const loc = { lat, lng };
           setStationLocation(loc);
           terrain.setLocation(loc);
-          terrain.setCameraHeight(alt);
+          terrain.setCameraMSL(alt);
           // Glue source panes to the source station as the camera flies
           // away — finally block resets to origin before dest hydrate.
           const srcOffset = latLngToCameraRelativeMeters(src, loc);
