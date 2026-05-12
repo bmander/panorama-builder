@@ -476,6 +476,17 @@ func loadAllCPConstraints(ctx context.Context, db *pgxpool.Pool) ([]solver.CPCon
 	return out, rows.Err()
 }
 
+// idSet collects each element's id into a membership set. Used by the
+// filter helpers in this package when an inner loop needs O(1) lookups
+// against a slice of typed entities.
+func idSet[T any](xs []T, id func(T) string) map[string]struct{} {
+	out := make(map[string]struct{}, len(xs))
+	for _, x := range xs {
+		out[id(x)] = struct{}{}
+	}
+	return out
+}
+
 // filterCPConstraintsByCPSet drops constraints whose endpoints aren't both
 // in the given CP slice. Single-station and single-CP modes restrict the
 // active CP set, so a half-loaded constraint has no anchor and would be
@@ -484,10 +495,7 @@ func filterCPConstraintsByCPSet(cons []solver.CPConstraint, cps []solver.Control
 	if len(cons) == 0 {
 		return nil
 	}
-	in := make(map[string]struct{}, len(cps))
-	for _, cp := range cps {
-		in[cp.ID] = struct{}{}
-	}
+	in := idSet(cps, func(cp solver.ControlPoint) string { return cp.ID })
 	out := cons[:0:0]
 	for _, c := range cons {
 		if _, ok := in[c.CpAID]; !ok {

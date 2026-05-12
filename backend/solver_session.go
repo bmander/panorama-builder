@@ -32,6 +32,7 @@ func (s *Server) loadJointProblemSession(ctx context.Context, sess *Session) (so
 	if err != nil {
 		return solver.Problem{}, nil, err
 	}
+	obs = filterOrphanObservations(obs, cps, photos)
 	cps, obs, seeded := seedNullLocationCPs(cps, nullLoc, obs, photos, stations)
 	cons, err := s.loadProblemCPConstraintsOverlaid(ctx, overlay, cps)
 	if err != nil {
@@ -42,6 +43,26 @@ func (s *Server) loadJointProblemSession(ctx context.Context, sess *Session) (so
 		ControlPoints: cps, Observations: obs,
 		CPConstraints: cons,
 	}, seeded, nil
+}
+
+// filterOrphanObservations drops observations whose photo or CP isn't in
+// the overlaid problem. Without it, a session-only delete (journaled but
+// not yet cascaded into main) leaves dangling obs and the solver's
+// cpIdx/photoIdx miss silently resolves to entity 0.
+func filterOrphanObservations(obs []solver.Observation, cps []solver.ControlPoint, photos []solver.Photo) []solver.Observation {
+	cpIDs := idSet(cps, func(cp solver.ControlPoint) string { return cp.ID })
+	photoIDs := idSet(photos, func(p solver.Photo) string { return p.ID })
+	out := make([]solver.Observation, 0, len(obs))
+	for _, o := range obs {
+		if _, ok := cpIDs[o.ControlPointID]; !ok {
+			continue
+		}
+		if _, ok := photoIDs[o.PhotoID]; !ok {
+			continue
+		}
+		out = append(out, o)
+	}
+	return out
 }
 
 // The loadAllSolverXOverlaid helpers use mergeOverlay: the decode function
