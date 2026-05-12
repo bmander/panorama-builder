@@ -332,7 +332,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     viewer.overlaysGroup.position.set(offset.x, cache.alt - terrain.getCameraMSL(), offset.z);
   }
 
-  function applyCameraLocation(loc: LatLng): void {
+  // The cheap half of applyCameraLocation: anchor state + any dependents that
+  // don't hit the network. Split out so hydrateFromAPI can land the anchor
+  // up front (otherwise reads of stationLocation during the parallel-fetch
+  // block see a stale value across a station swap) while deferring the
+  // terrain DEM/imagery flood to the end.
+  function setStationAnchor(loc: LatLng): void {
     stationLocation = loc;
     // Editing the station's coords re-attaches the camera to it: the
     // shift-wheel detach is meaningful only relative to a fixed anchor.
@@ -343,12 +348,15 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       const cache = stationFields.getNameAndAlt();
       if (cache) terrain.setCameraMSL(cache.alt);
     }
-    terrain.setLocation(loc);
     settings.refreshSunDirection();
     refreshControlPointColumns();
     updateOverlaysGroupOffset();
-    // Mark the location dirty so the next flush PUTs it.
     sync.flush();
+  }
+
+  function applyCameraLocation(loc: LatLng): void {
+    setStationAnchor(loc);
+    terrain.setLocation(loc);
   }
 
   function registerControlPoint(cp: ApiControlPoint): void {
@@ -841,7 +849,10 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       if (id !== stationId) return;  // user navigated away during fetch
     }
     const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
-    applyCameraLocation(loc);
+    // Anchor state up front so subsequent reads of stationLocation are
+    // current. The heavy terrain.setLocation is deferred to the end of
+    // hydrate so DEM/imagery tile fetches queue behind photos + markers.
+    setStationAnchor(loc);
     stationFields.hydrate(data.station);
 
     // Center the viewport on the mean of the station's photo directions.
@@ -851,8 +862,8 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     const meanOrient = meanPhotoAzAlt(data.photos);
     if (meanOrient) viewer.setAzAlt(meanOrient.az, meanOrient.alt);
 
-    // Place each photo synchronously with a placeholder so the viewer can
-    // paint terrain + rectangles before any blob arrives.
+    // Place each photo synchronously with a placeholder; blob fetches
+    // ride on the network ahead of terrain tiles (see end of hydrate).
     const loader = new THREE.TextureLoader();
     overlays.withBatch(() => {
       for (const p of data.photos) {
@@ -956,6 +967,9 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     } else {
       console.error('list stations failed:', stationsRes.reason);
     }
+
+    // Terrain last so its tile flood queues behind every other fetch above.
+    terrain.setLocation(loc);
   }
 
   const focusScratch = new THREE.Vector3();
