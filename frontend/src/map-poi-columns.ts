@@ -52,10 +52,9 @@ export interface ControlPointMarker {
 }
 
 export interface ControlPointMarkers {
-  // markers: per-CP positions + linked observation handles. cameraMSL is the
-  // terrain.getCameraMSL() value used to translate est_alt into viewer-space
-  // y. Both est_alt and cameraMSL are metres above mean sea level, so a CP at
-  // est_alt sits at viewer y = est_alt − cameraMSL.
+  // markers: per-CP positions + linked observation handles. cameraMSL comes
+  // from the shared world-camera pose; both it and est_alt are metres above
+  // mean sea level, so a CP at est_alt sits at viewer y = est_alt − cameraMSL.
   update(camLoc: LatLng | null, cameraMSL: number, markers: readonly ControlPointMarker[]): void;
   setHoveredMarker(id: string | null): void;
   setVisible(visible: boolean): void;

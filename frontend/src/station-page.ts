@@ -46,6 +46,7 @@ import { createUndoManager } from './undo.js';
 import { createStationNavigation, meanPhotoAzAlt } from './station-navigation.js';
 import { createStationFields } from './station-fields.js';
 import { attachSolveActions } from './solve-actions.js';
+import { createWorldCamera } from './world-camera.js';
 
 export interface MountStationPageOptions {
   initialStationId: string;
@@ -169,22 +170,14 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       fov: viewer.camera.fov,
       selectedSizeRad: sel ? overlayData(sel).sizeRad : null,
       selectedRadPerPixel,
-      cameraMSL: terrain.getCameraMSL(),
+      cameraMSL: worldCamera.getPose().altitudeMSL,
       cameraHeightAboveGround: terrain.getCameraHeightAboveGround(),
     };
   });
 
-  // Camera location for the station page. Not user-editable post-creation:
-  // there's no map UI on the station view to drag the pin.
-  let stationLocation: LatLng | null = null;
-  const getStationLocation = (): LatLng | null => stationLocation;
-
-  // Transient camera-position override accumulated by shift-wheel forward/
-  // backward navigation. When non-null, every camera-anchored overlay and
-  // the terrain view is positioned at this location instead of
-  // stationLocation. Cleared on station load; not synced to the server.
-  let cameraOverrideLocation: LatLng | null = null;
-  const getCameraLocation = (): LatLng | null => cameraOverrideLocation ?? stationLocation;
+  // Single source of truth for camera location + MSL. Live (override) values
+  // diverge from the station anchor while shift-wheel or fly is active.
+  const worldCamera = createWorldCamera();
 
   // --- Cross-cutting refreshers ------------------------------------------
 
@@ -304,17 +297,29 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     }));
     cachedVisibleCps = cps;
     cachedObservationRays = buildObservationRays();
-    repushOverlayCameraAnchors();
+    pushPose();
   }
 
-  function repushOverlayCameraAnchors(): void {
-    const camLoc = getCameraLocation();
-    const cameraMSL = terrain.getCameraMSL();
-    cpColumns.update(camLoc, cameraMSL, cachedCpMarkers);
-    stationDots.update(camLoc, cameraMSL, otherStations);
-    stationCones.update(camLoc, cameraMSL, otherCameras, selectedStationId);
-    observationRays.update(camLoc, cameraMSL, cachedObservationRays);
-    cpConstraintLines.update(camLoc, cameraMSL, cachedVisibleCps, cpConstraints, selectedConstraintId);
+  // Fan out pose changes to every camera-anchored consumer except terrain.
+  // Subscribed below; fires automatically on every worldCamera mutation.
+  // Terrain is pushed separately so hydrateFromAPI can defer the DEM/imagery
+  // tile flood to the end of its parallel-fetch block.
+  function pushPose(): void {
+    const pose = worldCamera.getPose();
+    cpColumns.update(pose.location, pose.altitudeMSL, cachedCpMarkers);
+    stationDots.update(pose.location, pose.altitudeMSL, otherStations);
+    stationCones.update(pose.location, pose.altitudeMSL, otherCameras, selectedStationId);
+    observationRays.update(pose.location, pose.altitudeMSL, cachedObservationRays);
+    cpConstraintLines.update(pose.location, pose.altitudeMSL, cachedVisibleCps, cpConstraints, selectedConstraintId);
+    updateOverlaysGroupOffset();
+    hud.refresh();
+  }
+  worldCamera.subscribe(pushPose);
+
+  function pushTerrainFromPose(): void {
+    const pose = worldCamera.getPose();
+    if (pose.location) terrain.setLocation(pose.location);
+    terrain.setCameraMSL(pose.altitudeMSL);
   }
 
   // Photo overlays are rendered as a sphere around the camera at scene
@@ -323,40 +328,21 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   // overlaysGroup so the photos stay at the station's true location and
   // the user can fly past or around them.
   function updateOverlaysGroupOffset(): void {
-    const cache = stationFields.getNameAndAlt();
-    if (!cameraOverrideLocation || !stationLocation || !cache) {
+    const pose = worldCamera.getPose();
+    if (!pose.stationAnchor || !pose.location || pose.stationAltitudeMSL === null
+        || (pose.location.lat === pose.stationAnchor.lat && pose.location.lng === pose.stationAnchor.lng)) {
       viewer.overlaysGroup.position.set(0, 0, 0);
       return;
     }
-    const offset = latLngToCameraRelativeMeters(stationLocation, cameraOverrideLocation);
-    viewer.overlaysGroup.position.set(offset.x, cache.alt - terrain.getCameraMSL(), offset.z);
+    const offset = latLngToCameraRelativeMeters(pose.stationAnchor, pose.location);
+    viewer.overlaysGroup.position.set(offset.x, pose.stationAltitudeMSL - pose.altitudeMSL, offset.z);
   }
 
-  // The cheap half of applyCameraLocation: anchor state + any dependents that
-  // don't hit the network. Split out so hydrateFromAPI can land the anchor
-  // up front (otherwise reads of stationLocation during the parallel-fetch
-  // block see a stale value across a station swap) while deferring the
-  // terrain DEM/imagery flood to the end.
-  function setStationAnchor(loc: LatLng): void {
-    stationLocation = loc;
-    // Editing the station's coords re-attaches the camera to it: the
-    // shift-wheel detach is meaningful only relative to a fixed anchor.
-    // Restore the station's stored altitude too — otherwise the camera
-    // would re-anchor at whatever altitude shift-wheel had drifted to.
-    if (cameraOverrideLocation) {
-      cameraOverrideLocation = null;
-      const cache = stationFields.getNameAndAlt();
-      if (cache) terrain.setCameraMSL(cache.alt);
-    }
+  function applyCameraLocation(loc: LatLng, alt: number): void {
+    worldCamera.setStationAnchor({ location: loc, altitudeMSL: alt });
+    pushTerrainFromPose();
     settings.refreshSunDirection();
-    refreshControlPointColumns();
-    updateOverlaysGroupOffset();
     sync.flush();
-  }
-
-  function applyCameraLocation(loc: LatLng): void {
-    setStationAnchor(loc);
-    terrain.setLocation(loc);
   }
 
   function registerControlPoint(cp: ApiControlPoint): void {
@@ -398,7 +384,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
 
   const settings = createSettingsPanel({
     viewer, terrain, sunMarker,
-    getCameraLocation: getStationLocation,
+    getCameraLocation: () => worldCamera.getPose().stationAnchor,
     onShowAllCPsChange: value => {
       showAllCPs = value;
       refreshControlPointColumns();
@@ -591,9 +577,8 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       // Translate the camera forward (along its look direction) by a step
       // that scales with the current altitude — far above a landscape, big
       // strides; near the ground, fine. Wheel-up (deltaPx < 0) → forward.
-      const camLoc = getCameraLocation();
-      if (!camLoc) return;
-      const camMSL = terrain.getCameraMSL();
+      const pose = worldCamera.getPose();
+      if (!pose.location) return;
       const { azimuth, altitude } = viewer.getAzAlt();
       // Step scale grows with the camera's height above ground, not its raw
       // MSL — far inland stations would otherwise get enormous strides simply
@@ -601,18 +586,17 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       const stepScale = Math.max(Math.abs(terrain.getCameraHeightAboveGround()), 1);
       const step = -deltaPx * SHIFT_WHEEL_LOG_PER_PX * stepScale;
       const look = dirFromAzAlt(azimuth, altitude);
-
-      cameraOverrideLocation = tangentMetersToLatLng(camLoc, step * look.x, step * look.z);
-      terrain.setLocation(cameraOverrideLocation);
-      terrain.setCameraMSL(camMSL + step * look.y);
-      hud.refresh();
-      repushOverlayCameraAnchors();
-      updateOverlaysGroupOffset();
+      worldCamera.setLiveCamera({
+        location: tangentMetersToLatLng(pose.location, step * look.x, step * look.z),
+        altitudeMSL: pose.altitudeMSL + step * look.y,
+      });
+      pushTerrainFromPose();
     },
     findColumnAtNDC: ndc => {
-      if (!stationLocation) return null;
-      return findHitColumn(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, stationLocation,
-        terrain.getCameraMSL(), getVisibleControlPoints());
+      const pose = worldCamera.getPose();
+      if (!pose.stationAnchor) return null;
+      return findHitColumn(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, pose.stationAnchor,
+        pose.altitudeMSL, getVisibleControlPoints());
     },
     onHoveredColumnChange: id => { cpColumns.setHoveredMarker(id); },
     onPhotoBodyContextMenu: (overlay, u, v, sx, sy) => {
@@ -632,11 +616,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       openCpContextMenu(cpId, sx, sy, null);
     },
     findStationAtNDC: ndc => {
-      if (!stationLocation || otherStations.length === 0) return null;
+      const pose = worldCamera.getPose();
+      if (!pose.stationAnchor || otherStations.length === 0) return null;
       const canvas = viewer.renderer.domElement;
       return findHitDot(ndc, STATION_DOT_HIT_PX,
-        canvas.clientWidth, canvas.clientHeight, viewer.camera, stationLocation,
-        terrain.getCameraMSL(), otherStations);
+        canvas.clientWidth, canvas.clientHeight, viewer.camera, pose.stationAnchor,
+        pose.altitudeMSL, otherStations);
     },
     onStationClick: (id, sx, sy) => {
       if (selectedStationId !== id) {
@@ -674,16 +659,17 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       // Without both endpoints (or a camera fix) there's no meaningful 3D
       // line to draw — bail. The line reappears as soon as the cursor
       // re-enters another CP marker.
-      if (!cpAId || !cpBId || !stationLocation) { hide(); return; }
+      const pose = worldCamera.getPose();
+      if (!cpAId || !cpBId || !pose.stationAnchor) { hide(); return; }
       const cps = overlays.controlPoints.list();
       const a = cps.find(c => c.id === cpAId);
       const b = cps.find(c => c.id === cpBId);
       if (!a || !b) { hide(); return; }
       if (a.estLat === null || a.estLng === null || a.estAlt === null) { hide(); return; }
       if (b.estLat === null || b.estLng === null || b.estAlt === null) { hide(); return; }
-      const cameraMSL = terrain.getCameraMSL();
-      const axz = latLngToCameraRelativeMeters({ lat: a.estLat, lng: a.estLng }, stationLocation);
-      const bxz = latLngToCameraRelativeMeters({ lat: b.estLat, lng: b.estLng }, stationLocation);
+      const cameraMSL = pose.altitudeMSL;
+      const axz = latLngToCameraRelativeMeters({ lat: a.estLat, lng: a.estLng }, pose.stationAnchor);
+      const bxz = latLngToCameraRelativeMeters({ lat: b.estLat, lng: b.estLng }, pose.stationAnchor);
       const arr = previewPositions.array as Float32Array;
       arr[0] = axz.x; arr[1] = a.estAlt - cameraMSL; arr[2] = axz.z;
       arr[3] = bxz.x; arr[4] = b.estAlt - cameraMSL; arr[5] = bxz.z;
@@ -701,20 +687,22 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   const stationFields = createStationFields({
     getCurrentStationId,
     onAltitudeChanged: (alt) => {
-      // Keep the viewer's vertical reference in sync with the station's
-      // recorded altitude. Editing the alt also re-attaches the camera if
-      // it had drifted via shift-wheel — the form is for the station, so
-      // the user expects to see it from the station after editing.
-      let changed = terrain.setCameraMSL(alt);
-      if (cameraOverrideLocation && stationLocation) {
-        cameraOverrideLocation = null;
-        terrain.setLocation(stationLocation);
-        changed = true;
-      }
-      if (changed) refreshControlPointColumns();
-      updateOverlaysGroupOffset();
+      // Re-anchor the station altitude. setStationAnchor also resets the
+      // live camera to the anchor — if shift-wheel had drifted location or
+      // altitude, the form edit snaps the camera back to the station.
+      const pose = worldCamera.getPose();
+      if (!pose.stationAnchor) return;
+      worldCamera.setStationAnchor({ location: pose.stationAnchor, altitudeMSL: alt });
+      pushTerrainFromPose();
     },
-    onLocationChanged: (loc) => { applyCameraLocation(loc); },
+    onLocationChanged: (loc) => {
+      const pose = worldCamera.getPose();
+      // Form events for a station that has no anchor yet shouldn't be
+      // possible (the form is bound only after hydrate sets the anchor),
+      // but be explicit rather than silently anchor at sea level.
+      if (pose.stationAltitudeMSL === null) return;
+      applyCameraLocation(loc, pose.stationAltitudeMSL);
+    },
   });
 
   async function rehydrateAfterSolve(): Promise<void> {
@@ -722,7 +710,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     stationFields.hydrate(data.station);
     overlays.withBatch(() => {
       const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
-      applyCameraLocation(loc);
+      applyCameraLocation(loc, data.station.alt);
       for (const p of data.photos) {
         const o = overlays.photos.getById(p.id);
         if (!o) continue;
@@ -755,24 +743,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   });
 
   const stationNavigation = createStationNavigation({
-    viewer, terrain, cpColumns, stationDots, photoPreviews,
+    viewer, terrain, cpColumns, photoPreviews,
+    worldCamera,
     getCurrentStationId,
-    // Use the live camera pose (shift-wheel-driven override if any, else
-    // station coords) so a fly starts from where the user actually is.
-    getStationLocation: getCameraLocation,
-    setStationLocation: (loc) => { stationLocation = loc; cameraOverrideLocation = null; },
-    getStationCache: () => {
-      const base = stationFields.getNameAndAlt();
-      if (!base) return null;
-      return { ...base, alt: terrain.getCameraMSL() };
-    },
+    getStationName: () => stationFields.getNameAndAlt()?.name ?? null,
     getOtherStations: () => otherStations,
     setOtherStations: (s) => { otherStations = [...s]; },
-    onFlyFrame: (loc, alt) => {
-      stationCones.update(loc, alt, otherCameras, selectedStationId);
-      observationRays.update(loc, alt, cachedObservationRays);
-      photoPreviews.update(loc, alt);
-    },
     loadStation,
   });
 
@@ -806,8 +782,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     selectedStationId = null;
     cpConstraints = [];
     selectedConstraintId = null;
-    cameraOverrideLocation = null;
-    updateOverlaysGroupOffset();
+    worldCamera.clear();
     previewLine.visible = false;
   }
 
@@ -849,10 +824,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       if (id !== stationId) return;  // user navigated away during fetch
     }
     const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
-    // Anchor state up front so subsequent reads of stationLocation are
-    // current. The heavy terrain.setLocation is deferred to the end of
-    // hydrate so DEM/imagery tile fetches queue behind photos + markers.
-    setStationAnchor(loc);
+    // Anchor pose up front so subsequent reads see current values. Terrain
+    // setLocation is deferred to the end of hydrate so DEM/imagery tile
+    // fetches queue behind photos + markers.
+    worldCamera.setStationAnchor({ location: loc, altitudeMSL: data.station.alt });
+    settings.refreshSunDirection();
+    sync.flush();
     stationFields.hydrate(data.station);
 
     // Center the viewport on the mean of the station's photo directions.
@@ -969,7 +946,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     }
 
     // Terrain last so its tile flood queues behind every other fetch above.
-    terrain.setLocation(loc);
+    pushTerrainFromPose();
   }
 
   const focusScratch = new THREE.Vector3();
@@ -987,10 +964,10 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   function focusCameraOnControlPoint(id: string): boolean {
     const cp = overlays.controlPoints.getById(id);
     if (cp?.estLat == null || cp.estLng == null || cp.estAlt == null) return false;
-    const camLoc = getCameraLocation();
-    if (!camLoc) return false;
-    const { x, z } = latLngToCameraRelativeMeters({ lat: cp.estLat, lng: cp.estLng }, camLoc);
-    const y = cp.estAlt - terrain.getCameraMSL();
+    const pose = worldCamera.getPose();
+    if (!pose.location) return false;
+    const { x, z } = latLngToCameraRelativeMeters({ lat: cp.estLat, lng: cp.estLng }, pose.location);
+    const y = cp.estAlt - pose.altitudeMSL;
     const { az, alt } = vecToAzAlt(x, y, z);
     viewer.setAzAlt(az, alt);
     viewer.setFov(FOCUS_FOV_DEG);

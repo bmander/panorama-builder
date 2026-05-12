@@ -52,9 +52,9 @@ export interface TerrainView {
   // Returns true if the value actually changed; lets callers skip downstream
   // refresh/save work when wheel events repeat the same MSL.
   setCameraMSL(meters: number): boolean;
-  getCameraMSL(): number;
   // Derived: camera's height above the local DEM ground at the mesh's build
-  // location. HUD-only; renderers should use getCameraMSL().
+  // location. HUD-only; non-terrain renderers should read altitude from the
+  // shared world-camera pose, not from here.
   getCameraHeightAboveGround(): number;
 }
 
@@ -204,7 +204,6 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       requestRender();
       return true;
     },
-    getCameraMSL: () => cameraMSL,
     getCameraHeightAboveGround: () => cameraMSL - camGroundElevAtBuilt,
   };
 }

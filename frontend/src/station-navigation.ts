@@ -4,15 +4,15 @@
 
 import * as api from './api.js';
 import { dirFromAzAlt } from './overlay.js';
-import { groundDistance, latLngToCameraRelativeMeters, vecToAzAlt } from './geo.js';
+import { groundDistance, vecToAzAlt } from './geo.js';
 import { wrapPi } from './mathx.js';
-import type { LatLng } from './types.js';
 import type { Viewer } from './viewer.js';
 import { DEFAULT_FOV } from './viewer.js';
 import type { TerrainView } from './terrain/index.js';
 import type { ControlPointColumns } from './map-poi-columns.js';
-import type { StationMarker, StationMarkers } from './station-markers.js';
+import type { StationMarker } from './station-markers.js';
 import type { PhotoPreviews } from './photo-previews.js';
+import type { WorldCamera } from './world-camera.js';
 
 export function meanPhotoAzAlt(photos: readonly api.ApiPhoto[]): { az: number; alt: number } | null {
   let sx = 0, sy = 0, sz = 0;
@@ -32,19 +32,12 @@ export interface StationNavigationDeps {
   viewer: Viewer;
   terrain: TerrainView;
   cpColumns: ControlPointColumns;
-  stationDots: StationMarkers;
   photoPreviews: PhotoPreviews;
+  worldCamera: WorldCamera;
   getCurrentStationId: () => string;
-  getStationLocation: () => LatLng | null;
-  setStationLocation: (loc: LatLng) => void;
-  getStationCache: () => { name: string | null; alt: number } | null;
+  getStationName: () => string | null;
   getOtherStations: () => readonly StationMarker[];
   setOtherStations: (stations: readonly StationMarker[]) => void;
-  // Fired per frame during the fly tween. Hosts use it to update any
-  // world-space overlays whose positions track the camera location
-  // (cones, observation rays, …) — without it those overlays freeze in
-  // their pre-fly positions and visually detach from the moving world.
-  onFlyFrame?: (loc: LatLng, alt: number) => void;
   // Called at fly end (and on early-out paths) to swap the host's per-
   // station data to destId. Passing the prefetched dest lets the host
   // skip its own getStation call — the fly already fetched it.
@@ -57,21 +50,21 @@ export interface StationNavigation {
 
 export function createStationNavigation(deps: StationNavigationDeps): StationNavigation {
   const {
-    viewer, terrain, cpColumns, stationDots, photoPreviews,
-    getCurrentStationId,
-    getStationLocation, setStationLocation, getStationCache,
+    viewer, terrain, cpColumns, photoPreviews,
+    worldCamera,
+    getCurrentStationId, getStationName,
     getOtherStations, setOtherStations,
-    onFlyFrame, loadStation,
+    loadStation,
   } = deps;
 
   let flyInProgress = false;
 
   async function flyToStation(destId: string): Promise<void> {
     if (flyInProgress) return;
-    const here = getStationLocation();
-    const cache = getStationCache();
+    const startPose = worldCamera.getPose();
     const currentStationId = getCurrentStationId();
-    if (!here || !cache || destId === currentStationId) {
+    if (!startPose.location || startPose.stationAnchor === null
+        || startPose.stationAltitudeMSL === null || destId === currentStationId) {
       await loadStation(destId);
       return;
     }
@@ -87,14 +80,19 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
         return;
       }
 
-      const src = { lat: here.lat, lng: here.lng, alt: cache.alt };
+      // Fly starts from the live camera (shift-wheel-driven override if any,
+      // else the station anchor) but the *station leaves behind* is the
+      // anchor — that's the dot that appears in the destination view.
+      const src = {
+        lat: startPose.location.lat, lng: startPose.location.lng, alt: startPose.altitudeMSL,
+      };
       const dst = { lat: dest.station.lat, lng: dest.station.lng, alt: dest.station.alt };
 
       setOtherStations([...savedOtherStations, {
         id: currentStationId,
-        name: cache.name,
-        anchor: { lat: src.lat, lng: src.lng },
-        altitude: src.alt,
+        name: getStationName(),
+        anchor: { lat: startPose.stationAnchor.lat, lng: startPose.stationAnchor.lng },
+        altitude: startPose.stationAltitudeMSL,
       }]);
 
       // CP markers + observation lines connect world-space CPs to
@@ -133,25 +131,22 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
           const lng = src.lng + (dst.lng - src.lng) * k;
           const alt = src.alt + (dst.alt - src.alt) * k + hopHeightM * Math.sin(Math.PI * k);
           const loc = { lat, lng };
-          setStationLocation(loc);
+          // Pose update fans out to dots, cones, rays, constraints, and
+          // the overlaysGroup offset via the host's pushPose subscriber —
+          // the source panes stay glued to the anchor as the camera flies.
+          worldCamera.setLiveCamera({ location: loc, altitudeMSL: alt });
           terrain.setLocation(loc);
           terrain.setCameraMSL(alt);
-          // Glue source panes to the source station as the camera flies
-          // away — finally block resets to origin before dest hydrate.
-          const srcOffset = latLngToCameraRelativeMeters(src, loc);
-          viewer.overlaysGroup.position.set(srcOffset.x, src.alt - alt, srcOffset.z);
           viewer.setAzAlt(srcAz + azDelta * k, srcAlt + (dstAlt - srcAlt) * k);
           viewer.setFov(srcFov + (dstFov - srcFov) * k);
-          // CP markers are hidden above; the dots / cones / rays are pure
-          // world-space and track the moving camera per frame. Visual
-          // quirk at k=1: the destination's cone apex / ray origins
+          // Destination-photo previews track the camera in world space.
+          // Visual quirk at k=1: the destination's cone apex / ray origins
           // coincide with the camera at world (0,0,0), so the GPU clips
           // those line segments at the near plane and they emerge from a
           // small starburst near image center instead of one converging
           // point. We accept this — landing slightly back of the lens to
           // hide it would put the camera at a non-station position.
-          stationDots.update(loc, alt, getOtherStations());
-          onFlyFrame?.(loc, alt);
+          photoPreviews.update(loc, alt);
           viewer.requestRender();
           if (tau < 1) requestAnimationFrame(step);
           else resolve();
