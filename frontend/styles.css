@@ -118,7 +118,6 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
                               cursor: pointer; flex: 0 0 auto; }
 .photo-hud-row .lock-check input { margin: 0; }
 #photo-hud-opacity { flex: 1; accent-color: #fff; }
-.photo-hud-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .btn.danger { color: #ff8080; border-color: #ff8080; }
 .btn.danger:hover { background: rgba(255,80,80,0.2); }
 .btn.loading { color: transparent; position: relative; cursor: wait; }

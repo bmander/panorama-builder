@@ -1,14 +1,15 @@
-// Right-side HUD: opacity slider + photo-parameters for the selected photo.
-// Opacity mutates live; the typed params are committed via Save so a single
-// undo entry covers them.
+// Right-side HUD: opacity slider + photo parameters. Every field commits on
+// change; opacity commits live as the slider moves. One commit = one undo
+// entry.
 
-import { getElement, overlayData } from './types.js';
+import { getElement, overlayData, syncInputChecked, syncInputValue } from './types.js';
 import { SIZE_MAX, SIZE_MIN } from './overlay.js';
 import type { OverlayManager } from './overlay.js';
 import type { SyncManager } from './sync.js';
 import { clamp, degToRad, radToDeg } from './mathx.js';
 import { applyPhotoSnapshot, snapshotPhoto } from './undo.js';
 import type { PhotoSnapshot, UndoManager } from './undo.js';
+import type { PhotoLocks } from './types.js';
 import type * as THREE from 'three';
 
 export interface PhotoHud {
@@ -25,7 +26,6 @@ export function createPhotoHud(
   { overlays, sync, undoManager }: CreatePhotoHudOptions,
 ): PhotoHud {
   const panelEl = getElement('photo-hud-panel');
-  const saveBtn = getElement<HTMLButtonElement>('photo-hud-save');
   const opacityEl = getElement<HTMLInputElement>('photo-hud-opacity');
   const azEl = getElement<HTMLInputElement>('photo-hud-az');
   const tiltEl = getElement<HTMLInputElement>('photo-hud-tilt');
@@ -42,118 +42,124 @@ export function createPhotoHud(
   const k2LockEl = getElement<HTMLInputElement>('photo-hud-k2-lock');
 
   let bound: THREE.Group | null = null;
-  let beforeSnapshot: PhotoSnapshot | null = null;
 
   function populate(overlay: THREE.Group): void {
     const pose = overlays.photos.extractPose(overlay, null);
     const locks = overlays.photos.getLocks(overlay);
-    opacityEl.value = String(Math.round(overlays.photos.getOpacity(overlay) * 100));
-    azEl.value = radToDeg(pose.photoAz).toFixed(2);
-    tiltEl.value = radToDeg(pose.photoTilt).toFixed(2);
-    rollEl.value = radToDeg(pose.photoRoll).toFixed(2);
-    fovEl.value = radToDeg(pose.sizeRad).toFixed(2);
-    aspectEl.value = pose.aspect.toFixed(4);
-    k1El.value = pose.k1.toFixed(4);
-    k2El.value = pose.k2.toFixed(4);
-    azLockEl.checked = locks.lockPhotoAz;
-    tiltLockEl.checked = locks.lockPhotoTilt;
-    rollLockEl.checked = locks.lockPhotoRoll;
-    fovLockEl.checked = locks.lockSizeRad;
-    k1LockEl.checked = locks.lockDistK1;
-    k2LockEl.checked = locks.lockDistK2;
-    saveBtn.disabled = false;
+    syncInputValue(opacityEl, String(Math.round(overlays.photos.getOpacity(overlay) * 100)));
+    syncInputValue(azEl, radToDeg(pose.photoAz).toFixed(2));
+    syncInputValue(tiltEl, radToDeg(pose.photoTilt).toFixed(2));
+    syncInputValue(rollEl, radToDeg(pose.photoRoll).toFixed(2));
+    syncInputValue(fovEl, radToDeg(pose.sizeRad).toFixed(2));
+    syncInputValue(aspectEl, pose.aspect.toFixed(4));
+    syncInputValue(k1El, pose.k1.toFixed(4));
+    syncInputValue(k2El, pose.k2.toFixed(4));
+    syncInputChecked(azLockEl, locks.lockPhotoAz);
+    syncInputChecked(tiltLockEl, locks.lockPhotoTilt);
+    syncInputChecked(rollLockEl, locks.lockPhotoRoll);
+    syncInputChecked(fovLockEl, locks.lockSizeRad);
+    syncInputChecked(k1LockEl, locks.lockDistK1);
+    syncInputChecked(k2LockEl, locks.lockDistK2);
   }
 
   function refresh(): void {
     const overlay = overlays.photos.getSelected();
-    if (overlay === bound) {
-      // Same overlay: only sync the opacity slider (its source of truth
-      // is the material). Leave typed inputs alone so concurrent
-      // canvas-driven refreshes don't clobber what the user is typing.
-      if (overlay) {
-        const next = String(Math.round(overlays.photos.getOpacity(overlay) * 100));
-        if (opacityEl.value !== next) opacityEl.value = next;
-      }
-      return;
-    }
+    const changed = overlay !== bound;
     bound = overlay;
     if (!overlay) {
-      panelEl.hidden = true;
-      beforeSnapshot = null;
+      if (changed) panelEl.hidden = true;
       return;
     }
-    beforeSnapshot = undoManager ? snapshotPhoto(overlays, overlayData(overlay).id) : null;
+    if (changed) panelEl.hidden = false;
     populate(overlay);
-    panelEl.hidden = false;
   }
+
+  // onApplied fires after the PUT succeeds and is used by the per-field wire
+  // helpers to force-write the canonical (e.g. clamped) value back into the
+  // input element, bypassing populate's focus-check.
+  function commit(
+    buildAfter: (before: PhotoSnapshot) => PhotoSnapshot,
+    onApplied?: (after: PhotoSnapshot) => void,
+  ): void {
+    if (!bound) return;
+    const overlay = bound;
+    const id = overlayData(overlay).id;
+    const before = snapshotPhoto(overlays, id);
+    if (!before) return;
+    const after = buildAfter(before);
+    applyPhotoSnapshot(overlays, sync, id, after).then(
+      () => {
+        if (undoManager) undoManager.record({ kind: 'photo-pose', id, before, after });
+        if (bound === overlay) {
+          populate(overlay);
+          onApplied?.(after);
+        }
+      },
+      (err: unknown) => { sync.reportError('update photo parameters', err); },
+    );
+  }
+
+  function wireDegField(
+    el: HTMLInputElement,
+    set: (rad: number, before: PhotoSnapshot) => PhotoSnapshot,
+    get: (snap: PhotoSnapshot) => number,
+  ): void {
+    el.addEventListener('change', () => {
+      if (!bound) return;
+      const n = parseFloat(el.value);
+      const snap = snapshotPhoto(overlays, overlayData(bound).id);
+      if (!Number.isFinite(n)) {
+        if (snap) el.value = radToDeg(get(snap)).toFixed(2);
+        return;
+      }
+      commit(before => set(degToRad(n), before), after => {
+        el.value = radToDeg(get(after)).toFixed(2);
+      });
+    });
+  }
+
+  function wireRawField(
+    el: HTMLInputElement,
+    set: (val: number, before: PhotoSnapshot) => PhotoSnapshot,
+    get: (snap: PhotoSnapshot) => number,
+  ): void {
+    el.addEventListener('change', () => {
+      if (!bound) return;
+      const n = parseFloat(el.value);
+      if (!Number.isFinite(n)) {
+        const snap = snapshotPhoto(overlays, overlayData(bound).id);
+        if (snap) el.value = get(snap).toFixed(4);
+        return;
+      }
+      commit(before => set(n, before), after => {
+        el.value = get(after).toFixed(4);
+      });
+    });
+  }
+
+  function wireLock(el: HTMLInputElement, key: keyof PhotoLocks): void {
+    el.addEventListener('change', () => {
+      commit(before => ({ ...before, locks: { ...before.locks, [key]: el.checked } }));
+    });
+  }
+
+  wireDegField(azEl, (rad, b) => ({ ...b, photoAz: rad }), s => s.photoAz);
+  wireDegField(tiltEl, (rad, b) => ({ ...b, photoTilt: rad }), s => s.photoTilt);
+  wireDegField(rollEl, (rad, b) => ({ ...b, photoRoll: rad }), s => s.photoRoll);
+  wireDegField(fovEl, (rad, b) => ({ ...b, sizeRad: clamp(rad, SIZE_MIN, SIZE_MAX) }), s => s.sizeRad);
+  wireRawField(k1El, (n, b) => ({ ...b, distK1: n }), s => s.distK1);
+  wireRawField(k2El, (n, b) => ({ ...b, distK2: n }), s => s.distK2);
+
+  wireLock(azLockEl, 'lockPhotoAz');
+  wireLock(tiltLockEl, 'lockPhotoTilt');
+  wireLock(rollLockEl, 'lockPhotoRoll');
+  wireLock(fovLockEl, 'lockSizeRad');
+  wireLock(k1LockEl, 'lockDistK1');
+  wireLock(k2LockEl, 'lockDistK2');
 
   opacityEl.addEventListener('input', () => {
     if (!bound) return;
     overlays.photos.setSelectedOpacity(parseFloat(opacityEl.value) / 100);
-  });
-
-  function readNumber(el: HTMLInputElement): number | null {
-    const n = parseFloat(el.value);
-    return Number.isFinite(n) ? n : null;
-  }
-
-  saveBtn.addEventListener('click', () => {
-    if (!bound) return;
-    const overlay = bound;
-
-    const azDeg = readNumber(azEl);
-    const tiltDeg = readNumber(tiltEl);
-    const rollDeg = readNumber(rollEl);
-    const fovDeg = readNumber(fovEl);
-    const k1 = readNumber(k1El);
-    const k2 = readNumber(k2El);
-    if (azDeg === null) { azEl.focus(); return; }
-    if (tiltDeg === null) { tiltEl.focus(); return; }
-    if (rollDeg === null) { rollEl.focus(); return; }
-    if (fovDeg === null) { fovEl.focus(); return; }
-    if (k1 === null) { k1El.focus(); return; }
-    if (k2 === null) { k2El.focus(); return; }
-
-    const data = overlayData(overlay);
-    const photoId = data.id;
-    const after: PhotoSnapshot = {
-      photoAz: degToRad(azDeg),
-      photoTilt: degToRad(tiltDeg),
-      photoRoll: degToRad(rollDeg),
-      sizeRad: clamp(degToRad(fovDeg), SIZE_MIN, SIZE_MAX),
-      aspect: data.aspect,
-      opacity: overlays.photos.getOpacity(overlay),
-      distK1: k1,
-      distK2: k2,
-      locks: {
-        lockPhotoAz: azLockEl.checked,
-        lockPhotoTilt: tiltLockEl.checked,
-        lockPhotoRoll: rollLockEl.checked,
-        lockSizeRad: fovLockEl.checked,
-        lockDistK1: k1LockEl.checked,
-        lockDistK2: k2LockEl.checked,
-      },
-    };
-
-    const recordedBefore = beforeSnapshot;
-    saveBtn.disabled = true;
-    applyPhotoSnapshot(overlays, sync, photoId, after).then(
-      () => {
-        if (undoManager && recordedBefore) {
-          undoManager.record({
-            kind: 'photo-pose', id: photoId, before: recordedBefore, after,
-          });
-        }
-        // Only advance the baseline if the user hasn't navigated away
-        // during the save; otherwise the new selection's snapshot stands.
-        if (bound === overlay) beforeSnapshot = after;
-        saveBtn.disabled = false;
-      },
-      (err: unknown) => {
-        sync.reportError('update photo parameters', err);
-        saveBtn.disabled = false;
-      },
-    );
   });
 
   return { refresh };

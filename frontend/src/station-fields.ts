@@ -9,7 +9,7 @@
 // symmetry and forward-compat.
 
 import * as api from './api.js';
-import { formatLocalDateTime, getElement } from './types.js';
+import { formatLocalDateTime, getElement, syncInputChecked, syncInputValue } from './types.js';
 import type { LatLng } from './types.js';
 
 export interface StationFields {
@@ -68,15 +68,12 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
 
   function render(): void {
     if (!cache) return;
-    // Avoid clobbering an input the user is currently editing.
-    if (document.activeElement !== latEl) latEl.value = cache.lat.toFixed(fieldDigits('lat'));
-    if (document.activeElement !== lngEl) lngEl.value = cache.lng.toFixed(fieldDigits('lng'));
-    if (document.activeElement !== altEl) altEl.value = cache.alt.toFixed(fieldDigits('alt'));
-    if (document.activeElement !== capturedAtEl) {
-      renderCapturedAt();
-    }
-    lockPosEl.checked = cache.lockLat && cache.lockLng;
-    lockAltEl.checked = cache.lockAlt;
+    syncInputValue(latEl, cache.lat.toFixed(fieldDigits('lat')));
+    syncInputValue(lngEl, cache.lng.toFixed(fieldDigits('lng')));
+    syncInputValue(altEl, cache.alt.toFixed(fieldDigits('alt')));
+    if (document.activeElement !== capturedAtEl) renderCapturedAt();
+    syncInputChecked(lockPosEl, cache.lockLat && cache.lockLng);
+    syncInputChecked(lockAltEl, cache.lockAlt);
   }
 
   function hydrate(s: api.ApiStation): void {

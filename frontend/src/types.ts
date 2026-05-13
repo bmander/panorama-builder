@@ -261,6 +261,17 @@ export const getElement = <T extends HTMLElement = HTMLElement>(id: string): T =
   return el as T;
 };
 
+// Push a value into an input without clobbering it while the user is typing,
+// and skip the DOM write when nothing changed (used on drag-rate refresh paths).
+export function syncInputValue(el: HTMLInputElement, value: string): void {
+  if (document.activeElement === el) return;
+  if (el.value !== value) el.value = value;
+}
+export function syncInputChecked(el: HTMLInputElement, value: boolean): void {
+  if (document.activeElement === el) return;
+  if (el.checked !== value) el.checked = value;
+}
+
 // Wall-clock string in the form `<input type="datetime-local">` accepts:
 // 'YYYY-MM-DDTHH:mm', no zone suffix.
 const pad2 = (n: number): string => String(n).padStart(2, '0');

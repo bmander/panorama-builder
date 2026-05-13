@@ -549,8 +549,9 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
           movePoint.normalize().applyQuaternion(mode.offset);
           overlays.photos.moveSelectedTo(movePoint);
           // Mutation is inside the drag batch, so onMutate (which would normally
-          // request a render) is queued. Request the render directly instead.
-          viewer.requestRender();
+          // request a render) is queued. onChange isn't batched, so the viewer
+          // render + HUDs still refresh live during the gesture.
+          onChange();
         }
         break;
       }
@@ -571,7 +572,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
         // drag rotates the photo CW.
         const currentAngle = Math.atan2(e.clientY - mode.cy, e.clientX - mode.cx);
         overlays.photos.setSelectedRoll(mode.startRoll - (currentAngle - mode.startAngle));
-        viewer.requestRender();
+        onChange();
         break;
       }
       case 'poi-drag': {
