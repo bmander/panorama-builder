@@ -123,6 +123,9 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
       const dot = { anchor: m.anchor, altitude: m.altitude, color };
       if (m.observations.length > 0) filledList.push(dot);
       else outlineList.push(dot);
+      // Residual lines stay hidden until the CP is selected — they're
+      // a focused debugging cue, not steady ambient clutter.
+      if (!m.selected) continue;
       const y = m.altitude - lastCameraMSL - drop;
       for (const poi of m.observations) {
         poi.getWorldPosition(scratch);
