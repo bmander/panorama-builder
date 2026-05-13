@@ -12,11 +12,14 @@
     <div id="map"></div>
   </div>
   <div id="top-right" class="top-right-fixed">
-    <button id="admin-btn" class="btn" hidden>Admin</button>
-    <button id="settings-btn" class="btn" aria-expanded="false">⚙ Settings</button>
-    <button id="sun-dial-btn" class="btn">☀ Sun dial</button>
-    <a id="view-on-map" class="btn" href="/">📍 Map</a>
-    <button id="download" class="btn">download PNG</button>
+    <a id="view-on-map" class="btn" href="/">Map →</a>
+    <button id="menu-btn" class="btn" aria-expanded="false" aria-haspopup="menu" aria-controls="menu-dropdown">☰</button>
+  </div>
+  <div id="menu-dropdown" role="menu" hidden>
+    <button id="admin-btn" class="menu-item" role="menuitem" hidden>Admin</button>
+    <button id="settings-btn" class="menu-item" role="menuitem" aria-expanded="false">Display</button>
+    <button id="sun-dial-btn" class="menu-item" role="menuitem">Sun dial</button>
+    <button id="download" class="menu-item" role="menuitem">Download PNG</button>
   </div>
   <div id="index-top-right" class="top-right-fixed" hidden>
     <button id="index-solve-btn" class="btn">Solve</button>

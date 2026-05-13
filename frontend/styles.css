@@ -11,9 +11,19 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .btn { padding: 6px 10px; background: rgba(0,0,0,0.5);
        color: #fff; border: 1px solid #fff; font: 12px monospace; cursor: pointer;
        text-decoration: none; }
-.top-right-fixed { position: fixed; top: 8px; right: 8px; display: flex; gap: 4px; }
+.top-right-fixed { position: fixed; top: 8px; right: 8px; display: flex; gap: 4px;
+                   align-items: center; z-index: 1000; }
 .top-right-fixed[hidden] { display: none; }
 #index-top-right { z-index: 1000; }
+#menu-dropdown { position: fixed; top: 38px; right: 8px; z-index: 2400;
+                 background: rgba(0,0,0,0.9); color: #fff; border: 1px solid #fff;
+                 font: 12px monospace; min-width: 160px;
+                 display: flex; flex-direction: column; }
+#menu-dropdown[hidden] { display: none; }
+.menu-item { padding: 6px 10px; background: transparent; border: none;
+             color: #fff; font: inherit; text-align: left; cursor: pointer; }
+.menu-item:hover { background: rgba(255,255,255,0.15); }
+.menu-item[hidden] { display: none; }
 .session-host { position: fixed; top: 48px; right: 8px; z-index: 1000; }
 .session-panel { position: relative; display: inline-block; }
 .session-badge { background: rgba(0,0,0,0.7); border: 1px solid #fff;
@@ -213,6 +223,8 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
                     padding: 12px 16px; gap: 12px; min-width: 260px; }
   #params-panel { font-size: 16px; top: 64px; right: 12px;
                   padding: 12px 16px; gap: 12px; min-width: 300px; }
+  #menu-dropdown { font-size: 18px; top: 56px; right: 12px; min-width: 220px; }
+  .menu-item { padding: 10px 14px; }
   .settings-row { gap: 8px; }
   .settings-check { gap: 12px; }
   .settings-inline { gap: 12px; }

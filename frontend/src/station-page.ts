@@ -557,6 +557,32 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     sundialModal.open();
   });
 
+  // Hamburger menu wraps the admin / display / sun-dial / download actions.
+  // Each item's click handler is wired elsewhere (admin-modal, settings,
+  // sundial, ui.attachDownload); this block only manages open/close.
+  {
+    const menuBtn = getElement<HTMLButtonElement>('menu-btn');
+    const dropdown = getElement('menu-dropdown');
+    function setMenuOpen(open: boolean): void {
+      dropdown.hidden = !open;
+      menuBtn.setAttribute('aria-expanded', String(open));
+    }
+    menuBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      setMenuOpen(dropdown.hidden);
+    });
+    dropdown.addEventListener('click', () => { setMenuOpen(false); });
+    document.addEventListener('click', e => {
+      if (dropdown.hidden) return;
+      const target = e.target as Node | null;
+      if (target && (dropdown.contains(target) || menuBtn.contains(target))) return;
+      setMenuOpen(false);
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && !dropdown.hidden) setMenuOpen(false);
+    });
+  }
+
   function setMultiSelectedConstraintIds(next: ReadonlySet<string>): void {
     multiSelectedConstraintIds = next;
     const n = next.size;
