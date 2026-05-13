@@ -144,11 +144,11 @@ void main() {
 }
 `;
 
-// Shared by reference across every material that opts in. value swaps to the
-// probe texture on first regenerate; until then it stays null and applySkyHaze
-// makes its consumer fall back to the constant fogColor.
+// Shared uniform: every applySkyHaze material samples the same probe texture.
+// Populated synchronously inside createSky before any applySkyHaze material is
+// compiled (station-page.ts creates sky before terrain), so consumers always
+// see a real texture.
 const skyProbeUniform: { value: THREE.CubeTexture | null } = { value: null };
-const skyProbeReadyUniform: { value: boolean } = { value: false };
 
 const HAZE_FRAG_PARS = /* glsl */`
 #ifdef USE_FOG
@@ -161,7 +161,6 @@ const HAZE_FRAG_PARS = /* glsl */`
     uniform float fogFar;
   #endif
   uniform samplerCube skyProbe;
-  uniform bool skyProbeReady;
   varying vec3 vSkyHazeWorldPos;
 #endif
 `;
@@ -173,11 +172,8 @@ const HAZE_FRAG = /* glsl */`
   #else
     float fogFactor = smoothstep(fogNear, fogFar, vFogDepth);
   #endif
-  vec3 hazeColor = fogColor;
-  if (skyProbeReady) {
-    vec3 viewDir = normalize(vSkyHazeWorldPos - cameraPosition);
-    hazeColor = textureCube(skyProbe, viewDir).rgb;
-  }
+  vec3 viewDir = normalize(vSkyHazeWorldPos - cameraPosition);
+  vec3 hazeColor = textureCube(skyProbe, viewDir).rgb;
   gl_FragColor.rgb = mix(gl_FragColor.rgb, hazeColor, fogFactor);
 #endif
 `;
@@ -196,15 +192,16 @@ const HAZE_VERT = /* glsl */`
 #endif
 `;
 
+// Bump when the haze shader logic changes so Three doesn't reuse a cached
+// program compiled against a previous version of the chunks.
+const SKY_HAZE_PROGRAM_KEY = 'sky-haze-v1';
+
 // Patches a material's fog shader chunks so haze colour is sampled from the
 // sky probe in the world view direction instead of using the constant fogColor.
-// Falls back to fogColor while skyProbeReady is false (e.g. first frame before
-// the probe has been rendered). Idempotent: re-calling with the same material
-// just reassigns onBeforeCompile.
+// Idempotent: re-calling with the same material just reassigns onBeforeCompile.
 export function applySkyHaze(material: THREE.Material): void {
   material.onBeforeCompile = shader => {
     shader.uniforms.skyProbe = skyProbeUniform;
-    shader.uniforms.skyProbeReady = skyProbeReadyUniform;
     shader.vertexShader = shader.vertexShader
       .replace('#include <fog_pars_vertex>', HAZE_VERT_PARS)
       .replace('#include <fog_vertex>', HAZE_VERT);
@@ -213,7 +210,7 @@ export function applySkyHaze(material: THREE.Material): void {
       .replace('#include <fog_fragment>', HAZE_FRAG);
   };
   // Force the program cache to recompile rather than reusing a fog-less variant.
-  material.customProgramCacheKey = () => 'sky-haze-v1';
+  material.customProgramCacheKey = () => SKY_HAZE_PROGRAM_KEY;
 }
 
 export interface Sky {
@@ -283,28 +280,28 @@ export function createSky({ scene, renderer, requestRender }: CreateSkyOptions):
   // unit-radius sky quad (which lives at NDC z=1 regardless of camera).
   const probeCam = new THREE.CubeCamera(0.1, 10, probeRT);
 
-  // Cubemap shows through directly behind everything else in the main scene.
+  // Cubemap shows through directly behind everything else in the main scene,
+  // and is what every applySkyHaze material samples for view-direction haze.
   scene.background = probeRT.texture;
+  skyProbeUniform.value = probeRT.texture;
 
   let baking = false;
   let probeDirty = true;
+  let lastAz = NaN, lastAlt = NaN;
 
   function regenProbe(): void {
     if (!probeDirty || baking) return;
     probeCam.update(renderer, probeScene);
     probeDirty = false;
-    if (!skyProbeReadyUniform.value) {
-      skyProbeUniform.value = probeRT.texture;
-      skyProbeReadyUniform.value = true;
-    }
   }
-  // Render once synchronously so the first frame has both a sky background
-  // and valid haze data (otherwise the canvas is black and applySkyHaze
-  // materials fall through to fogColor for one frame).
+  // Render once synchronously so the first frame already has a valid sky.
   regenProbe();
 
   return {
     setSunDirection(az, alt) {
+      if (az === lastAz && alt === lastAlt) return;
+      lastAz = az;
+      lastAlt = alt;
       const d = sunVec(az, alt);
       sunDirVec.set(d.x, d.y, d.z);
       probeDirty = true;
