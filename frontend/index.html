@@ -150,6 +150,9 @@
         <label class="settings-inline" title="Camera elevation in metres above mean sea level.">alt <input type="number" id="station-alt" step="0.1"> m MSL</label>
         <label class="settings-check" title="When checked, the solver treats this station's elevation (metres above mean sea level) as a fixed input."><input type="checkbox" id="station-lock-alt"> lock elevation</label>
       </div>
+      <div class="settings-row station-pos">
+        <label class="settings-inline" title="When the photographer's camera was set up at this site. Used by the index-map time filter to decide which CPs were extant at the time of capture.">captured at <input type="datetime-local" id="station-captured-at" step="60"></label>
+      </div>
     </div>
     <div id="params-photo-section" class="params-section" hidden>
       <div class="params-section-header">Selected photo</div>
@@ -224,9 +227,6 @@
   <div id="settings-panel" hidden>
     <div class="settings-row">
       <button type="button" id="solve-station-btn" class="btn">Solve station…</button>
-    </div>
-    <div class="settings-row station-pos">
-      <label class="settings-inline" title="When the photographer's camera was set up at this site. Used by the index-map time filter to decide which CPs were extant at the time of capture.">captured at <input type="datetime-local" id="station-captured-at" step="60"></label>
     </div>
     <label class="settings-check"><input type="checkbox" id="terrain-toggle" checked> Terrain</label>
     <label class="settings-inline">Sun <input type="datetime-local" id="sun-datetime" step="60"></label>
