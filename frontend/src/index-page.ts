@@ -115,11 +115,31 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
       console.error('list stations failed:', err);
       return;
     }
-    view.setStationMarkers(stations.map(st => ({
-      id: st.id,
-      latlng: { lat: st.lat, lng: st.lng },
-      label: st.name ?? `Untitled ${st.id.slice(0, 6)}`,
-    })));
+    // Hydrate each station in parallel so the map icon can show every photo's
+    // frustum wedge. Failures degrade to an empty cone list (the marker still
+    // renders as a bare apex dot). With ~tens of stations this is fine; if it
+    // grows we'd want a dedicated /api/stations endpoint that returns just
+    // photo (id, photo_az, size_rad) tuples.
+    const hydrated = await Promise.all(stations.map(async st => {
+      try {
+        return await api.getStation(st.id);
+      } catch (err) {
+        console.error(`hydrate station ${st.id} failed:`, err);
+        return null;
+      }
+    }));
+    view.setStationMarkers(stations.map((st, i) => {
+      const h = hydrated[i];
+      const cones = h
+        ? h.photos.map(p => ({ azL: p.photo_az - p.size_rad / 2, azR: p.photo_az + p.size_rad / 2 }))
+        : [];
+      return {
+        id: st.id,
+        latlng: { lat: st.lat, lng: st.lng },
+        label: st.name ?? `Untitled ${st.id.slice(0, 6)}`,
+        cones,
+      };
+    }));
   }
 
   async function moveControlPointTo(id: string, latlng: LatLng): Promise<void> {

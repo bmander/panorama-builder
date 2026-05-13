@@ -18,6 +18,10 @@ export interface StationMarker {
   id: string;
   latlng: LatLng;
   label: string;
+  // Viewer-azimuth bounds of each photo's horizontal frustum. The marker
+  // renders these as small SVG wedges fanning out from the station origin,
+  // so the index map shows where each station is looking at a glance.
+  cones: readonly Cone[];
 }
 
 // Fetched-on-click summary of a station, used at the index view to preview
@@ -225,6 +229,34 @@ export function createMapView({
   map.on('moveend', () => { onViewChange?.(currentView()); });
 
   const CONE_STYLE: L.PolylineOptions = { color: '#ffd84a', weight: 1, fillColor: '#ffd84a', fillOpacity: 0.18 };
+  // Pixel size of the station divIcon and the SVG viewBox half-extent.
+  const STATION_ICON_PX = 80;
+  const STATION_ICON_R = 36; // wedge radius inside the SVG, in viewBox units
+  function stationIconHtml(cones: readonly Cone[]): string {
+    const wedges = cones.map(c => {
+      const bL = degToRad(viewerAzToBearing(c.azL));
+      const bR = degToRad(viewerAzToBearing(c.azR));
+      // Bearing 0° = north (SVG y down), so dx = sin(b), dy = -cos(b).
+      const xL = STATION_ICON_R * Math.sin(bL);
+      const yL = -STATION_ICON_R * Math.cos(bL);
+      const xR = STATION_ICON_R * Math.sin(bR);
+      const yR = -STATION_ICON_R * Math.cos(bR);
+      return `<polygon points="0,0 ${xL.toFixed(2)},${yL.toFixed(2)} ${xR.toFixed(2)},${yR.toFixed(2)}"/>`;
+    }).join('');
+    const half = STATION_ICON_PX / 2;
+    return `<svg class="station-frustum" viewBox="${-half} ${-half} ${STATION_ICON_PX} ${STATION_ICON_PX}" width="${STATION_ICON_PX}" height="${STATION_ICON_PX}" xmlns="http://www.w3.org/2000/svg">`
+      + `<g class="station-frustum-wedges">${wedges}</g>`
+      + `<circle class="station-frustum-apex" cx="0" cy="0" r="2"/>`
+      + `</svg>`;
+  }
+  function stationDivIcon(cones: readonly Cone[]): L.DivIcon {
+    return L.divIcon({
+      className: 'station-frustum-icon',
+      html: stationIconHtml(cones),
+      iconSize: [STATION_ICON_PX, STATION_ICON_PX],
+      iconAnchor: [STATION_ICON_PX / 2, STATION_ICON_PX / 2],
+    });
+  }
   const NULL_RAY_STYLE: L.PolylineOptions = { color: NULL_CP_RAY_CSS, weight: 2, opacity: 0.85 };
   const stationMarkers = new Map<string, { marker: L.Marker; view: StationMarker }>();
   // Preview overlay drawn when a station marker is clicked.
@@ -402,10 +434,16 @@ export function createMapView({
         const existing = stationMarkers.get(p.id);
         if (existing) {
           existing.marker.setLatLng([p.latlng.lat, p.latlng.lng]);
+          if (existing.view.cones !== p.cones) {
+            existing.marker.setIcon(stationDivIcon(p.cones));
+          }
           existing.view = p;
           continue;
         }
-        const m = L.marker([p.latlng.lat, p.latlng.lng], { draggable: true });
+        const m = L.marker([p.latlng.lat, p.latlng.lng], {
+          draggable: true,
+          icon: stationDivIcon(p.cones),
+        });
         m.on('click', (e: L.LeafletMouseEvent) => {
           L.DomEvent.stopPropagation(e);
           openStationPopup(p);
