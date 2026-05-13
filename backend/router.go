@@ -53,6 +53,10 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PUT /api/control-point-constraints/{id}", s.putCPConstraint)
 	mux.HandleFunc("DELETE /api/control-point-constraints/{id}", s.deleteCPConstraint)
 
+	mux.HandleFunc("POST /api/control-point-surfaces", s.postCPSurface)
+	mux.HandleFunc("GET /api/control-point-surfaces", s.listCPSurfaces)
+	mux.HandleFunc("DELETE /api/control-point-surfaces/{id}", s.deleteCPSurface)
+
 	mux.HandleFunc("POST /api/sessions", s.postSession)
 	mux.HandleFunc("GET /api/sessions/{id}", s.getSession)
 	mux.HandleFunc("GET /api/sessions/{id}/ops", s.getSessionOps)

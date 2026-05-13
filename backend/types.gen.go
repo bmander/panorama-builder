@@ -89,6 +89,7 @@ func (e EntityChangeKind) Valid() bool {
 const (
 	EntityRefEntityTypeControlPoint     EntityRefEntityType = "control_point"
 	EntityRefEntityTypeCpConstraint     EntityRefEntityType = "cp_constraint"
+	EntityRefEntityTypeCpSurface        EntityRefEntityType = "cp_surface"
 	EntityRefEntityTypeImageMeasurement EntityRefEntityType = "image_measurement"
 	EntityRefEntityTypePhoto            EntityRefEntityType = "photo"
 	EntityRefEntityTypeStation          EntityRefEntityType = "station"
@@ -100,6 +101,8 @@ func (e EntityRefEntityType) Valid() bool {
 	case EntityRefEntityTypeControlPoint:
 		return true
 	case EntityRefEntityTypeCpConstraint:
+		return true
+	case EntityRefEntityTypeCpSurface:
 		return true
 	case EntityRefEntityTypeImageMeasurement:
 		return true
@@ -116,6 +119,7 @@ func (e EntityRefEntityType) Valid() bool {
 const (
 	SessionOpEntityTypeControlPoint     SessionOpEntityType = "control_point"
 	SessionOpEntityTypeCpConstraint     SessionOpEntityType = "cp_constraint"
+	SessionOpEntityTypeCpSurface        SessionOpEntityType = "cp_surface"
 	SessionOpEntityTypeImageMeasurement SessionOpEntityType = "image_measurement"
 	SessionOpEntityTypePhoto            SessionOpEntityType = "photo"
 	SessionOpEntityTypeStation          SessionOpEntityType = "station"
@@ -127,6 +131,8 @@ func (e SessionOpEntityType) Valid() bool {
 	case SessionOpEntityTypeControlPoint:
 		return true
 	case SessionOpEntityTypeCpConstraint:
+		return true
+	case SessionOpEntityTypeCpSurface:
 		return true
 	case SessionOpEntityTypeImageMeasurement:
 		return true
@@ -224,6 +230,41 @@ type CPConstraintPatch struct {
 // CPConstraintType plumb: cp_a and cp_b share est_lat and est_lng (vertical line);
 // level: cp_a and cp_b share est_alt (horizontal alignment).
 type CPConstraintType string
+
+// CPSurface Polygonal surface anchored on 3 (triangle, cp_4_id null) or 4 (quad)
+// control points. Surfaces are visualization-only; the solver doesn't
+// read them.
+type CPSurface struct {
+	// Cp1ID 13-character base32 server-assigned id
+	Cp1ID ID `json:"cp_1_id"`
+
+	// Cp2ID 13-character base32 server-assigned id
+	Cp2ID ID `json:"cp_2_id"`
+
+	// Cp3ID 13-character base32 server-assigned id
+	Cp3ID     ID        `json:"cp_3_id"`
+	Cp4ID     *ID       `json:"cp_4_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+
+	// ID 13-character base32 server-assigned id
+	ID        ID        `json:"id"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// CPSurfaceCreate POST body for `/control-point-surfaces`. cp_4_id null or omitted
+// makes a triangle; otherwise a quad. All non-null ids must be
+// pairwise distinct.
+type CPSurfaceCreate struct {
+	// Cp1ID 13-character base32 server-assigned id
+	Cp1ID ID `json:"cp_1_id"`
+
+	// Cp2ID 13-character base32 server-assigned id
+	Cp2ID ID `json:"cp_2_id"`
+
+	// Cp3ID 13-character base32 server-assigned id
+	Cp3ID ID  `json:"cp_3_id"`
+	Cp4ID *ID `json:"cp_4_id,omitempty"`
+}
 
 // Commit defines model for Commit.
 type Commit struct {
@@ -722,6 +763,9 @@ type StationUpdate struct {
 // CPConstraintID 13-character base32 server-assigned id
 type CPConstraintID = ID
 
+// CPSurfaceID 13-character base32 server-assigned id
+type CPSurfaceID = ID
+
 // ControlPointID 13-character base32 server-assigned id
 type ControlPointID = ID
 
@@ -772,6 +816,9 @@ type CreateCPConstraintJSONRequestBody = CPConstraintCreate
 
 // UpdateCPConstraintJSONRequestBody defines body for UpdateCPConstraint for application/json ContentType.
 type UpdateCPConstraintJSONRequestBody = CPConstraintPatch
+
+// CreateCPSurfaceJSONRequestBody defines body for CreateCPSurface for application/json ContentType.
+type CreateCPSurfaceJSONRequestBody = CPSurfaceCreate
 
 // CreateControlPointJSONRequestBody defines body for CreateControlPoint for application/json ContentType.
 type CreateControlPointJSONRequestBody = ControlPointPatch

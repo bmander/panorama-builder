@@ -30,6 +30,7 @@ const (
 	entityImageMeasurement = "image_measurement"
 	entityControlPoint     = "control_point"
 	entityCPConstraint     = "cp_constraint"
+	entityCPSurface        = "cp_surface"
 )
 
 // entityRank orders entities for merge-time application: parents before
@@ -43,6 +44,7 @@ var entityRank = map[string]int{
 	entityControlPoint:     2,
 	entityImageMeasurement: 3,
 	entityCPConstraint:     4,
+	entityCPSurface:        5,
 }
 
 type Session struct {
@@ -395,6 +397,11 @@ func currentControlPoint(ctx context.Context, db *pgxpool.Pool, overlay sessionO
 func currentCPConstraint(ctx context.Context, db *pgxpool.Pool, overlay sessionOverlay, id string) (CPConstraint, bool, error) {
 	return currentEntity(ctx, db, overlay, entityCPConstraint, id, scanCPConstraint,
 		`SELECT `+cpConstraintCols+` FROM cp_constraints WHERE id=$1`)
+}
+
+func currentCPSurface(ctx context.Context, db *pgxpool.Pool, overlay sessionOverlay, id string) (CPSurface, bool, error) {
+	return currentEntity(ctx, db, overlay, entityCPSurface, id, scanCPSurface,
+		`SELECT `+cpSurfaceCols+` FROM cp_surfaces WHERE id=$1`)
 }
 
 // mergeOverlay folds the session bucket into a main-row slice. For each

@@ -1085,6 +1085,87 @@ func (s *Server) deleteCPConstraintInSession(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// --- CP surfaces ---
+
+func (s *Server) postCPSurfaceInSession(w http.ResponseWriter, r *http.Request, sess *Session) {
+	var req CPSurfaceCreate
+	if !parseJSON(w, r, &req) {
+		return
+	}
+	if !validID(req.Cp1ID) || !validID(req.Cp2ID) || !validID(req.Cp3ID) {
+		writeError(w, http.StatusBadRequest, "invalid cp id")
+		return
+	}
+	if req.Cp4ID != nil && !validID(*req.Cp4ID) {
+		writeError(w, http.StatusBadRequest, "invalid cp_4_id")
+		return
+	}
+	// Distinctness: the 3 required CPs must be pairwise distinct, and
+	// (when present) cp_4_id must differ from each of the others.
+	seen := map[string]bool{req.Cp1ID: true}
+	for _, id := range []string{req.Cp2ID, req.Cp3ID} {
+		if seen[id] {
+			writeError(w, http.StatusBadRequest, "cp ids must be distinct")
+			return
+		}
+		seen[id] = true
+	}
+	if req.Cp4ID != nil && seen[*req.Cp4ID] {
+		writeError(w, http.StatusBadRequest, "cp ids must be distinct")
+		return
+	}
+	id := newID()
+	now := time.Now().UTC()
+	sf := CPSurface{
+		ID: id, Cp1ID: req.Cp1ID, Cp2ID: req.Cp2ID, Cp3ID: req.Cp3ID, Cp4ID: req.Cp4ID,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := s.recordOpDirect(r.Context(), sess.ID, entityCPSurface, id, "insert", nil, jsonMust(sf)); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, sf)
+}
+
+func (s *Server) listCPSurfacesInSession(w http.ResponseWriter, r *http.Request, sess *Session) {
+	ctx := r.Context()
+	overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	writeListInSession(w, overlay, entityCPSurface,
+		func() ([]CPSurface, error) { return s.allCPSurfaces(ctx) },
+		func(sf CPSurface) string { return sf.ID })
+}
+
+func (s *Server) deleteCPSurfaceInSession(w http.ResponseWriter, r *http.Request, sess *Session) {
+	id := requireID(w, r, "id")
+	if id == "" {
+		return
+	}
+	ctx := r.Context()
+	overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	cur, present, err := currentCPSurface(ctx, s.db, overlay, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if !present {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err := s.recordOpDirect(ctx, sess.ID, entityCPSurface, id, "delete", jsonMust(cur), nil); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // --- helpers for cascade delete ---
 
 // collectPhotosForCascade returns every photo currently belonging to the
@@ -1159,6 +1240,23 @@ func (s *Server) allCPConstraints(ctx context.Context) ([]CPConstraint, error) {
 			return nil, err
 		}
 		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (s *Server) allCPSurfaces(ctx context.Context) ([]CPSurface, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+cpSurfaceCols+` FROM cp_surfaces ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CPSurface{}
+	for rows.Next() {
+		v, err := scanCPSurface(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
 	}
 	return out, rows.Err()
 }

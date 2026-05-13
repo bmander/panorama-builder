@@ -333,6 +333,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/control-point-surfaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List all CP surfaces */
+        get: operations["listCPSurfaces"];
+        put?: never;
+        /**
+         * Create a polygonal surface anchored on 3 or 4 control points
+         * @description Creates a triangle (3 distinct CP ids) or quad (4 distinct CP ids) surface
+         *     for visualization in the 3D world view. The four CP ids must be pairwise
+         *     distinct; `cp_4_id` omitted or null yields a triangle. Surfaces have no
+         *     editable fields after creation — modify by deleting and recreating.
+         */
+        post: operations["createCPSurface"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control-point-surfaces/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CPSurfaceId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a surface */
+        delete: operations["deleteCPSurface"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/solve/joint": {
         parameters: {
             query?: never;
@@ -1041,6 +1084,33 @@ export interface components {
         CPConstraintPatch: {
             constraint_type?: components["schemas"]["CPConstraintType"];
         };
+        /**
+         * @description Polygonal surface anchored on 3 (triangle, cp_4_id null) or 4 (quad)
+         *     control points. Surfaces are visualization-only; the solver doesn't
+         *     read them.
+         */
+        CPSurface: {
+            id: components["schemas"]["Id"];
+            cp_1_id: components["schemas"]["Id"];
+            cp_2_id: components["schemas"]["Id"];
+            cp_3_id: components["schemas"]["Id"];
+            cp_4_id?: components["schemas"]["Id"] | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /**
+         * @description POST body for `/control-point-surfaces`. cp_4_id null or omitted
+         *     makes a triangle; otherwise a quad. All non-null ids must be
+         *     pairwise distinct.
+         */
+        CPSurfaceCreate: {
+            cp_1_id: components["schemas"]["Id"];
+            cp_2_id: components["schemas"]["Id"];
+            cp_3_id: components["schemas"]["Id"];
+            cp_4_id?: components["schemas"]["Id"] | null;
+        };
         /** @description Optional knobs for the solver. Defaults are used when omitted. */
         SolveConfig: {
             /** @description GN iteration cap (synchronous default 30 */
@@ -1102,7 +1172,7 @@ export interface components {
          */
         EntityRef: {
             /** @enum {string} */
-            entity_type: "station" | "photo" | "image_measurement" | "control_point" | "cp_constraint";
+            entity_type: "station" | "photo" | "image_measurement" | "control_point" | "cp_constraint" | "cp_surface";
             entity_id: components["schemas"]["Id"];
             /** Format: int64 */
             last_seq?: number | null;
@@ -1135,7 +1205,7 @@ export interface components {
             /** Format: int64 */
             seq: number;
             /** @enum {string} */
-            entity_type: "station" | "photo" | "image_measurement" | "control_point" | "cp_constraint";
+            entity_type: "station" | "photo" | "image_measurement" | "control_point" | "cp_constraint" | "cp_surface";
             entity_id: components["schemas"]["Id"];
             /** @enum {string} */
             op: "insert" | "update" | "delete";
@@ -1219,6 +1289,7 @@ export interface components {
         ImageMeasurementId: components["schemas"]["Id"];
         ControlPointId: components["schemas"]["Id"];
         CPConstraintId: components["schemas"]["Id"];
+        CPSurfaceId: components["schemas"]["Id"];
     };
     requestBodies: never;
     headers: never;
@@ -1869,6 +1940,73 @@ export interface operations {
             header?: never;
             path: {
                 id: components["parameters"]["CPConstraintId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listCPSurfaces: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CPSurface"][];
+                };
+            };
+        };
+    };
+    createCPSurface: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CPSurfaceCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CPSurface"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteCPSurface: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CPSurfaceId"];
             };
             cookie?: never;
         };

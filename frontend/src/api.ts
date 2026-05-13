@@ -31,6 +31,8 @@ export type ApiCPConstraint = Schemas['CPConstraint'];
 export type ApiCPConstraintCreate = Schemas['CPConstraintCreate'];
 export type ApiCPConstraintPatch = Schemas['CPConstraintPatch'];
 export type ApiCPConstraintType = Schemas['CPConstraintType'];
+export type ApiCPSurface = Schemas['CPSurface'];
+export type ApiCPSurfaceCreate = Schemas['CPSurfaceCreate'];
 export type ApiControlPointObservations = Schemas['ControlPointObservations'];
 export type ApiControlPointImageObservation = Schemas['ControlPointImageObservation'];
 export type ApiControlPointVisiblePhotos = Schemas['ControlPointVisiblePhotos'];
@@ -243,6 +245,20 @@ export function updateCPConstraint(id: string, patch: ApiCPConstraintPatch): Pro
 
 export function deleteCPConstraint(id: string): Promise<void> {
   return requestVoid('DELETE', `/control-point-constraints/${encodeURIComponent(id)}`);
+}
+
+// --- Control point surfaces ---
+
+export function createCPSurface(body: ApiCPSurfaceCreate): Promise<ApiCPSurface> {
+  return request<ApiCPSurface>('POST', '/control-point-surfaces', body);
+}
+
+export function listCPSurfaces(): Promise<ApiCPSurface[]> {
+  return request<ApiCPSurface[]>('GET', '/control-point-surfaces');
+}
+
+export function deleteCPSurface(id: string): Promise<void> {
+  return requestVoid('DELETE', `/control-point-surfaces/${encodeURIComponent(id)}`);
 }
 
 // --- Solver ---

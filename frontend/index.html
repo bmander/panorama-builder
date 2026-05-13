@@ -47,6 +47,24 @@
       </div>
     </div>
   </div>
+  <div id="cp-surface-modal" class="modal" hidden>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <span>Surface</span>
+        <button type="button" id="cp-surface-close" class="btn">✕</button>
+      </div>
+      <div id="cp-surface-info" class="modal-field"></div>
+      <div class="modal-actions">
+        <button type="button" id="cp-surface-cancel" class="btn">Cancel</button>
+        <button type="button" id="cp-surface-delete" class="btn danger">Delete surface</button>
+      </div>
+    </div>
+  </div>
+  <div id="constraint-multiselect-hud" hidden>
+    <span><span id="constraint-multiselect-count">0</span> constraint(s) selected</span>
+    <button type="button" id="constraint-add-surface-btn" class="btn" disabled>Add surface</button>
+    <button type="button" id="constraint-multiselect-clear" class="btn">Clear</button>
+  </div>
   <div id="admin-modal" class="modal" hidden>
     <div class="modal-panel">
       <div class="modal-header">
@@ -197,6 +215,10 @@
     <div class="settings-row">
       <label for="haze-slider">Atmospheric haze</label>
       <input type="range" id="haze-slider" min="0" max="100" value="17" step="1">
+    </div>
+    <div class="settings-row">
+      <label for="surface-opacity-slider">Surface opacity</label>
+      <input type="range" id="surface-opacity-slider" min="0" max="100" value="35" step="1">
     </div>
     <label class="settings-check"><input type="checkbox" id="curvature-toggle" checked> Earth curvature</label>
     <label class="settings-check"><input type="checkbox" id="refraction-toggle" checked> Atmospheric refraction</label>

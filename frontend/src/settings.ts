@@ -25,6 +25,7 @@ export interface CreateSettingsPanelOptions {
   sunMarker: SunMarker;
   getCameraLocation: () => LatLng | null;
   onShowAllCPsChange: (value: boolean) => void;
+  onSurfaceOpacityChange: (opacity: number) => void;
 }
 
 const HAZE_SLIDER_EXPONENT = 3;
@@ -34,7 +35,7 @@ function hazeSliderToDensity(v: number): number {
 
 export function createSettingsPanel({
   viewer, terrain, sunMarker,
-  getCameraLocation, onShowAllCPsChange,
+  getCameraLocation, onShowAllCPsChange, onSurfaceOpacityChange,
 }: CreateSettingsPanelOptions): SettingsPanel {
   const terrainToggleEl = getElement<HTMLInputElement>('terrain-toggle');
   const sunDateTimeEl = getElement<HTMLInputElement>('sun-datetime');
@@ -44,6 +45,14 @@ export function createSettingsPanel({
   const curvatureToggleEl = getElement<HTMLInputElement>('curvature-toggle');
   const refractionToggleEl = getElement<HTMLInputElement>('refraction-toggle');
   const showAllCPsEl = getElement<HTMLInputElement>('show-all-cps');
+  const surfaceOpacityEl = getElement<HTMLInputElement>('surface-opacity-slider');
+  // Push the slider's HTML default into the renderer so it starts at the
+  // same value the UI shows. Session-only — no localStorage, matching this
+  // panel's policy.
+  onSurfaceOpacityChange(parseFloat(surfaceOpacityEl.value) / 100);
+  surfaceOpacityEl.addEventListener('input', () => {
+    onSurfaceOpacityChange(parseFloat(surfaceOpacityEl.value) / 100);
+  });
 
   sunDateTimeEl.value = formatLocalDateTime(new Date());
 

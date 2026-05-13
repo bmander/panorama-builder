@@ -114,7 +114,9 @@ export interface AttachInputOptions {
   findConstraintAtNDC?: (ndc: { x: number; y: number }) => { constraintId: string } | null;
   // Plain-click on an existing constraint line. Host opens an edit / delete
   // modal for the constraint.
-  onConstraintClick?: (constraintId: string, screenX: number, screenY: number) => void;
+  onConstraintClick?: (constraintId: string, screenX: number, screenY: number, shiftKey: boolean) => void;
+  findSurfaceAtNDC?: (ndc: { x: number; y: number }) => { surfaceId: string } | null;
+  onSurfaceClick?: (surfaceId: string, screenX: number, screenY: number) => void;
   // Shift-click-drag completed on a second CP marker. Host posts the
   // constraint and opens the type picker. Cancels (no callback) when the
   // pointer releases anywhere else.
@@ -129,7 +131,7 @@ export interface AttachInputOptions {
   undoManager?: UndoManager;
 }
 
-export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu, findStationAtNDC, onStationClick, onDeselectStation, onCPClick, findConstraintAtNDC, onConstraintClick, onCreateCPConstraint, onCPConstraintDrawPreview, undoManager }: AttachInputOptions): void {
+export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu, findStationAtNDC, onStationClick, onDeselectStation, onCPClick, findConstraintAtNDC, onConstraintClick, findSurfaceAtNDC, onSurfaceClick, onCreateCPConstraint, onCPConstraintDrawPreview, undoManager }: AttachInputOptions): void {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -284,15 +286,29 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
       }
     }
 
-    // Constraint-line click → open the edit/delete modal. Tested before
-    // the body-hit / empty-space pan branch so a click on the line beats
-    // a pan on the canvas behind it.
+    // Constraint-line click → open the edit/delete modal (plain click) or
+    // toggle into the multi-select set (shift+click). Tested before the
+    // body-hit / empty-space pan branch so a click on the line beats a pan
+    // on the canvas behind it.
     if (!earlyPoiHit && onConstraintClick) {
       const conHit = findConstraintAtNDC?.({ x: ndc.x, y: ndc.y }) ?? null;
       if (conHit) {
         e.stopPropagation();
         pointers.delete(e.pointerId);
-        onConstraintClick(conHit.constraintId, e.clientX, e.clientY);
+        onConstraintClick(conHit.constraintId, e.clientX, e.clientY, e.shiftKey);
+        return;
+      }
+    }
+
+    // Surface click → open the surface modal. Surfaces sit below constraint
+    // lines in pick priority so their fill doesn't shadow the lines that
+    // anchor them.
+    if (!earlyPoiHit && onSurfaceClick) {
+      const surfHit = findSurfaceAtNDC?.({ x: ndc.x, y: ndc.y }) ?? null;
+      if (surfHit) {
+        e.stopPropagation();
+        pointers.delete(e.pointerId);
+        onSurfaceClick(surfHit.surfaceId, e.clientX, e.clientY);
         return;
       }
     }

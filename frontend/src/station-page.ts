@@ -19,6 +19,8 @@ import { createObservationRays } from './observation-rays.js';
 import type { ObservationRay } from './observation-rays.js';
 import { createCPConstraintLines } from './cp-constraint-lines.js';
 import { createCPConstraintModal } from './cp-constraint-modal.js';
+import { createCPSurfaces } from './cp-surfaces.js';
+import { createCPSurfaceModal } from './cp-surface-modal.js';
 import { makeOverlayLine, makeOverlayLineMaterial } from './overlay-lines.js';
 import { createStationMarkers } from './station-markers.js';
 import type { StationMarker } from './station-markers.js';
@@ -32,7 +34,7 @@ import {
 } from './types.js';
 import { latLngToCameraRelativeMeters, tangentMetersToLatLng, vecToAzAlt } from './geo.js';
 import { degToRad } from './mathx.js';
-import type { CPConstraintView, ControlPointView, LatLng } from './types.js';
+import type { CPConstraintView, CPSurfaceView, ControlPointView, LatLng } from './types.js';
 import { createSyncManager } from './sync.js';
 import { createSessionPanel } from './session-panel.js';
 import { createSettingsPanel } from './settings.js';
@@ -126,9 +128,19 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     scene: viewer.scene,
     requestRender: () => { viewer.requestRender(); },
   });
+  const cpSurfacesRenderer = createCPSurfaces({
+    scene: viewer.scene,
+    requestRender: () => { viewer.requestRender(); },
+  });
   // Loaded once at hydrate; mutated by the modal's onMutated callback.
   let cpConstraints: CPConstraintView[] = [];
   let selectedConstraintId: string | null = null;
+  // Shift-clicked constraint ids. Stored as an immutable snapshot so the
+  // renderer's reference-equality early-return correctly fires a rebuild
+  // when the set's contents change. Replaced (not mutated) on every toggle.
+  let multiSelectedConstraintIds: ReadonlySet<string> = new Set();
+  let cpSurfaces: CPSurfaceView[] = [];
+  let selectedSurfaceId: string | null = null;
   // Preview line drawn during shift-click-drag. Updated in place rather than
   // pushed through the constraint-lines layer so the per-pointermove update
   // doesn't stomp the persisted lines.
@@ -150,6 +162,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       observationRays.setVisible(visible);
       stationCones.setVisible(visible);
       cpConstraintLines.setVisible(visible);
+      cpSurfacesRenderer.setVisible(visible);
       photoPreviews.setBakeHidden(!visible);
       if (!visible) previewLine.visible = false;
     },
@@ -313,7 +326,8 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     stationDots.update(pose.location, pose.altitudeMSL, otherStations);
     stationCones.update(pose.location, pose.altitudeMSL, otherCameras, selectedStationId);
     observationRays.update(pose.location, pose.altitudeMSL, cachedObservationRays);
-    cpConstraintLines.update(pose.location, pose.altitudeMSL, cachedVisibleCps, cpConstraints, selectedConstraintId);
+    cpConstraintLines.update(pose.location, pose.altitudeMSL, cachedVisibleCps, cpConstraints, selectedConstraintId, multiSelectedConstraintIds);
+    cpSurfacesRenderer.update(pose.location, pose.altitudeMSL, cachedVisibleCps, cpSurfaces, selectedSurfaceId);
     updateOverlaysGroupOffset();
     hud.refresh();
   }
@@ -392,6 +406,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       showAllCPs = value;
       refreshControlPointColumns();
     },
+    onSurfaceOpacityChange: opacity => { cpSurfacesRenderer.setOpacity(opacity); },
   });
 
   const handlers = createOrchestration({
@@ -430,6 +445,96 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       }
     },
   });
+
+  function mapApiCPSurface(r: api.ApiCPSurface): CPSurfaceView {
+    const ids = [r.cp_1_id, r.cp_2_id, r.cp_3_id];
+    if (r.cp_4_id) ids.push(r.cp_4_id);
+    return { id: r.id, cpIds: ids };
+  }
+  async function reloadCPSurfaces(): Promise<void> {
+    try {
+      cpSurfaces = (await api.listCPSurfaces()).map(mapApiCPSurface);
+    } catch (err) {
+      console.error('list cp surfaces failed:', err);
+      cpSurfaces = [];
+    }
+    refreshControlPointColumns();
+  }
+  const cpSurfaceModal = createCPSurfaceModal({
+    onMutated: () => {
+      selectedSurfaceId = null;
+      void reloadCPSurfaces();
+    },
+    onClose: () => {
+      if (selectedSurfaceId !== null) {
+        selectedSurfaceId = null;
+        refreshControlPointColumns();
+      }
+    },
+  });
+
+  function setMultiSelectedConstraintIds(next: ReadonlySet<string>): void {
+    multiSelectedConstraintIds = next;
+    const n = next.size;
+    const hudEl = getElement('constraint-multiselect-hud');
+    const countEl = getElement('constraint-multiselect-count');
+    const btnEl = getElement<HTMLButtonElement>('constraint-add-surface-btn');
+    hudEl.hidden = n === 0;
+    countEl.textContent = String(n);
+    btnEl.disabled = n !== 2;
+    // Only the constraint-line color changes; skip the heavier marker /
+    // observation refresh in refreshControlPointColumns.
+    const pose = worldCamera.getPose();
+    cpConstraintLines.update(pose.location, pose.altitudeMSL, cachedVisibleCps, cpConstraints, selectedConstraintId, multiSelectedConstraintIds);
+    viewer.requestRender();
+  }
+
+  function toggleMultiSelectedConstraint(constraintId: string): void {
+    const next = new Set(multiSelectedConstraintIds);
+    if (next.has(constraintId)) next.delete(constraintId);
+    else next.add(constraintId);
+    setMultiSelectedConstraintIds(next);
+  }
+
+  function clearMultiSelectedConstraints(): void {
+    if (multiSelectedConstraintIds.size === 0) return;
+    setMultiSelectedConstraintIds(new Set());
+  }
+
+  getElement<HTMLButtonElement>('constraint-add-surface-btn').addEventListener('click', () => {
+    if (multiSelectedConstraintIds.size !== 2) return;
+    const [id1, id2] = [...multiSelectedConstraintIds];
+    const c1 = cpConstraints.find(k => k.id === id1);
+    const c2 = cpConstraints.find(k => k.id === id2);
+    if (!c1 || !c2) return;
+    const a1 = c1.cpAId, a2 = c1.cpBId, b1 = c2.cpAId, b2 = c2.cpBId;
+    const set1 = new Set([a1, a2]);
+    const sharedFromC2 = [b1, b2].filter(x => set1.has(x));
+    if (sharedFromC2.length === 2) {
+      alert('Constraints share both endpoints.');
+      return;
+    }
+    let body: api.ApiCPSurfaceCreate;
+    if (sharedFromC2.length === 1) {
+      const s = sharedFromC2[0]!;
+      const other1 = a1 === s ? a2 : a1;
+      const other2 = b1 === s ? b2 : b1;
+      body = { cp_1_id: s, cp_2_id: other1, cp_3_id: other2 };
+    } else {
+      // Cyclic order a1 → a2 → b2 → b1 puts each constraint on an opposite
+      // side of the quad, so the polygon never self-intersects regardless
+      // of which order the user shift-clicked.
+      body = { cp_1_id: a1, cp_2_id: a2, cp_3_id: b2, cp_4_id: b1 };
+    }
+    void api.createCPSurface(body).then(() => {
+      clearMultiSelectedConstraints();
+      void reloadCPSurfaces();
+    }).catch((err: unknown) => {
+      console.error('create cp surface failed:', err);
+      alert('Could not create surface — see console.');
+    });
+  });
+  getElement<HTMLButtonElement>('constraint-multiselect-clear').addEventListener('click', clearMultiSelectedConstraints);
 
   // Mutations no longer trigger a solve — the solver is backend-side, behind
   // the explicit Solve buttons.
@@ -653,12 +758,24 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     },
     onCPClick: (cpId, sx, sy, body) => { openCpContextMenu(cpId, sx, sy, body); },
     findConstraintAtNDC: ndc => cpConstraintLines.findHit(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera),
-    onConstraintClick: (constraintId) => {
+    onConstraintClick: (constraintId, _sx, _sy, shiftKey) => {
+      if (shiftKey) {
+        toggleMultiSelectedConstraint(constraintId);
+        return;
+      }
+      // Plain click clears any multi-select and opens the edit modal.
+      clearMultiSelectedConstraints();
       const constraint = cpConstraints.find(k => k.id === constraintId);
       if (!constraint) return;
       selectedConstraintId = constraintId;
       refreshControlPointColumns();
       cpConstraintModal.openEdit(constraint);
+    },
+    findSurfaceAtNDC: ndc => cpSurfacesRenderer.findHit(ndc, viewer.camera),
+    onSurfaceClick: (surfaceId) => {
+      selectedSurfaceId = surfaceId;
+      refreshControlPointColumns();
+      cpSurfaceModal.open(surfaceId);
     },
     onCreateCPConstraint: (cpAId, cpBId) => { cpConstraintModal.openCreate(cpAId, cpBId); },
     onCPConstraintDrawPreview: (cpAId, cpBId) => {
@@ -794,6 +911,9 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     selectedStationId = null;
     cpConstraints = [];
     selectedConstraintId = null;
+    clearMultiSelectedConstraints();
+    cpSurfaces = [];
+    selectedSurfaceId = null;
     worldCamera.clear();
     previewLine.visible = false;
   }
@@ -901,10 +1021,11 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     // Independent fetches — kick off in parallel so hydrate latency isn't
     // gated on the slower of the two. Constraints are global; piggy-back here
     // so they're available the moment the world view paints.
-    const [cpsRes, stationsRes, consRes] = await Promise.allSettled([
+    const [cpsRes, stationsRes, consRes, surfRes] = await Promise.allSettled([
       api.listControlPoints(),
       api.listStations(),
       api.listCPConstraints(),
+      api.listCPSurfaces(),
     ]);
     if (id !== stationId) return;  // user navigated away during fetch
     overlays.withBatch(() => {
@@ -919,6 +1040,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     } else {
       console.error('list cp constraints failed:', consRes.reason);
       cpConstraints = [];
+    }
+    if (surfRes.status === 'fulfilled') {
+      cpSurfaces = surfRes.value.map(mapApiCPSurface);
+    } else {
+      console.error('list cp surfaces failed:', surfRes.reason);
+      cpSurfaces = [];
     }
     if (stationsRes.status === 'fulfilled') {
       // Skip the current station: a dot at (0,0,0) just sits on top of the camera.

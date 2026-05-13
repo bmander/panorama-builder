@@ -3,8 +3,8 @@
 
 import * as THREE from 'three';
 import type { ControlPointView, CPConstraintView, LatLng } from './types.js';
-import { curvatureDrop, subscribeCurvatureChange } from './curvature.js';
-import { latLngToCameraRelativeMeters } from './geo.js';
+import { controlPointVertex } from './camera-anchored.js';
+import { subscribeCurvatureChange } from './curvature.js';
 import {
   clearLineGroup, makeOverlayLine, makeOverlayLineMaterial,
   ndcDistToProjectedSegment,
@@ -12,6 +12,9 @@ import {
 
 const LINE_COLOR = 0xffcc33;
 const LINE_COLOR_SELECTED = 0xff5544;
+const LINE_COLOR_MULTI = 0x44ccff;
+
+const EMPTY_MULTI: ReadonlySet<string> = new Set();
 
 export interface CPConstraintLines {
   update(
@@ -20,6 +23,7 @@ export interface CPConstraintLines {
     cps: readonly ControlPointView[],
     constraints: readonly CPConstraintView[],
     selectedId: string | null,
+    multiSelectedIds?: ReadonlySet<string>,
   ): void;
   findHit(
     ndc: { x: number; y: number },
@@ -45,6 +49,7 @@ export function createCPConstraintLines(opts: CreateCPConstraintLinesOptions): C
 
   const matDefault = makeOverlayLineMaterial(LINE_COLOR);
   const matSelected = makeOverlayLineMaterial(LINE_COLOR_SELECTED);
+  const matMulti = makeOverlayLineMaterial(LINE_COLOR_MULTI);
 
   const lineGroup = new THREE.Group();
   scene.add(lineGroup);
@@ -58,13 +63,7 @@ export function createCPConstraintLines(opts: CreateCPConstraintLinesOptions): C
   let lastCps: readonly ControlPointView[] = [];
   let lastConstraints: readonly CPConstraintView[] = [];
   let lastSelectedId: string | null = null;
-
-  function endpointFor(cp: ControlPointView, camLoc: LatLng, cameraMSL: number): THREE.Vector3 | null {
-    if (cp.estLat === null || cp.estLng === null || cp.estAlt === null) return null;
-    const { x, z } = latLngToCameraRelativeMeters({ lat: cp.estLat, lng: cp.estLng }, camLoc);
-    const y = cp.estAlt - cameraMSL - curvatureDrop(x * x + z * z);
-    return new THREE.Vector3(x, y, z);
-  }
+  let lastMultiSelectedIds: ReadonlySet<string> = EMPTY_MULTI;
 
   function rebuild(): void {
     clearLineGroup(lineGroup);
@@ -78,10 +77,12 @@ export function createCPConstraintLines(opts: CreateCPConstraintLinesOptions): C
       const a = cpById.get(k.cpAId);
       const b = cpById.get(k.cpBId);
       if (!a || !b) continue;
-      const va = endpointFor(a, lastCamLoc, lastCameraMSL);
-      const vb = endpointFor(b, lastCamLoc, lastCameraMSL);
+      const va = controlPointVertex(a, lastCamLoc, lastCameraMSL);
+      const vb = controlPointVertex(b, lastCamLoc, lastCameraMSL);
       if (!va || !vb) continue;
-      const mat = k.id === lastSelectedId ? matSelected : matDefault;
+      const mat = k.id === lastSelectedId
+        ? matSelected
+        : lastMultiSelectedIds.has(k.id) ? matMulti : matDefault;
       lineGroup.add(makeOverlayLine([va.x, va.y, va.z, vb.x, vb.y, vb.z], mat));
       drawn.push({ id: k.id, a: va, b: vb });
     }
@@ -92,15 +93,17 @@ export function createCPConstraintLines(opts: CreateCPConstraintLinesOptions): C
 
   return {
     setVisible(visible) { lineGroup.visible = visible; },
-    update(camLoc, cameraMSL, cps, constraints, selectedId) {
+    update(camLoc, cameraMSL, cps, constraints, selectedId, multiSelectedIds) {
+      const multi = multiSelectedIds ?? EMPTY_MULTI;
       if (camLoc === lastCamLoc && cameraMSL === lastCameraMSL
         && cps === lastCps && constraints === lastConstraints
-        && selectedId === lastSelectedId) return;
+        && selectedId === lastSelectedId && multi === lastMultiSelectedIds) return;
       lastCamLoc = camLoc;
       lastCameraMSL = cameraMSL;
       lastCps = cps;
       lastConstraints = constraints;
       lastSelectedId = selectedId;
+      lastMultiSelectedIds = multi;
       rebuild();
     },
     findHit(ndc, hitRadius, camera) {

@@ -140,6 +140,14 @@ export interface CPConstraintView {
   readonly type: CPConstraintType;
 }
 
+// Frontend view of a CP surface. `cpIds` carries 3 (triangle) or 4 (quad)
+// unique control-point ids in render order (cyclic; consecutive ids form
+// each edge of the polygon).
+export interface CPSurfaceView {
+  readonly id: string;
+  readonly cpIds: readonly string[];
+}
+
 // Bake (pixel buffer + dimensions) returned by the equirect baker.
 export interface Baked {
   readonly pixels: Uint8Array;

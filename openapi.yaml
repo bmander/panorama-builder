@@ -26,6 +26,7 @@ tags:
   - name: image-measurements
   - name: control-points
   - name: cp-constraints
+  - name: cp-surfaces
   - name: solver
   - name: sessions
   - name: commits
@@ -499,6 +500,53 @@ paths:
         '204': { description: Deleted }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /control-point-surfaces:
+    post:
+      tags: [cp-surfaces]
+      summary: Create a polygonal surface anchored on 3 or 4 control points
+      description: |
+        Creates a triangle (3 distinct CP ids) or quad (4 distinct CP ids) surface
+        for visualization in the 3D world view. The four CP ids must be pairwise
+        distinct; `cp_4_id` omitted or null yields a triangle. Surfaces have no
+        editable fields after creation — modify by deleting and recreating.
+      operationId: createCPSurface
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CPSurfaceCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CPSurface' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    get:
+      tags: [cp-surfaces]
+      summary: List all CP surfaces
+      operationId: listCPSurfaces
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CPSurface' }
+
+  /control-point-surfaces/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CPSurfaceId'
+    delete:
+      tags: [cp-surfaces]
+      summary: Delete a surface
+      operationId: deleteCPSurface
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /solve/joint:
     post:
       tags: [solver]
@@ -839,6 +887,11 @@ components:
       required: true
       schema: { $ref: '#/components/schemas/Id' }
     CPConstraintId:
+      name: id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/Id' }
+    CPSurfaceId:
       name: id
       in: path
       required: true
@@ -1274,6 +1327,41 @@ components:
       properties:
         constraint_type: { $ref: '#/components/schemas/CPConstraintType' }
 
+    CPSurface:
+      type: object
+      required: [id, cp_1_id, cp_2_id, cp_3_id, created_at, updated_at]
+      description: |
+        Polygonal surface anchored on 3 (triangle, cp_4_id null) or 4 (quad)
+        control points. Surfaces are visualization-only; the solver doesn't
+        read them.
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        cp_1_id: { $ref: '#/components/schemas/Id' }
+        cp_2_id: { $ref: '#/components/schemas/Id' }
+        cp_3_id: { $ref: '#/components/schemas/Id' }
+        cp_4_id:
+          allOf:
+            - { $ref: '#/components/schemas/Id' }
+          nullable: true
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CPSurfaceCreate:
+      type: object
+      required: [cp_1_id, cp_2_id, cp_3_id]
+      description: |
+        POST body for `/control-point-surfaces`. cp_4_id null or omitted
+        makes a triangle; otherwise a quad. All non-null ids must be
+        pairwise distinct.
+      properties:
+        cp_1_id: { $ref: '#/components/schemas/Id' }
+        cp_2_id: { $ref: '#/components/schemas/Id' }
+        cp_3_id: { $ref: '#/components/schemas/Id' }
+        cp_4_id:
+          allOf:
+            - { $ref: '#/components/schemas/Id' }
+          nullable: true
+
     SolveConfig:
       type: object
       description: |
@@ -1325,7 +1413,7 @@ components:
       properties:
         entity_type:
           type: string
-          enum: [station, photo, image_measurement, control_point, cp_constraint]
+          enum: [station, photo, image_measurement, control_point, cp_constraint, cp_surface]
         entity_id: { $ref: '#/components/schemas/Id' }
         last_seq: { type: integer, format: int64, nullable: true }
 
@@ -1357,7 +1445,7 @@ components:
         seq: { type: integer, format: int64 }
         entity_type:
           type: string
-          enum: [station, photo, image_measurement, control_point, cp_constraint]
+          enum: [station, photo, image_measurement, control_point, cp_constraint, cp_surface]
         entity_id: { $ref: '#/components/schemas/Id' }
         op:
           type: string

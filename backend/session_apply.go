@@ -87,6 +87,16 @@ func insertEntityFromJSON(ctx context.Context, tx pgx.Tx, entityType string, bod
 			VALUES ($1, $2, $3, $4, $5, NOW())`,
 			c.ID, c.CpAId, c.CpBId, c.ConstraintType, c.CreatedAt)
 		return err
+	case entityCPSurface:
+		var v CPSurface
+		if err := json.Unmarshal(body, &v); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `
+			INSERT INTO cp_surfaces (id, cp_1_id, cp_2_id, cp_3_id, cp_4_id, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+			v.ID, v.Cp1ID, v.Cp2ID, v.Cp3ID, v.Cp4ID, v.CreatedAt)
+		return err
 	}
 	return fmt.Errorf("insert: unknown entity_type %q", entityType)
 }
@@ -182,6 +192,8 @@ func deleteEntityByID(ctx context.Context, tx pgx.Tx, entityType, id string) err
 		table = "control_points"
 	case entityCPConstraint:
 		table = "cp_constraints"
+	case entityCPSurface:
+		table = "cp_surfaces"
 	default:
 		return fmt.Errorf("delete: unknown entity_type %q", entityType)
 	}
