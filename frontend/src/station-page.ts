@@ -1199,6 +1199,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
 
   viewer.setCanvasVisible(true);
   hud.setVisible(true);
+  getElement('params-panel').hidden = false;
   // Start the rAF loop before hydrate so the grid sky paints immediately and
   // each terrain ring / photo texture appears as it arrives, instead of the
   // canvas staying black until every parallel fetch resolves.

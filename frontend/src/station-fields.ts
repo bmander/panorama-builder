@@ -1,12 +1,13 @@
 // Station lat / lng / alt + per-axis solver locks.
 //
-// The settings panel exposes the station's stored lat/lng/alt and per-axis
-// solver locks. Joint mode requires ≥2 stations with both lat and lng locked
-// to fix translation+rotation gauge. We treat "lock location" as an atomic
-// toggle on both lat and lng (locking only one wouldn't fix gauge anyway).
-// "lock elevation" gates lock_alt; today the solver always treats station
-// alt as a fixed input, so this lock is no-op-equivalent but kept for UI
-// symmetry and forward-compat.
+// The right-side params panel exposes the station's stored lat/lng/alt and
+// per-axis solver locks; captured-at lives in the settings panel. Joint mode
+// requires ≥2 stations with both lat and lng locked to fix
+// translation+rotation gauge. We treat "lock location" as an atomic toggle
+// on both lat and lng (locking only one wouldn't fix gauge anyway). "lock
+// elevation" gates lock_alt; today the solver always treats station alt as
+// a fixed input, so this lock is no-op-equivalent but kept for UI symmetry
+// and forward-compat.
 
 import * as api from './api.js';
 import { formatLocalDateTime, getElement, syncInputChecked, syncInputValue } from './types.js';

@@ -25,7 +25,7 @@ export interface CreatePhotoHudOptions {
 export function createPhotoHud(
   { overlays, sync, undoManager }: CreatePhotoHudOptions,
 ): PhotoHud {
-  const panelEl = getElement('photo-hud-panel');
+  const sectionEl = getElement('params-photo-section');
   const opacityEl = getElement<HTMLInputElement>('photo-hud-opacity');
   const azEl = getElement<HTMLInputElement>('photo-hud-az');
   const tiltEl = getElement<HTMLInputElement>('photo-hud-tilt');
@@ -67,10 +67,10 @@ export function createPhotoHud(
     const changed = overlay !== bound;
     bound = overlay;
     if (!overlay) {
-      if (changed) panelEl.hidden = true;
+      if (changed) sectionEl.hidden = true;
       return;
     }
-    if (changed) panelEl.hidden = false;
+    if (changed) sectionEl.hidden = false;
     populate(overlay);
   }
 
