@@ -136,50 +136,47 @@
       </div>
     </div>
   </div>
-  <div id="photo-params-modal" class="modal" hidden>
-    <div class="modal-panel">
-      <div class="modal-header">
-        <span>Photo parameters</span>
-        <button type="button" id="photo-params-close" class="btn">✕</button>
-      </div>
-      <div class="modal-field photo-params-row">
-        <span>Azimuth (°)</span>
-        <input type="number" id="photo-params-az" step="0.1">
-        <label class="lock-check"><input type="checkbox" id="photo-params-az-lock"> lock</label>
-      </div>
-      <div class="modal-field photo-params-row">
-        <span>Tilt (°)</span>
-        <input type="number" id="photo-params-tilt" step="0.1">
-        <label class="lock-check"><input type="checkbox" id="photo-params-tilt-lock"> lock</label>
-      </div>
-      <div class="modal-field photo-params-row">
-        <span>Roll (°)</span>
-        <input type="number" id="photo-params-roll" step="0.1">
-        <label class="lock-check"><input type="checkbox" id="photo-params-roll-lock"> lock</label>
-      </div>
-      <div class="modal-field photo-params-row">
-        <span>FOV (°)</span>
-        <input type="number" id="photo-params-fov" step="0.1" min="2" max="162">
-        <label class="lock-check"><input type="checkbox" id="photo-params-fov-lock"> lock</label>
-      </div>
-      <div class="modal-field photo-params-row">
-        <span>Aspect</span>
-        <input type="text" id="photo-params-aspect" readonly>
-      </div>
-      <div class="modal-field photo-params-row">
-        <span>k1 (radial)</span>
-        <input type="number" id="photo-params-k1" step="0.001">
-        <label class="lock-check"><input type="checkbox" id="photo-params-k1-lock"> lock</label>
-      </div>
-      <div class="modal-field photo-params-row">
-        <span>k2 (radial)</span>
-        <input type="number" id="photo-params-k2" step="0.001">
-        <label class="lock-check"><input type="checkbox" id="photo-params-k2-lock"> lock</label>
-      </div>
-      <div class="modal-actions">
-        <button type="button" id="photo-params-cancel" class="btn">Cancel</button>
-        <button type="button" id="photo-params-save" class="btn">Save</button>
-      </div>
+  <div id="photo-hud-panel" hidden>
+    <div class="photo-hud-header">Selected photo</div>
+    <label class="settings-inline">Opacity
+      <input type="range" id="photo-hud-opacity" min="0" max="100" value="100" step="1">
+    </label>
+    <div class="photo-hud-row">
+      <span>Azimuth (°)</span>
+      <input type="number" id="photo-hud-az" step="0.1">
+      <label class="lock-check"><input type="checkbox" id="photo-hud-az-lock"> lock</label>
+    </div>
+    <div class="photo-hud-row">
+      <span>Tilt (°)</span>
+      <input type="number" id="photo-hud-tilt" step="0.1">
+      <label class="lock-check"><input type="checkbox" id="photo-hud-tilt-lock"> lock</label>
+    </div>
+    <div class="photo-hud-row">
+      <span>Roll (°)</span>
+      <input type="number" id="photo-hud-roll" step="0.1">
+      <label class="lock-check"><input type="checkbox" id="photo-hud-roll-lock"> lock</label>
+    </div>
+    <div class="photo-hud-row">
+      <span>FOV (°)</span>
+      <input type="number" id="photo-hud-fov" step="0.1" min="2" max="162">
+      <label class="lock-check"><input type="checkbox" id="photo-hud-fov-lock"> lock</label>
+    </div>
+    <div class="photo-hud-row">
+      <span>Aspect</span>
+      <input type="text" id="photo-hud-aspect" readonly>
+    </div>
+    <div class="photo-hud-row">
+      <span>k1 (radial)</span>
+      <input type="number" id="photo-hud-k1" step="0.001">
+      <label class="lock-check"><input type="checkbox" id="photo-hud-k1-lock"> lock</label>
+    </div>
+    <div class="photo-hud-row">
+      <span>k2 (radial)</span>
+      <input type="number" id="photo-hud-k2" step="0.001">
+      <label class="lock-check"><input type="checkbox" id="photo-hud-k2-lock"> lock</label>
+    </div>
+    <div class="photo-hud-actions">
+      <button type="button" id="photo-hud-save" class="btn">Save</button>
     </div>
   </div>
   <div id="solve-modal" class="modal" hidden>
@@ -229,9 +226,6 @@
     </div>
     <label class="settings-check"><input type="checkbox" id="terrain-toggle" checked> Terrain</label>
     <label class="settings-inline">Sun <input type="datetime-local" id="sun-datetime" step="60"></label>
-    <label class="settings-inline" id="overlay-opacity-row">Photo opacity
-      <input type="range" id="overlay-opacity" min="0" max="100" value="100" step="1">
-    </label>
     <div class="settings-row">
       <label for="haze-slider">Atmospheric haze</label>
       <input type="range" id="haze-slider" min="0" max="100" value="17" step="1">

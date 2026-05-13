@@ -1,13 +1,13 @@
 // In-memory undo/redo stack for the photosphere viewer.
 //
-// Records "memento" snapshots at gesture-end (in input.ts) and modal-save
-// (in photo-params-modal.ts). Each entry pairs a before-state and an
-// after-state; undo restores the before, redo restores the after.
+// Records "memento" snapshots at gesture-end (in input.ts) and Save clicks
+// in the selected-photo HUD (photo-hud.ts). Each entry pairs a before-state
+// and an after-state; undo restores the before, redo restores the after.
 //
 // Apply paths reuse the existing mutation surfaces:
 //   - photo pose changes → applyPhotoSnapshot (api.updatePhoto +
 //     sync.registerPhoto + applyPose/setPhotoLocks/setOpacity), shared
-//     with the photo-parameters modal's save flow.
+//     with the photo HUD's save flow.
 //   - POI moves → overlays.moveImageMeasurement; the diff-based sync
 //     flush handles the PUT (same as a user-driven drag).
 //
@@ -97,7 +97,7 @@ export function snapshotPoi(overlays: OverlayManager, id: string): { u: number; 
 // Apply a full photo-pose snapshot via the standard API + sync + overlay
 // pipeline. PUT first, pre-register with sync so the diff-driven flush
 // triggered by applyPose's notify() sees no delta and doesn't re-PUT, then
-// mutate the scene. Shared by undo/redo and the photo-parameters modal.
+// mutate the scene. Shared by undo/redo and the photo HUD's Save flow.
 export function applyPhotoSnapshot(
   overlays: OverlayManager, sync: SyncManager,
   id: string, snap: PhotoSnapshot,

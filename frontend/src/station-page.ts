@@ -47,7 +47,7 @@ import { createAdminModal } from './admin-modal.js';
 import { createContextMenu } from './context-menu.js';
 import type { ContextMenuItem } from './context-menu.js';
 import { createObservationModal } from './observation-modal.js';
-import { createPhotoParamsModal } from './photo-params-modal.js';
+import { createPhotoHud } from './photo-hud.js';
 import { createUndoManager } from './undo.js';
 import { createStationNavigation, meanPhotoAzAlt } from './station-navigation.js';
 import { createStationFields } from './station-fields.js';
@@ -664,29 +664,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     });
   }
 
-  const opacityRowEl = getElement('overlay-opacity-row');
-  const opacitySliderEl = getElement<HTMLInputElement>('overlay-opacity');
-
-  function refreshSelectionUI(): void {
-    const opacity = overlays.photos.getSelectedOpacity();
-    if (opacity === null) {
-      opacityRowEl.style.display = 'none';
-      return;
-    }
-    opacityRowEl.style.display = '';
-    opacitySliderEl.value = String(Math.round(opacity * 100));
-  }
-
-  opacitySliderEl.addEventListener('input', () => {
-    overlays.photos.setSelectedOpacity(parseFloat(opacitySliderEl.value) / 100);
-  });
-
   const contextMenu = createContextMenu();
   const undoManager = createUndoManager({
     overlays, sync,
     reportError: (label, err) => { sync.reportError(label, err); },
   });
-  const photoParamsModal = createPhotoParamsModal({ overlays, sync, undoManager });
+  const photoHud = createPhotoHud({ overlays, sync, undoManager });
   const observationModal = createObservationModal({
     getControlPoints: () => overlays.controlPoints.list(),
     onPickExisting: (overlay, u, v, controlPointId) => {
@@ -770,7 +753,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   attachInput({
     viewer,
     overlays,
-    onChange: () => { viewer.requestRender(); hud.refresh(); refreshSelectionUI(); },
+    onChange: () => { viewer.requestRender(); hud.refresh(); photoHud.refresh(); },
     onPhotoDropped: (tex, blob, aspect, dir, revokeUrl) => {
       void handlers.onPhotoDropped(tex, blob, aspect, dir, revokeUrl);
     },
@@ -803,7 +786,6 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     onPhotoBodyContextMenu: (overlay, u, v, sx, sy) => {
       contextMenu.open(sx, sy, [
         { label: 'Add observation here', onClick: () => { observationModal.open(overlay, u, v); } },
-        { label: 'Photo parameters…', onClick: () => { photoParamsModal.open(overlay); } },
         { label: 'Replace image…', onClick: () => {
           void pickImageFile().then(file => {
             if (file) void handlers.onReplacePhoto(overlay, file);
@@ -1236,5 +1218,5 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
 
   sync.markLoaded();
   hud.refresh();
-  refreshSelectionUI();
+  photoHud.refresh();
 }

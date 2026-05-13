@@ -100,13 +100,25 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 #solve-status { font: 12px monospace; color: #ddd; }
 #solve-loss-chart { width: 100%; height: 160px; background: rgba(255,255,255,0.04);
                     border: 1px solid #333; display: block; box-sizing: border-box; }
-.photo-params-row { flex-direction: row; align-items: center; gap: 8px; }
-.photo-params-row > span { flex: 0 0 90px; }
-.photo-params-row input[type="number"],
-.photo-params-row input[type="text"] { flex: 1; min-width: 0; }
-.photo-params-row .lock-check { display: flex; align-items: center; gap: 4px;
-                                 cursor: pointer; flex: 0 0 auto; }
-.photo-params-row .lock-check input { margin: 0; }
+#photo-hud-panel { position: fixed; top: 36px; right: 8px; z-index: 1000;
+                   background: rgba(0,0,0,0.7); color: #fff; font: 12px monospace;
+                   border: 1px solid #fff; min-width: 260px; max-width: 320px;
+                   padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+#photo-hud-panel[hidden] { display: none; }
+.photo-hud-header { font-weight: bold; }
+.photo-hud-row { display: flex; flex-direction: row; align-items: center; gap: 8px; }
+.photo-hud-row > span { flex: 0 0 90px; }
+.photo-hud-row input[type="number"],
+.photo-hud-row input[type="text"] {
+  flex: 1; min-width: 0;
+  background: rgba(255,255,255,0.1); color: #fff; border: 1px solid #888;
+  font: 12px monospace; padding: 1px 3px;
+}
+.photo-hud-row .lock-check { display: flex; align-items: center; gap: 4px;
+                              cursor: pointer; flex: 0 0 auto; }
+.photo-hud-row .lock-check input { margin: 0; }
+#photo-hud-opacity { flex: 1; accent-color: #fff; }
+.photo-hud-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .btn.danger { color: #ff8080; border-color: #ff8080; }
 .btn.danger:hover { background: rgba(255,80,80,0.2); }
 .btn.loading { color: transparent; position: relative; cursor: wait; }
@@ -197,6 +209,8 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
                justify-content: flex-end; max-width: calc(100vw - 24px); }
   #settings-panel { font-size: 18px; top: 56px; right: 12px;
                     padding: 12px 16px; gap: 12px; min-width: 260px; }
+  #photo-hud-panel { font-size: 16px; top: 56px; right: 12px;
+                     padding: 12px 16px; gap: 10px; min-width: 300px; }
   .settings-row { gap: 8px; }
   .settings-check { gap: 12px; }
   .settings-inline { gap: 12px; }
