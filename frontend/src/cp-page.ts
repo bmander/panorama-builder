@@ -331,42 +331,6 @@ function attachLifespanLabel(
   return refresh;
 }
 
-function attachSolveButton(
-  cp: api.ApiControlPoint,
-  obs: api.ApiControlPointObservations,
-  onUpdate: (next: api.ApiControlPoint) => void,
-): void {
-  const btn = getElement<HTMLButtonElement>('solve');
-  if (obs.image_measurements.length < 2) {
-    btn.title = 'Need at least 2 image observations to refine';
-    return;
-  }
-  btn.disabled = false;
-  btn.addEventListener('click', () => {
-    btn.disabled = true;
-    api.solveControlPoint(cp.id).then(
-      result => {
-        if (result.diverged) {
-          alert('Solve made no progress — check the observations.');
-          btn.disabled = false;
-          return;
-        }
-        // Re-fetch the CP to pick up the persisted est_*; the response also
-        // carries the diff but a fresh GET is the smallest amount of code.
-        return api.getControlPoint(cp.id).then(updated => {
-          onUpdate(updated);
-          btn.disabled = false;
-        });
-      },
-      (err: unknown) => {
-        console.error('solve save failed:', err);
-        alert('Solve failed — see console.');
-        btn.disabled = false;
-      },
-    );
-  });
-}
-
 function attachDeleteButton(cp: api.ApiControlPoint, obsCount: number): void {
   const btn = getElement<HTMLButtonElement>('delete');
   btn.disabled = false;
@@ -389,14 +353,11 @@ function attachDeleteButton(cp: api.ApiControlPoint, obsCount: number): void {
 }
 
 function appendObservationItem(
-  list: HTMLElement, kind: 'map' | 'image', meta: Node, leading?: Node,
+  list: HTMLElement, meta: Node, leading?: Node,
 ): void {
   const li = document.createElement('li');
-  const kindEl = document.createElement('span');
-  kindEl.className = `kind ${kind}`;
-  kindEl.textContent = kind;
   if (leading) li.appendChild(leading);
-  li.append(kindEl, meta);
+  li.appendChild(meta);
   list.appendChild(li);
 }
 
@@ -422,8 +383,8 @@ function renderObservations(obs: api.ApiControlPointObservations): void {
     const captured = document.createElement('span');
     captured.className = 'captured-at';
     captured.textContent = new Date(m.station_captured_at).toLocaleString();
-    meta.append(captured, ` (u=${m.u.toFixed(2)}, v=${m.v.toFixed(2)}) in `, a);
-    appendObservationItem(list, 'image', meta, createObservationClip(m));
+    meta.append(captured, ' in ', a);
+    appendObservationItem(list, meta, createObservationClip(m));
   }
 }
 
@@ -459,7 +420,7 @@ function renderVisiblePhotos(
     captured.className = 'captured-at';
     captured.textContent = new Date(p.station_captured_at).toLocaleString();
     meta.append(captured, ' in ', a);
-    appendObservationItem(list, 'image', meta);
+    appendObservationItem(list, meta);
   }
 }
 
@@ -566,9 +527,9 @@ async function main(): Promise<void> {
 
   attachNameEditor(cp, nameEl);
   attachNotesEditor(cp, getElement('notes'));
-  const refreshLat = attachLatLngEditor(cp, latEl, 'est_lat', onLocationChanged);
-  const refreshLng = attachLatLngEditor(cp, lngEl, 'est_lng', onLocationChanged);
-  const refreshAlt = attachAltEditor(cp, altEl);
+  attachLatLngEditor(cp, latEl, 'est_lat', onLocationChanged);
+  attachLatLngEditor(cp, lngEl, 'est_lng', onLocationChanged);
+  attachAltEditor(cp, altEl);
   const refreshStartedLabel = attachLifespanLabel(
     cp, getElement('started_at_label'), 'started_at', 'started_after',
     refreshVisiblePhotos);
@@ -594,16 +555,6 @@ async function main(): Promise<void> {
     const obs = obsResult.value;
     renderObservations(obs);
     obsCount = obs.image_measurements.length;
-    attachSolveButton(cp, obs, updated => {
-      cp.est_lat = updated.est_lat;
-      cp.est_lng = updated.est_lng;
-      cp.est_alt = updated.est_alt;
-      refreshLat();
-      refreshLng();
-      refreshAlt();
-      refreshMapLink();
-      refreshVisiblePhotos();
-    });
   } else {
     console.error('observations fetch failed:', obsResult.reason);
   }

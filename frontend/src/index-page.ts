@@ -149,28 +149,6 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     await showStationMarkers();
   }
 
-  async function solveAndPersistControlPointLocation(id: string): Promise<void> {
-    try {
-      await api.solveControlPoint(id);
-    } catch (err) {
-      console.error('solve control point location failed:', err);
-      alert('Solve control point location failed.');
-      return;
-    }
-    // Re-fetch the CP and update local state. Backend writes the new est_*
-    // fields atomically; reading back is the simplest way to mirror them.
-    let updated: ApiControlPoint;
-    try {
-      updated = await api.getControlPoint(id);
-    } catch (err) {
-      console.error('reload control point after solve failed:', err);
-      alert('Reload control point after solve failed.');
-      return;
-    }
-    cpsById.set(updated.id, updated);
-    refreshIndexControlPoints();
-  }
-
   async function showStationPreview(id: string): Promise<void> {
     let data: ApiHydratedStation;
     try {
@@ -325,7 +303,6 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     onStationMarkerPreview: id => { void showStationPreview(id); },
     onStartStationHere: loc => { startStationModal.open(loc); },
     onAddControlPointHere: loc => { observationModal.openForMap(loc); },
-    onControlPointSolveLocation: id => { void solveAndPersistControlPointLocation(id); },
     onStationMarkerMove: (id, latlng) => { void moveStationTo(id, latlng); },
     onControlPointMove: (id, latlng) => { void moveControlPointTo(id, latlng); },
     onPhotoDroppedOnMap: (latlng, files) => { startStationModal.open(latlng, files); },

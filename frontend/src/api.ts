@@ -427,6 +427,3 @@ export async function revertCommit(id: string, message?: string): Promise<ApiCom
   return res.json() as Promise<ApiCommitRef>;
 }
 
-export function solveControlPoint(id: string, config?: SolveConfig): Promise<SolveResult> {
-  return request<SolveResult>('POST', `/solve/control-points/${encodeURIComponent(id)}`, config ?? {});
-}

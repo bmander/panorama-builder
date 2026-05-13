@@ -60,7 +60,6 @@ export interface CreateMapViewOptions {
   onStationMarkerPreview?: (id: string) => void;
   onStartStationHere?: (latlng: LatLng) => void;
   onAddControlPointHere?: (latlng: LatLng) => void;
-  onControlPointSolveLocation?: (id: string) => void;
   // Fired when the user drags a station marker and releases it at a new spot.
   onStationMarkerMove?: (id: string, latlng: LatLng) => void;
   // Same idea for index-CP dots: drag-end commits the new lat/lng.
@@ -185,7 +184,6 @@ export function createMapView({
   onStationMarkerPreview,
   onStartStationHere,
   onAddControlPointHere,
-  onControlPointSolveLocation,
   onStationMarkerMove,
   onControlPointMove,
   onPhotoDroppedOnMap,
@@ -236,7 +234,6 @@ export function createMapView({
   const GO_POPUP_OPTS: L.PopupOptions = { className: 'station-popup', closeButton: true };
   const goButtonHtml = (label: string, cls = ''): string =>
     `<button type="button" class="go${cls ? ' ' + cls : ''}">${label}</button>`;
-  const solveButtonHtml = (): string => '<button type="button" class="go solve-location">Refine location</button>';
   function wireGoButton(popup: L.Popup, selector: string, onClick: () => void): void {
     const btn = popup.getElement()?.querySelector<HTMLButtonElement>(selector);
     btn?.addEventListener('click', () => {
@@ -279,17 +276,11 @@ export function createMapView({
   function openIndexCpPopup(cp: IndexControlPoint): void {
     const label = cp.description || `cp ${cp.id.slice(0, 6)}`;
     const popupHtml = `<span class="name">${escapeHtml(label)}</span>`
-      + `<a class="go" href="${cpHref(cp.id)}">View details →</a>`
-      + solveButtonHtml();
-    const popup = L.popup(INDEX_CP_POPUP_OPTS)
+      + `<a class="go" href="${cpHref(cp.id)}">View details →</a>`;
+    L.popup(INDEX_CP_POPUP_OPTS)
       .setLatLng([cp.latlng.lat, cp.latlng.lng])
       .setContent(popupHtml)
       .openOn(map);
-    const solveBtn = popup.getElement()?.querySelector<HTMLButtonElement>('.solve-location');
-    solveBtn?.addEventListener('click', () => {
-      map.closePopup(popup);
-      onControlPointSolveLocation?.(cp.id);
-    }, { once: true });
   }
 
   // Rebuild the entire index-CP layer from `indexControlPoints`. Use only
