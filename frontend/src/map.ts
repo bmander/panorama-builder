@@ -1,4 +1,12 @@
 import * as L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+// Leaflet's default marker icon resolves its PNG URLs via internal script-tag
+// detection, which breaks under bundling. Import the images through Vite so
+// they're emitted as hashed assets, then point Icon.Default at them.
+import iconUrl from 'leaflet/dist/images/marker-icon.png';
+import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png';
+import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
+L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl, shadowUrl });
 import { R_EARTH, viewerAzToBearing } from './geo.js';
 import { degToRad, dot3, norm2, norm3, radToDeg } from './mathx.js';
 import { cpHref } from './types.js';

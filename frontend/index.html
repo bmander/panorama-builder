@@ -4,7 +4,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Panorama</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -248,14 +247,6 @@
     <span id="save-error-msg"></span>
     <button type="button" id="save-error-retry" class="btn">Retry</button>
   </div>
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-        "leaflet": "https://unpkg.com/leaflet@1.9.4/dist/leaflet-src.esm.js"
-      }
-    }
-  </script>
-  <script type="module" src="/build/main.js"></script>
+  <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

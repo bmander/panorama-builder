@@ -44,7 +44,7 @@ func main() {
 	dbURL := envDefault("DATABASE_URL",
 		"postgres://panorama:panorama@localhost:5432/panorama?sslmode=disable")
 	storageDir := envDefault("STORAGE_DIR", "./data")
-	staticDir := envDefault("STATIC_DIR", "../frontend")
+	staticDir := envDefault("STATIC_DIR", "../frontend/dist")
 	allowedOrigin := envDefault("ALLOWED_ORIGIN", "*")
 	maxBlobBytes := envInt64("MAX_BLOB_BYTES", 50_000_000)
 

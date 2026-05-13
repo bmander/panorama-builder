@@ -6,8 +6,8 @@ Notes for future sessions in this repo.
 
 Monorepo with two top-level dirs:
 
-- **`frontend/`** — TypeScript frontend. Source under `frontend/src/`; `tsc` output lands in `frontend/build/` (gitignored); `frontend/index.html` loads `build/main.js`. Loads Three.js + Leaflet via importmap from unpkg — **no bundler, no dev server, no test suite, by design**.
-- **`backend/`** — Go HTTP API backed by Postgres + PostGIS. Also serves the frontend static files (`STATIC_DIR=../frontend` by default; SPA fallback for `/station/<id>` and `/cp/<id>` routes). Stores stations (camera setup points), photos with embedded pose, map measurements, image measurements (which optionally reference a control point to encode a "match"). Single binary, no framework. Runs locally via `docker compose` for the DB.
+- **`frontend/`** — TypeScript frontend. Source under `frontend/src/`; **Vite** bundles to `frontend/dist/` (gitignored). Six HTML entry points at `frontend/*.html` (index, cp, cp-index, history, photos-index, stations-index), each loading its TS entry via `<script type="module" src="/src/<name>.ts">`. Three.js + Leaflet are npm `dependencies` (no importmap). Static CSS lives in `frontend/public/` and is copied to `dist/` as-is. **Vite for build + dev server with HMR; no test suite, by design.**
+- **`backend/`** — Go HTTP API backed by Postgres + PostGIS. Also serves the frontend static files (`STATIC_DIR=../frontend/dist` by default; SPA fallback for `/station/<id>` and `/cp/<id>` routes). Stores stations (camera setup points), photos with embedded pose, map measurements, image measurements (which optionally reference a control point to encode a "match"). Single binary, no framework. Runs locally via `docker compose` for the DB.
 
 ## Frontend architecture
 
@@ -61,7 +61,7 @@ Sole external dep: `github.com/jackc/pgx/v5`. Targets Go 1.22+ for stdlib method
 - **`!` is fine** for in-bounds matrix indexing under `noUncheckedIndexedAccess`. The project's eslint config already disables `no-non-null-assertion` — don't add runtime checks just to satisfy the linter.
 - **userData casts go through helpers** in `types.ts` (`overlayData(o)`, `poiData(p)`, `getRole(o)`). Don't write inline `(x.userData as Y)` at call sites.
 - **DOM lookups use `getElement<T>(id)`** from `types.ts`, not `document.getElementById('id')!`.
-- **Imports keep `.js` extensions** (`import { foo } from './bar.js'`) — required by both the runtime importmap and `moduleResolution: Bundler`.
+- **Imports keep `.js` extensions** (`import { foo } from './bar.js'`) — historical from the importmap days; Vite + `moduleResolution: Bundler` accept them and we keep the convention so all imports look the same.
 
 ### Backend
 - **Stdlib first.** Only `pgx/v5` so far. Don't add chi/gin/echo/gorilla; the Go 1.22 method-routing mux is enough.
@@ -73,8 +73,8 @@ Sole external dep: `github.com/jackc/pgx/v5`. Targets Go 1.22+ for stdlib method
 ## Commands
 
 ### Frontend (from `frontend/`)
-- `npm run build` — `tsc` to `build/`
-- `npm run watch` — `tsc -w`
+- `npm run dev` — Vite dev server on `:5173` with HMR; proxies `/api/*` to backend at `:8080`
+- `npm run build` — Vite production build to `dist/`
 - `npm run typecheck` — `tsc --noEmit`
 - `npm run lint` — eslint on `src/`
 - `npm run lint:fix` — auto-fix safe issues
@@ -88,7 +88,7 @@ Sole external dep: `github.com/jackc/pgx/v5`. Targets Go 1.22+ for stdlib method
 
 ## Don't
 
-- Don't add a bundler, framework, or test suite (frontend or backend) without asking.
+- Don't add a frontend framework (React/Vue/Svelte) or test suite without asking. Vite is the bundler; don't swap it out.
 - Don't add classes (frontend) or web frameworks like chi/gin/echo (backend).
 - Don't loosen `tsconfig` strictness or eslint presets; don't add an ORM or schema-validator dep without asking.
 - Don't write new `.md` files unless asked.
@@ -96,9 +96,13 @@ Sole external dep: `github.com/jackc/pgx/v5`. Targets Go 1.22+ for stdlib method
 ## End-to-end smoke test
 
 ### Frontend
-`cd frontend && npm run lint && npm run typecheck` should both exit 0, then `npm run build` (or `npm run watch`) to compile.
+`cd frontend && npm run lint && npm run typecheck && npm run build` should all exit 0.
 
-The Go backend serves the frontend on `:8080`, so smoke tests are: bring up the backend (below), visit `http://localhost:8080/`, set a camera location → URL updates to `/station/<id>`, drop a JPEG. Browser console should be silent.
+Two ways to run:
+- **Dev**: `npm run dev` serves on `:5173` with HMR; the Vite config proxies `/api/*` to the backend at `:8080`. Use this for iterating on TS/CSS.
+- **Prod-like**: `npm run build` then run the backend (it serves from `frontend/dist/`). Visit `http://localhost:8080/`. Use this to verify a full build path before commit.
+
+Smoke test: set a camera location → URL updates to `/station/<id>`, drop a JPEG. Browser console should be silent.
 
 ### Backend
 `go build ./... && go vet ./...` from `backend/` should exit 0. Then:

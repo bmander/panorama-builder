@@ -3,7 +3,7 @@
 Minimal Go HTTP service exposing the panorama domain objects (stations,
 photos with embedded pose, map measurements, image measurements) over a JSON
 API. Backed by Postgres + PostGIS for metadata and local disk for photo blobs.
-Also serves the frontend static files (`STATIC_DIR=../frontend` by default)
+Also serves the frontend static files (`STATIC_DIR=../frontend/dist` by default)
 so a single `make run` brings up both API and SPA on `:8080`.
 
 ## Quick start
@@ -35,7 +35,7 @@ Open <http://localhost:8080>. Setting a station pushes the URL to `/station/<id>
 |-------------------|----------------------------------------------------------------------------------|
 | `DATABASE_URL`    | `postgres://panorama:panorama@localhost:5432/panorama?sslmode=disable`           |
 | `STORAGE_DIR`     | `./data`                                                                         |
-| `STATIC_DIR`      | `../frontend`                                                                    |
+| `STATIC_DIR`      | `../frontend/dist`                                                               |
 | `LISTEN_ADDR`     | `:8080`                                                                          |
 | `ALLOWED_ORIGIN`  | `*` (loose for local dev — set to the frontend origin in prod)                   |
 | `MAX_BLOB_BYTES`  | `50000000` (50 MB)                                                               |
