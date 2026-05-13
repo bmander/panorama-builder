@@ -26,8 +26,8 @@ export {
 // Adjacent rings descend by exactly one zoom step (2× tile width). That
 // matters geometrically: the inner ring's outer edge in the outer ring's
 // tile coords lands at outer_cx + δ ± radiusTiles, where δ ∈ {0, 0.5} is
-// the inner ring's tile-center offset relative to the outer's. With a 1/128
-// vertex grid (stride = 2), 1/2 is a multiple of the grid spacing, so the
+// the inner ring's tile-center offset relative to the outer's. With a 1/64
+// vertex grid (stride = 4), 1/2 is a multiple of the grid spacing, so the
 // inner edge falls exactly on outer-ring vertex columns. Every outer-ring
 // quad is then either fully inside or fully outside the inner ring's
 // rectangle — no straddle, no overlap, no z-fighting. Strict integer
@@ -46,13 +46,13 @@ export interface RingSpec {
 const OUTER_ZOOM = 8;
 const INNER_ZOOM = 14;
 
-// 5×5 tile grid per ring. With stride = 2 that's a 641×641 vertex grid; the
+// 5×5 tile grid per ring. With stride = 4 that's a 321×321 vertex grid; the
 // outer extent (2.5 tile widths on average) brackets the angular-resolution
 // cutoff (~2.687 tile widths), and the inner-edge-on-grid-line invariant
-// only holds for radiusTiles whose halving stays a multiple of 1/128 — which
+// only holds for radiusTiles whose halving stays a multiple of 1/64 — which
 // integer values do.
 const RING_RADIUS_TILES = 2;
-const RING_STRIDE = 2;
+const RING_STRIDE = 4;
 
 // Innermost ring first (zoom descending) so each outer ring sees its inner
 // neighbor's coverage first and can carve a matching hole.
