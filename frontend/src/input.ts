@@ -148,9 +148,18 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
     tmpVec3.copy(worldPos).project(camera);
     return { x: (tmpVec3.x + 1) * 0.5 * innerWidth, y: (1 - tmpVec3.y) * 0.5 * innerHeight };
   }
+  // Three.js Raycaster ignores Object3D.visible (the recursive walk descends
+  // regardless). Filter hits whose object or any ancestor is hidden so the
+  // POI-reticule "hide until selected" gate also makes them unclickable.
+  function isHitVisible(o: THREE.Object3D): boolean {
+    for (let cur: THREE.Object3D | null = o; cur; cur = cur.parent) {
+      if (!cur.visible) return false;
+    }
+    return true;
+  }
   function raycastOverlays(): THREE.Intersection[] {
     return raycaster.intersectObjects(overlaysGroup.children, true)
-      .filter(h => getRole(h.object) !== undefined);
+      .filter(h => getRole(h.object) !== undefined && isHitVisible(h.object));
   }
 
   let mode: ModeState = null;
