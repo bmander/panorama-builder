@@ -33,11 +33,26 @@ function makeDotTexture(): THREE.Texture {
   });
 }
 
+// Outline-only dot: transparent middle, white ring sized to match the filled
+// dot's outer footprint so a per-vertex color tints the ring uniformly.
+function makeOutlineDotTexture(): THREE.Texture {
+  return makeCanvasTexture(32, ctx => {
+    ctx.beginPath();
+    ctx.arc(16, 16, 11.5, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = '#fff';
+    ctx.stroke();
+  });
+}
+
 export interface Dot {
   readonly anchor: LatLng;
   readonly altitude: number;
   readonly color: THREE.Color;
 }
+
+export type DotStyle = 'filled' | 'outline';
 
 export interface DotLayer {
   update(camLoc: LatLng | null, cameraMSL: number, dots: readonly Dot[]): void;
@@ -47,10 +62,11 @@ export interface DotLayer {
 export interface CreateDotLayerOptions {
   scene: THREE.Scene;
   requestRender: () => void;
+  style?: DotStyle;
 }
 
-export function createDotLayer({ scene, requestRender }: CreateDotLayerOptions): DotLayer {
-  const tex = makeDotTexture();
+export function createDotLayer({ scene, requestRender, style = 'filled' }: CreateDotLayerOptions): DotLayer {
+  const tex = style === 'outline' ? makeOutlineDotTexture() : makeDotTexture();
   const mat = new THREE.PointsMaterial({
     size: DOT_PIXEL_SIZE,
     sizeAttenuation: false,

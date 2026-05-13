@@ -515,8 +515,15 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     const items: ContextMenuItem[] = [
       { label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } },
     ];
-    const stationObserves = overlays.measurements.list()
-      .some(im => im.controlPointId === cpId);
+    // Crosshairs are hidden by default and only appear for the selected CP.
+    // Clicking the CP marker selects one of its measurements on this station
+    // so every observation reticule for the CP becomes visible at once.
+    const ownMeasurements = overlays.measurements.list()
+      .filter(im => im.controlPointId === cpId);
+    if (ownMeasurements.length > 0) {
+      overlays.measurements.setSelected(ownMeasurements[0]!.handle);
+    }
+    const stationObserves = ownMeasurements.length > 0;
     if (!stationObserves && body) {
       items.push({
         label: 'Add observation here',
@@ -563,7 +570,9 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         },
       );
     }
-    contextMenu.open(sx, sy, items, header);
+    // Nudge the menu right so the CP marker (and any reticules just
+    // revealed by the selection above) stays uncovered by the menu.
+    contextMenu.open(sx + 20, sy, items, header);
   }
 
   attachInput({

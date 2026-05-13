@@ -74,7 +74,11 @@ export type ControlPointColumns = ControlPointMarkers;
 export function createControlPointColumns(opts: CreateControlPointMarkersOptions): ControlPointMarkers {
   const { scene, requestRender } = opts;
 
-  const dots = createDotLayer({ scene, requestRender });
+  // Observed CPs paint as filled dots; CPs visible only because "show all"
+  // is on (zero observations from this station) paint as outline-only rings
+  // in the same blue, so observed vs unobserved is readable at a glance.
+  const filledDots = createDotLayer({ scene, requestRender });
+  const outlineDots = createDotLayer({ scene, requestRender, style: 'outline' });
 
   const lineMat = new THREE.LineBasicMaterial({ color: MARKER_COLOR, ...OVERLAY_LINE_BASE_PROPS });
   const lineMatSel = new THREE.LineBasicMaterial({ color: MARKER_COLOR_SELECTED, ...OVERLAY_LINE_BASE_PROPS });
@@ -98,12 +102,14 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
   function rebuild(): void {
     clearLineGroup(lineGroup);
     if (lastCamLoc === null || lastMarkers.length === 0) {
-      dots.update(null, 0, []);
+      filledDots.update(null, 0, []);
+      outlineDots.update(null, 0, []);
       requestRender();
       return;
     }
 
-    const dotList: Dot[] = [];
+    const filledList: Dot[] = [];
+    const outlineList: Dot[] = [];
     for (const m of lastMarkers) {
       const highlighted = isHighlighted(m);
       const color = highlighted ? colorSelected : colorDefault;
@@ -114,14 +120,17 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
         addLine(lineMaterial, x, -COLUMN_HALF_HEIGHT - drop, z, x, COLUMN_HALF_HEIGHT - drop, z);
         continue;
       }
-      dotList.push({ anchor: m.anchor, altitude: m.altitude, color });
+      const dot = { anchor: m.anchor, altitude: m.altitude, color };
+      if (m.observations.length > 0) filledList.push(dot);
+      else outlineList.push(dot);
       const y = m.altitude - lastCameraMSL - drop;
       for (const poi of m.observations) {
         poi.getWorldPosition(scratch);
         addLine(lineMaterial, x, y, z, scratch.x, scratch.y, scratch.z);
       }
     }
-    dots.update(lastCamLoc, lastCameraMSL, dotList);
+    filledDots.update(lastCamLoc, lastCameraMSL, filledList);
+    outlineDots.update(lastCamLoc, lastCameraMSL, outlineList);
     requestRender();
   }
 
@@ -137,7 +146,11 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
   subscribeCurvatureChange(rebuild);
 
   return {
-    setVisible(visible) { dots.setVisible(visible); lineGroup.visible = visible; },
+    setVisible(visible) {
+      filledDots.setVisible(visible);
+      outlineDots.setVisible(visible);
+      lineGroup.visible = visible;
+    },
     update(camLoc, cameraMSL, markers) {
       lastCamLoc = camLoc;
       lastCameraMSL = cameraMSL;

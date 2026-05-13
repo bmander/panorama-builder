@@ -127,6 +127,9 @@ export function createMeasurementStore(
   // constant as FOV changes. 1.0 = default FOV; the host updates this on
   // every camera FOV change.
   let poiFovScale = 1;
+  // Baker toggle: hidden during cube-to-equirect bakes so reticules don't
+  // leak into the equirect output. ANDs with the per-POI selection gate.
+  let visualsVisible = true;
 
   // The selected CP is derived from the selected measurement, so a selection
   // lights up every other measurement referencing the same CP.
@@ -164,12 +167,17 @@ export function createMeasurementStore(
     poi.scale.setScalar(currentPoiRadius());
   };
 
-  function applyPOIColors(): void {
+  // Crosshairs stay hidden until the CP they reference (or the POI itself)
+  // is selected. Reduces clutter on hydrated stations with many POIs; users
+  // see the residual lines from CP markers regardless.
+  function applyPOIVisuals(): void {
     for (const child of overlaysGroup.children) {
       const data = overlayData(child as THREE.Group);
       if (!data.pois) continue;
       for (const poi of data.pois) {
         const pData = poiData(poi);
+        const sel = isSelected(poi, pData.controlPointId);
+        poi.visible = visualsVisible && sel;
         setPoiColor(poi, isHighlighted(poi, pData.controlPointId) ? POI_COLOR_SELECTED : POI_COLOR);
       }
     }
@@ -204,6 +212,7 @@ export function createMeasurementStore(
     },
     setControlPoint(measurement, controlPointId) {
       poiData(measurement).controlPointId = controlPointId;
+      applyPOIVisuals();
       notify();
     },
     deleteSelected() {
@@ -263,13 +272,13 @@ export function createMeasurementStore(
     setSelected(measurement) {
       if (selected === measurement) return;
       selected = measurement;
-      applyPOIColors();
+      applyPOIVisuals();
       notifySelection();
     },
     setHovered(measurement) {
       if (hovered === measurement) return false;
       hovered = measurement;
-      applyPOIColors();
+      applyPOIVisuals();
       return true;
     },
     setFovScale(scale) {
@@ -283,11 +292,9 @@ export function createMeasurementStore(
       }
     },
     setVisualsVisible(visible) {
-      for (const child of overlaysGroup.children) {
-        const data = overlayData(child as THREE.Group);
-        if (!data.pois) continue;
-        for (const poi of data.pois) poi.visible = visible;
-      }
+      if (visualsVisible === visible) return;
+      visualsVisible = visible;
+      applyPOIVisuals();
     },
     layoutPoisOn(o, w, h) {
       const data = overlayData(o);
@@ -313,14 +320,19 @@ export function createMeasurementStore(
           if (pd.controlPointId === controlPointId) pd.controlPointId = null;
         }
       }
+      applyPOIVisuals();
     },
     clearSelectionForOverlay(o) {
+      let changed = false;
       if (selected && poiData(selected).parentOverlay === o) {
         selected = null;
+        changed = true;
       }
       if (hovered && poiData(hovered).parentOverlay === o) {
         hovered = null;
+        changed = true;
       }
+      if (changed) applyPOIVisuals();
     },
     getSelectedControlPointId: selectedControlPointId,
   };
