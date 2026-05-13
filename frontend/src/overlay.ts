@@ -92,6 +92,15 @@ export function createOverlayManager(
     clearControlPointLinks: (id) => { measurements.clearControlPointLinks(id); },
   });
 
+  // A POI's CP is "reachable" only if map-poi-columns can render a clickable
+  // marker for it — i.e. the CP exists and has both a lat and a lng. POIs
+  // whose CP isn't reachable stay visible by default so users can grab them.
+  measurements.setControlPointReachableResolver(id => {
+    if (id === null) return false;
+    const cp = controlPoints.getById(id);
+    return cp?.estLat != null && cp.estLng != null;
+  });
+
   const manager: OverlayManager = {
     photos,
     measurements,

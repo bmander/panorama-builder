@@ -100,6 +100,11 @@ export interface MeasurementStore {
   setHovered(measurement: THREE.Mesh | null): boolean;
   setFovScale(scale: number): void;
   setVisualsVisible(visible: boolean): void;
+  // Recompute per-POI visibility against the host's reachable-CP predicate.
+  // Selection / CP-link mutations already trigger this internally; call it
+  // when CP locations change (a CP gaining or losing a lat/lng flips the
+  // "orphan" branch).
+  refreshVisibility(): void;
 }
 
 // Cross-store hooks consumed only by the overlay façade when wiring photo
@@ -110,6 +115,10 @@ export interface MeasurementStoreHooks {
   clearControlPointLinks(controlPointId: string): void;
   clearSelectionForOverlay(o: THREE.Group): void;
   getSelectedControlPointId(): string | null;
+  // Set after the control point registry is built; the predicate decides
+  // whether a POI's CP has a clickable marker (POIs whose CP isn't reachable
+  // bypass the "hide until selected" rule so users can still grab them).
+  setControlPointReachableResolver(fn: (controlPointId: string | null) => boolean): void;
 }
 
 export interface CreateMeasurementStoreOptions {
@@ -121,6 +130,7 @@ export interface CreateMeasurementStoreOptions {
 export function createMeasurementStore(
   { overlaysGroup, notify, notifySelection }: CreateMeasurementStoreOptions,
 ): MeasurementStore & MeasurementStoreHooks {
+  let isReachable: (controlPointId: string | null) => boolean = (): boolean => true;
   let selected: THREE.Mesh | null = null;
   let hovered: THREE.Mesh | null = null;
   // Multiplier on POI world-size so on-screen pixel size stays roughly
@@ -169,7 +179,9 @@ export function createMeasurementStore(
 
   // Crosshairs stay hidden until the CP they reference (or the POI itself)
   // is selected. Reduces clutter on hydrated stations with many POIs; users
-  // see the residual lines from CP markers regardless.
+  // see the residual lines from CP markers regardless. Exception: POIs
+  // whose CP isn't reachable (no marker to click) stay visible so the user
+  // can still grab them — otherwise they'd be permanently unselectable.
   function applyPOIVisuals(): void {
     for (const child of overlaysGroup.children) {
       const data = overlayData(child as THREE.Group);
@@ -177,7 +189,8 @@ export function createMeasurementStore(
       for (const poi of data.pois) {
         const pData = poiData(poi);
         const sel = isSelected(poi, pData.controlPointId);
-        poi.visible = visualsVisible && sel;
+        const orphan = !isReachable(pData.controlPointId);
+        poi.visible = visualsVisible && (sel || orphan);
         setPoiColor(poi, isHighlighted(poi, pData.controlPointId) ? POI_COLOR_SELECTED : POI_COLOR);
       }
     }
@@ -296,6 +309,7 @@ export function createMeasurementStore(
       visualsVisible = visible;
       applyPOIVisuals();
     },
+    refreshVisibility: applyPOIVisuals,
     layoutPoisOn(o, w, h) {
       const data = overlayData(o);
       if (!data.pois) return;
@@ -335,6 +349,10 @@ export function createMeasurementStore(
       if (changed) applyPOIVisuals();
     },
     getSelectedControlPointId: selectedControlPointId,
+    setControlPointReachableResolver(fn) {
+      isReachable = fn;
+      applyPOIVisuals();
+    },
   };
   return store;
 }

@@ -297,6 +297,9 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     }));
     cachedVisibleCps = cps;
     cachedObservationRays = buildObservationRays();
+    // CP locations may have changed (sync, solve, edit) — a CP gaining or
+    // losing a lat/lng flips the orphan-visibility branch for its POIs.
+    overlays.measurements.refreshVisibility();
     pushPose();
   }
 
