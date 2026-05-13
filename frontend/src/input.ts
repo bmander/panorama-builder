@@ -115,8 +115,8 @@ export interface AttachInputOptions {
   // Plain-click on an existing constraint line. Host opens an edit / delete
   // modal for the constraint.
   onConstraintClick?: (constraintId: string, screenX: number, screenY: number, shiftKey: boolean) => void;
-  findSurfaceAtNDC?: (ndc: { x: number; y: number }) => { surfaceId: string } | null;
-  onSurfaceClick?: (surfaceId: string, screenX: number, screenY: number) => void;
+  findSurfaceAtNDC?: (ndc: { x: number; y: number }) => { surfaceId: string; point: THREE.Vector3 } | null;
+  onSurfaceClick?: (surfaceId: string, screenX: number, screenY: number, point: THREE.Vector3) => void;
   // Shift-click-drag completed on a second CP marker. Host posts the
   // constraint and opens the type picker. Cancels (no callback) when the
   // pointer releases anywhere else.
@@ -308,7 +308,7 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
       if (surfHit) {
         e.stopPropagation();
         pointers.delete(e.pointerId);
-        onSurfaceClick(surfHit.surfaceId, e.clientX, e.clientY);
+        onSurfaceClick(surfHit.surfaceId, e.clientX, e.clientY, surfHit.point);
         return;
       }
     }

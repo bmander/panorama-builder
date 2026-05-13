@@ -6,7 +6,7 @@
 // elements are linear in days-since-J2000 with small periodic corrections;
 // good enough for terrain shading and ~century-range datetimes.
 
-import { degToRad, wrap2Pi } from './mathx.js';
+import { clamp, degToRad, wrap2Pi } from './mathx.js';
 
 // J2000.0 epoch is 2000-01-01 12:00 UTC = JD 2451545.0. Unix epoch is JD
 // 2440587.5, so the offset is exactly 10957.5 days.
@@ -55,4 +55,70 @@ export function sunDirection(az: number, alt: number): { x: number; y: number; z
     y: Math.sin(alt),
     z: -Math.cos(az) * cosAlt,
   };
+}
+
+export interface SunDateTimeCandidate {
+  readonly date: Date;
+  readonly residualRad: number;
+}
+
+function angularDist(az1: number, alt1: number, az2: number, alt2: number): number {
+  const c = Math.sin(alt1) * Math.sin(alt2) + Math.cos(alt1) * Math.cos(alt2) * Math.cos(az1 - az2);
+  return Math.acos(clamp(c, -1, 1));
+}
+
+// Inverse of solarAzAlt: given a target (az, alt) at a known location and a
+// year, find the moments during that year when the sun is closest to that
+// target. Sweeps every day at 15-minute resolution, then refines the per-day
+// best to 1 minute. Returns up to two results — the declination-conjugate
+// pair that typically reproduces any given (az, alt). For any target there
+// are usually two dates equidistant from the nearest solstice; near a
+// solstice they collapse to a single date. Targets below the horizon
+// return [].
+export function findSunDateTimeCandidates(
+  targetAz: number, targetAlt: number, latDeg: number, lngDeg: number, year: number,
+): SunDateTimeCandidate[] {
+  if (targetAlt <= 0) return [];
+
+  const perDay: SunDateTimeCandidate[] = [];
+  for (let day = 0; day < 366; day++) {
+    const dayStartMs = Date.UTC(year, 0, 1) + day * 86400000;
+    if (new Date(dayStartMs).getUTCFullYear() !== year) break;
+
+    let bestMs = dayStartMs;
+    let bestRes = Infinity;
+    for (let m = 0; m < 24 * 60; m += 15) {
+      const ms = dayStartMs + m * 60000;
+      const sp = solarAzAlt(new Date(ms), latDeg, lngDeg);
+      const r = angularDist(sp.az, sp.alt, targetAz, targetAlt);
+      if (r < bestRes) { bestRes = r; bestMs = ms; }
+    }
+    for (let m = -14; m <= 14; m++) {
+      const ms = bestMs + m * 60000;
+      const sp = solarAzAlt(new Date(ms), latDeg, lngDeg);
+      const r = angularDist(sp.az, sp.alt, targetAz, targetAlt);
+      if (r < bestRes) { bestRes = r; bestMs = ms; }
+    }
+    perDay.push({ date: new Date(bestMs), residualRad: bestRes });
+  }
+
+  // Walk by ascending residual; require the second pick to sit at least
+  // MIN_SEPARATION_DAYS away from the first so the two results land on
+  // opposite sides of the nearest solstice rather than both inside the
+  // same daily valley (where adjacent days have nearly identical residuals).
+  const MIN_SEPARATION_DAYS = 21;
+  const dayMs = 86400000;
+  const ordered = [...perDay].sort((a, b) => a.residualRad - b.residualRad);
+  const picked: SunDateTimeCandidate[] = [];
+  for (const c of ordered) {
+    const farEnough = picked.every(p => {
+      const d = Math.abs(p.date.getTime() - c.date.getTime()) / dayMs;
+      return Math.min(d, 365 - d) >= MIN_SEPARATION_DAYS;
+    });
+    if (farEnough) {
+      picked.push(c);
+      if (picked.length === 2) break;
+    }
+  }
+  return picked;
 }

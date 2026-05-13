@@ -26,11 +26,13 @@ export interface CPSurfaces {
   ): void;
   // Hit-test in NDC space. Projects each drawn polygon and reports the first
   // one the cursor sits inside. Polygons are convex (3 or 4 verts in cyclic
-  // order) so a single sign-of-cross test against each edge suffices.
+  // order) so a single sign-of-cross test against each edge suffices. The
+  // returned `point` is the world-space intersection of the camera ray with
+  // the surface's plane (callers like the sundial picker rely on this).
   findHit(
     ndc: { x: number; y: number },
     camera: THREE.Camera,
-  ): { surfaceId: string } | null;
+  ): { surfaceId: string; point: THREE.Vector3 } | null;
   setOpacity(opacity: number): void;
   setVisible(visible: boolean): void;
 }
@@ -75,6 +77,15 @@ export function createCPSurfaces(opts: CreateCPSurfacesOptions): CPSurfaces {
   let lastCps: readonly ControlPointView[] = [];
   let lastSurfaces: readonly CPSurfaceView[] = [];
   let lastSelectedId: string | null = null;
+
+  // Hit-test scratch state: reused across findHit calls so we don't allocate
+  // a Raycaster / Plane / Vector3 set on every pointer click.
+  const hitRaycaster = new THREE.Raycaster();
+  const _ndc2 = new THREE.Vector2();
+  const _edge1 = new THREE.Vector3();
+  const _edge2 = new THREE.Vector3();
+  const _normal = new THREE.Vector3();
+  const _plane = new THREE.Plane();
 
   function clearGroup(): void {
     for (const child of group.children) {
@@ -172,11 +183,22 @@ export function createCPSurfaces(opts: CreateCPSurfacesOptions): CPSurfaces {
     findHit(ndc, camera) {
       // Walk in reverse render order so a surface drawn over another is
       // picked first. Skip surfaces with any vertex behind the near plane.
+      hitRaycaster.setFromCamera(_ndc2.set(ndc.x, ndc.y), camera);
       for (let i = drawn.length - 1; i >= 0; i--) {
         const d = drawn[i]!;
         const projected = d.vertices.map(v => v.clone().project(camera));
         if (projected.some(p => p.z > 1)) continue;
-        if (ndcContains(ndc, projected)) return { surfaceId: d.id };
+        if (!ndcContains(ndc, projected)) continue;
+        const v0 = d.vertices[0]!;
+        const v1 = d.vertices[1]!;
+        const v2 = d.vertices[2]!;
+        _edge1.subVectors(v1, v0);
+        _edge2.subVectors(v2, v0);
+        _normal.crossVectors(_edge1, _edge2).normalize();
+        _plane.setFromNormalAndCoplanarPoint(_normal, v0);
+        const point = new THREE.Vector3();
+        if (!hitRaycaster.ray.intersectPlane(_plane, point)) continue;
+        return { surfaceId: d.id, point };
       }
       return null;
     },

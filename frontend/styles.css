@@ -159,6 +159,26 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .time-filter-row input[type="date"] { flex: 1; }
 .time-filter-year { text-align: center; opacity: 0.75; }
 
+/* Floating tool panel (not a modal — clicks outside pass through to the
+   3D canvas so the user can pick CPs/surfaces while the panel is open). */
+#sundial-panel { position: fixed; top: 56px; right: 8px; z-index: 1500;
+                 background: rgba(0,0,0,0.85); color: #fff; border: 1px solid #fff;
+                 padding: 12px; min-width: 320px; max-width: 360px; font: 12px monospace;
+                 display: flex; flex-direction: column; gap: 10px; }
+#sundial-panel[hidden] { display: none; }
+.sundial-header { display: flex; align-items: center; justify-content: space-between;
+                  font-weight: bold; }
+.sundial-header .btn { padding: 2px 6px; }
+.sundial-row { display: flex; align-items: center; gap: 8px; }
+.sundial-row-label { flex: 0 0 60px; opacity: 0.75; }
+.sundial-row-value { flex: 1; font: 12px monospace; opacity: 0.9;
+                     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.btn.picking { background: rgba(255,221,68,0.25); color: #ffdd44;
+               border-color: #ffdd44; }
+.sundial-candidates { list-style: none; margin: 6px 0 0; padding: 0;
+                      display: flex; flex-direction: column; gap: 2px; }
+.sundial-candidates .muted { opacity: 0.6; font-size: 11px; }
+
 #constraint-multiselect-hud { position: fixed; top: 12px; left: 50%;
                               transform: translateX(-50%);
                               background: rgba(0,0,0,0.75); color: #fff;
