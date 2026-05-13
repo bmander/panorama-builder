@@ -236,17 +236,33 @@
     </div>
     <details class="settings-group">
       <summary>Sky model</summary>
-      <div class="settings-row" title="Overall brightness of the physical sky model.">
-        <label for="sky-sun-intensity">Sun intensity</label>
-        <input type="range" id="sky-sun-intensity" min="0" max="60" value="22" step="0.5">
+      <div class="settings-row" title="Atmospheric murkiness — high turbidity gives a hazier, whiter sky.">
+        <label for="sky-turbidity">Turbidity</label>
+        <input type="range" id="sky-turbidity" min="0" max="20" value="2" step="0.1">
       </div>
-      <div class="settings-row" title="Mie scattering strength — turns up the soft glow around the sun and the overall haze of the sky.">
-        <label for="sky-mie-coef">Sky Mie strength</label>
-        <input type="range" id="sky-mie-coef" min="0" max="4" value="1" step="0.05">
+      <div class="settings-row" title="Rayleigh-scattering strength. Higher = brighter blue overhead.">
+        <label for="sky-rayleigh">Sky brightness</label>
+        <input type="range" id="sky-rayleigh" min="0" max="4" value="1" step="0.05">
+      </div>
+      <div class="settings-row" title="Mie scattering — turns up the soft glow around the sun.">
+        <label for="sky-mie-coef">Sun glow</label>
+        <input type="range" id="sky-mie-coef" min="0" max="0.05" value="0.005" step="0.0005">
       </div>
       <div class="settings-row" title="Mie anisotropy (Henyey-Greenstein g) — higher values concentrate scattering into a tighter forward halo near the sun.">
         <label for="sky-mie-g">Sun halo focus</label>
-        <input type="range" id="sky-mie-g" min="0" max="0.95" value="0.76" step="0.01">
+        <input type="range" id="sky-mie-g" min="0" max="0.99" value="0.8" step="0.01">
+      </div>
+      <div class="settings-row" title="Fraction of the sky covered by procedural fbm-noise clouds. 0 = clear sky, 1 = fully overcast.">
+        <label for="sky-cloud-coverage">Clouds</label>
+        <input type="range" id="sky-cloud-coverage" min="0" max="1" value="0" step="0.01">
+      </div>
+      <div class="settings-row" title="Opacity of the cloud overlay. Higher = thicker / more opaque clouds.">
+        <label for="sky-cloud-density">Cloud density</label>
+        <input type="range" id="sky-cloud-density" min="0" max="1" value="0.4" step="0.01">
+      </div>
+      <div class="settings-row" title="Apparent cloud height. 0 = high / distant clouds, 1 = low / close clouds.">
+        <label for="sky-cloud-elevation">Cloud elevation</label>
+        <input type="range" id="sky-cloud-elevation" min="0" max="1" value="0.5" step="0.01">
       </div>
     </details>
     <div class="settings-row">

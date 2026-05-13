@@ -44,9 +44,13 @@ export function createSettingsPanel({
   const settingsBtnEl = getElement<HTMLButtonElement>('settings-btn');
   const settingsPanelEl = getElement('settings-panel');
   const hazeSliderEl = getElement<HTMLInputElement>('haze-slider');
-  const skySunIntensityEl = getElement<HTMLInputElement>('sky-sun-intensity');
+  const skyTurbidityEl = getElement<HTMLInputElement>('sky-turbidity');
+  const skyRayleighEl = getElement<HTMLInputElement>('sky-rayleigh');
   const skyMieCoefEl = getElement<HTMLInputElement>('sky-mie-coef');
   const skyMieGEl = getElement<HTMLInputElement>('sky-mie-g');
+  const skyCloudCoverageEl = getElement<HTMLInputElement>('sky-cloud-coverage');
+  const skyCloudDensityEl = getElement<HTMLInputElement>('sky-cloud-density');
+  const skyCloudElevationEl = getElement<HTMLInputElement>('sky-cloud-elevation');
   const curvatureToggleEl = getElement<HTMLInputElement>('curvature-toggle');
   const refractionToggleEl = getElement<HTMLInputElement>('refraction-toggle');
   const showAllCPsEl = getElement<HTMLInputElement>('show-all-cps');
@@ -100,18 +104,34 @@ export function createSettingsPanel({
   // what the sliders read. Session-only — same policy as the rest of this
   // panel (no localStorage).
   sky.setParams({
-    sunIntensity: parseFloat(skySunIntensityEl.value),
+    turbidity: parseFloat(skyTurbidityEl.value),
+    rayleigh: parseFloat(skyRayleighEl.value),
     mieCoefficient: parseFloat(skyMieCoefEl.value),
-    mieAnisotropy: parseFloat(skyMieGEl.value),
+    mieDirectionalG: parseFloat(skyMieGEl.value),
+    cloudCoverage: parseFloat(skyCloudCoverageEl.value),
+    cloudDensity: parseFloat(skyCloudDensityEl.value),
+    cloudElevation: parseFloat(skyCloudElevationEl.value),
   });
-  skySunIntensityEl.addEventListener('input', () => {
-    sky.setParams({ sunIntensity: parseFloat(skySunIntensityEl.value) });
+  skyTurbidityEl.addEventListener('input', () => {
+    sky.setParams({ turbidity: parseFloat(skyTurbidityEl.value) });
+  });
+  skyRayleighEl.addEventListener('input', () => {
+    sky.setParams({ rayleigh: parseFloat(skyRayleighEl.value) });
   });
   skyMieCoefEl.addEventListener('input', () => {
     sky.setParams({ mieCoefficient: parseFloat(skyMieCoefEl.value) });
   });
   skyMieGEl.addEventListener('input', () => {
-    sky.setParams({ mieAnisotropy: parseFloat(skyMieGEl.value) });
+    sky.setParams({ mieDirectionalG: parseFloat(skyMieGEl.value) });
+  });
+  skyCloudCoverageEl.addEventListener('input', () => {
+    sky.setParams({ cloudCoverage: parseFloat(skyCloudCoverageEl.value) });
+  });
+  skyCloudDensityEl.addEventListener('input', () => {
+    sky.setParams({ cloudDensity: parseFloat(skyCloudDensityEl.value) });
+  });
+  skyCloudElevationEl.addEventListener('input', () => {
+    sky.setParams({ cloudElevation: parseFloat(skyCloudElevationEl.value) });
   });
 
   curvatureToggleEl.addEventListener('change', () => {

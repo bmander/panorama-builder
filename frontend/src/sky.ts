@@ -1,7 +1,8 @@
 // Physically-plausible sky and view-direction-dependent atmospheric haze.
 //
-// Strategy: render the (expensive) Rayleigh + Mie raymarch into a 512² cube
-// render target whenever the sun moves, then expose that cubemap two ways:
+// Strategy: render Three.js's built-in Preetham Sky add-on into a 512² cube
+// render target whenever a sun-position or look parameter changes, then
+// expose that cubemap two ways:
 //   1. As `scene.background`. Three.js renders cube backgrounds natively for
 //      both the live perspective camera and the bake's CubeCamera, so the
 //      same texture lights the canvas and the equirect PNG.
@@ -10,143 +11,14 @@
 //      into the colour of the sky it's actually behind instead of a flat
 //      grey HAZE_COLOR.
 //
-// All per-frame cost is a single cubemap lookup. Sun-change cost is one cube
-// render (6 face renders × 512² × ~16 primary × 8 light samples), about
-// single-digit ms on a typical GPU. Sky parameters are tuned for visual
-// plausibility over strict physical accuracy — see the constants below.
+// The shader engine itself is Three's `Sky` (BoxGeometry + Preetham frag).
+// Sky outputs linear HDR through `<tonemapping_fragment>`, so we scope an
+// ACES tone-map + exposure override around the cube-RT bake; the rest of
+// the canvas continues to render with its default NoToneMapping.
 
 import * as THREE from 'three';
+import { Sky as ThreeSky } from 'three/addons/objects/Sky.js';
 import { sunDirection as sunVec } from './solar.js';
-
-const SKY_VERT = /* glsl */`
-varying vec2 vUv;
-void main() {
-  vUv = uv;
-  // Bypass projection: emit NDC directly so the quad covers the whole view
-  // for any camera (including each face of a CubeCamera). z=1 puts it at
-  // the far plane so opaque geometry overdraws it naturally.
-  gl_Position = vec4(position.xy, 1.0, 1.0);
-}
-`;
-
-const SKY_FRAG = /* glsl */`
-precision highp float;
-
-varying vec2 vUv;
-
-uniform mat4 uInverseProjection;
-uniform mat4 uInverseView;
-uniform vec3 uSunDirection;
-// Runtime-tunable knobs surfaced in the display-settings panel. The fixed
-// constants below (scale heights, step counts, atmosphere radius) stay put
-// because they affect integration accuracy / cost rather than look.
-uniform float uSunIntensity;
-uniform float uMieCoefficient;   // multiplied with BETA_M_BASE
-uniform float uMieG;             // Henyey-Greenstein anisotropy in [0, 0.99]
-
-const float PI = 3.14159265358979;
-const float EARTH_R = 6371000.0;
-const float ATMO_R  = 6471000.0;            // 100 km thick shell
-// Rayleigh coefficients tuned for a recognisable blue-vs-orange ratio at
-// noon (blue dominates overhead, red survives to the horizon) without the
-// blue channel saturating to white through the tone-map.
-const vec3  BETA_R  = vec3(5.8e-6, 13.5e-6, 33.1e-6);
-// Base Mie value; the user-facing slider scales it by uMieCoefficient.
-// Default 1.0 reproduces the previous look (8e-6); textbook is ~2.6.
-const float BETA_M_BASE = 8e-6;
-const float SCALE_R = 8000.0;
-const float SCALE_M = 1200.0;
-const int   PRIMARY_STEPS = 16;
-const int   LIGHT_STEPS   = 8;
-
-// Returns (tNear, tFar) for the ray ro+t*rd against sphere of radius r centred
-// at origin. Returns (-1, -1) when there is no real intersection.
-vec2 raySphere(vec3 ro, vec3 rd, float r) {
-  float b = dot(ro, rd);
-  float c = dot(ro, ro) - r * r;
-  float d = b * b - c;
-  if (d < 0.0) return vec2(-1.0);
-  float s = sqrt(d);
-  return vec2(-b - s, -b + s);
-}
-
-vec3 atmosphere(vec3 ro, vec3 rd, vec3 sun) {
-  float betaM = BETA_M_BASE * uMieCoefficient;
-  vec2 tA = raySphere(ro, rd, ATMO_R);
-  if (tA.y < 0.0) return vec3(0.0);
-  float t0 = max(tA.x, 0.0);
-  // Always integrate the full atmosphere chord — don't stop early at an
-  // Earth hit. Below-horizon view rays have short Earth-hit distances (down
-  // to a few metres for an observer at sea level), and the resulting jump
-  // in integration length across the horizon shows up as a visible dark
-  // band in the cubemap right above the visible terrain horizon. Below-
-  // horizon directions are covered by the terrain mesh in the live scene
-  // anyway, so any over-scattering for those directions doesn't show.
-  float t1 = tA.y;
-
-  float dt = (t1 - t0) / float(PRIMARY_STEPS);
-  float odR = 0.0, odM = 0.0;
-  vec3 sumR = vec3(0.0), sumM = vec3(0.0);
-
-  for (int i = 0; i < PRIMARY_STEPS; i++) {
-    vec3 p = ro + rd * (t0 + dt * (float(i) + 0.5));
-    float h = max(length(p) - EARTH_R, 0.0);
-    float dR = exp(-h / SCALE_R) * dt;
-    float dM = exp(-h / SCALE_M) * dt;
-    odR += dR;
-    odM += dM;
-
-    vec2 tAS = raySphere(p, sun, ATMO_R);
-    if (tAS.y <= 0.0) continue;
-    vec2 tES = raySphere(p, sun, EARTH_R);
-    if (tES.x > 0.0 && tES.x < tAS.y) continue;  // sun is below horizon for p
-
-    float dts = tAS.y / float(LIGHT_STEPS);
-    float odRs = 0.0, odMs = 0.0;
-    for (int j = 0; j < LIGHT_STEPS; j++) {
-      vec3 ps = p + sun * (dts * (float(j) + 0.5));
-      float hs = max(length(ps) - EARTH_R, 0.0);
-      odRs += exp(-hs / SCALE_R) * dts;
-      odMs += exp(-hs / SCALE_M) * dts;
-    }
-    vec3 tau = BETA_R * (odR + odRs) + betaM * 1.1 * (odM + odMs);
-    vec3 attn = exp(-tau);
-    sumR += attn * dR;
-    sumM += attn * dM;
-  }
-
-  float mu = dot(rd, sun);
-  float pR = 3.0 / (16.0 * PI) * (1.0 + mu * mu);
-  float g2 = uMieG * uMieG;
-  float pM = 3.0 / (8.0 * PI) * ((1.0 - g2) * (1.0 + mu * mu)) /
-             ((2.0 + g2) * pow(max(1.0 + g2 - 2.0 * uMieG * mu, 0.0), 1.5));
-
-  return uSunIntensity * (sumR * BETA_R * pR + sumM * betaM * pM);
-}
-
-void main() {
-  // World-space view ray from inverse projection × inverse view of NDC corners.
-  vec2 ndc = vUv * 2.0 - 1.0;
-  vec4 nearW = uInverseView * uInverseProjection * vec4(ndc, -1.0, 1.0);
-  vec4 farW  = uInverseView * uInverseProjection * vec4(ndc,  1.0, 1.0);
-  vec3 dir = normalize(farW.xyz / farW.w - nearW.xyz / nearW.w);
-
-  // Observer at sea level on the local-up axis (scene's +Y).
-  vec3 origin = vec3(0.0, EARTH_R + 1.0, 0.0);
-  vec3 col = atmosphere(origin, dir, normalize(uSunDirection));
-
-  // Luminance-only Reinhard: preserves chromatic saturation that the naive
-  // per-channel "col / (col + 1)" would crush (the brightest channel — blue
-  // overhead, red at the horizon — gets compressed more than the others, so
-  // the sky goes grey instead of staying blue/orange). Output stays in
-  // linear space; Three's WebGLRenderer encodes to sRGB on canvas write,
-  // and bake.ts's equirect pass handles gamma for the PNG export.
-  float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
-  float lumOut = lum / (1.0 + lum);
-  col *= lumOut / max(lum, 1e-6);
-  gl_FragColor = vec4(col, 1.0);
-}
-`;
 
 // Shared uniform: every applySkyHaze material samples the same probe texture.
 // Populated synchronously inside createSky before any applySkyHaze material is
@@ -218,18 +90,32 @@ export function applySkyHaze(material: THREE.Material): void {
 }
 
 // Runtime-tunable look parameters surfaced as sliders in the settings panel.
-// Defaults match the previously-hardcoded GLSL constants.
+// These map 1:1 onto Three.Sky's Preetham uniforms (plus the cloud overlay).
 export interface SkyParams {
-  sunIntensity: number;     // scales overall sky brightness; default 22
-  mieCoefficient: number;   // scalar on BETA_M_BASE; default 1.0
-  mieAnisotropy: number;    // Henyey-Greenstein g in [0, 0.99]; default 0.76
+  turbidity: number;        // 0..20,   default 2  — atmospheric murkiness
+  rayleigh: number;         // 0..4,    default 1  — blue-scatter strength
+  mieCoefficient: number;   // 0..0.05, default 0.005 — sun glow strength
+  mieDirectionalG: number;  // 0..0.99, default 0.8 — Henyey-Greenstein anisotropy
+  cloudCoverage: number;    // 0..1,    default 0  — fraction of sky covered by clouds
+  cloudDensity: number;     // 0..1,    default 0.4 — opacity of the cloud overlay
+  cloudElevation: number;   // 0..1,    default 0.5 — apparent cloud height (0 high/distant, 1 low/close)
 }
 
 export const DEFAULT_SKY_PARAMS: SkyParams = {
-  sunIntensity: 22,
-  mieCoefficient: 1.0,
-  mieAnisotropy: 0.76,
+  turbidity: 2,
+  rayleigh: 1,
+  mieCoefficient: 0.005,
+  mieDirectionalG: 0.8,
+  cloudCoverage: 0,
+  cloudDensity: 0.4,
+  cloudElevation: 0.5,
 };
+
+// Tone-mapping the cube-RT bake (Sky emits linear HDR via
+// `<tonemapping_fragment>`). Scoped to regenProbe so the canvas keeps its
+// default NoToneMapping. Calibrate exposure by eye if the sky reads off.
+const PROBE_TONE_MAPPING = THREE.ACESFilmicToneMapping;
+const PROBE_TONE_EXPOSURE = 0.5;
 
 export interface Sky {
   setSunDirection(az: number, alt: number): void;
@@ -245,53 +131,46 @@ export interface CreateSkyOptions {
 }
 
 export function createSky({ scene, renderer, requestRender }: CreateSkyOptions): Sky {
-  const sunDirVec = new THREE.Vector3(0, 1, 0);
-
-  const skyMat = new THREE.ShaderMaterial({
-    vertexShader: SKY_VERT,
-    fragmentShader: SKY_FRAG,
-    uniforms: {
-      uInverseProjection: { value: new THREE.Matrix4() },
-      uInverseView: { value: new THREE.Matrix4() },
-      uSunDirection: { value: sunDirVec },
-      uSunIntensity: { value: DEFAULT_SKY_PARAMS.sunIntensity },
-      uMieCoefficient: { value: DEFAULT_SKY_PARAMS.mieCoefficient },
-      uMieG: { value: DEFAULT_SKY_PARAMS.mieAnisotropy },
-    },
-    depthWrite: false,
-    depthTest: false,
-    side: THREE.DoubleSide,
-    fog: false,
-  });
-
-  // Per-render hook that refreshes the inverse-projection / inverse-view
-  // uniforms from whichever camera is drawing this mesh. Lives on the Mesh
-  // (not the Material) because Three only fires onBeforeRender at the object
-  // level. Critical for correctness during the bake's CubeCamera pass — each
-  // of the 6 face cameras has different matrices.
-  const invProj = skyMat.uniforms.uInverseProjection!.value as THREE.Matrix4;
-  const invView = skyMat.uniforms.uInverseView!.value as THREE.Matrix4;
-  const refreshSkyMatrices = (
-    _r: THREE.WebGLRenderer, _s: THREE.Scene, camera: THREE.Camera,
-  ): void => {
-    invProj.copy(camera.projectionMatrixInverse);
-    // matrixWorld is the camera-to-world transform = inverse of the view matrix.
-    invView.copy(camera.matrixWorld);
-  };
-
-  // Single quad in a private scene that we render through a CubeCamera once
-  // per sun-change. Output goes to skyProbeRT, which is then used both as
-  // scene.background (Three's native cube background path renders for any
-  // camera, including bake.ts's CubeCamera) and as the haze probe sampled
-  // by applySkyHaze materials.
+  // Private probe scene: a single Sky mesh that we render through a CubeCamera
+  // once per dirty event. Output goes to probeRT, used both as scene.background
+  // and as the haze probe sampled by applySkyHaze materials.
   const probeScene = new THREE.Scene();
-  const probeMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), skyMat);
-  probeMesh.frustumCulled = false;
-  probeMesh.onBeforeRender = refreshSkyMatrices;
-  probeScene.add(probeMesh);
+  const threeSky = new ThreeSky();
+  // Sky's vertex shader forces NDC z=1 so the geometric scale only matters for
+  // frustum culling. The box half-diagonal at scale 4 is ~3.46, comfortably
+  // inside the (0.1, 10) CubeCamera frustum.
+  threeSky.scale.setScalar(4);
+  probeScene.add(threeSky);
+
+  // Three.Sky's uniforms map types each lookup as possibly undefined under
+  // noUncheckedIndexedAccess. The keys are guaranteed by the Sky constructor,
+  // so grab them with `!` once and use the typed refs below.
+  const u = threeSky.material.uniforms;
+  const uTurbidity = u.turbidity!;
+  const uRayleigh = u.rayleigh!;
+  const uMieCoef = u.mieCoefficient!;
+  const uMieG = u.mieDirectionalG!;
+  const uCloudCoverage = u.cloudCoverage!;
+  const uCloudDensity = u.cloudDensity!;
+  const uCloudElevation = u.cloudElevation!;
+  const uUp = u.up!;
+  const uSunPos = u.sunPosition!;
+  uTurbidity.value = DEFAULT_SKY_PARAMS.turbidity;
+  uRayleigh.value = DEFAULT_SKY_PARAMS.rayleigh;
+  uMieCoef.value = DEFAULT_SKY_PARAMS.mieCoefficient;
+  uMieG.value = DEFAULT_SKY_PARAMS.mieDirectionalG;
+  uCloudCoverage.value = DEFAULT_SKY_PARAMS.cloudCoverage;
+  uCloudDensity.value = DEFAULT_SKY_PARAMS.cloudDensity;
+  uCloudElevation.value = DEFAULT_SKY_PARAMS.cloudElevation;
+  (uUp.value as THREE.Vector3).set(0, 1, 0);
+  // Hide Three.Sky's bright sun disc — sun-marker.ts already renders the
+  // visible disc in the main scene, and the haze pipeline samples the cube
+  // probe in the view direction, where a hot disc would punch through any
+  // foreground that the haze blends.
+  u.showSunDisc!.value = 0;
 
   // 512 gives a smooth direct sky display (visible banding at 64 / 128).
-  // ~3 MB at RGBA8; one-time cost on sun-change.
+  // ~3 MB at RGBA8; one-time cost on dirty event.
   const probeRT = new THREE.WebGLCubeRenderTarget(512, {
     type: THREE.UnsignedByteType,
     generateMipmaps: false,
@@ -299,7 +178,7 @@ export function createSky({ scene, renderer, requestRender }: CreateSkyOptions):
     magFilter: THREE.LinearFilter,
   });
   // Near/far chosen so the cube cameras' frustums comfortably enclose the
-  // unit-radius sky quad (which lives at NDC z=1 regardless of camera).
+  // scaled Sky box.
   const probeCam = new THREE.CubeCamera(0.1, 10, probeRT);
 
   // Cubemap shows through directly behind everything else in the main scene,
@@ -313,15 +192,17 @@ export function createSky({ scene, renderer, requestRender }: CreateSkyOptions):
 
   function regenProbe(): void {
     if (!probeDirty || baking) return;
+    const prevTone = renderer.toneMapping;
+    const prevExp = renderer.toneMappingExposure;
+    renderer.toneMapping = PROBE_TONE_MAPPING;
+    renderer.toneMappingExposure = PROBE_TONE_EXPOSURE;
     probeCam.update(renderer, probeScene);
+    renderer.toneMapping = prevTone;
+    renderer.toneMappingExposure = prevExp;
     probeDirty = false;
   }
   // Render once synchronously so the first frame already has a valid sky.
   regenProbe();
-
-  const uSunIntensity = skyMat.uniforms.uSunIntensity!;
-  const uMieCoefficient = skyMat.uniforms.uMieCoefficient!;
-  const uMieG = skyMat.uniforms.uMieG!;
 
   return {
     setSunDirection(az, alt) {
@@ -329,23 +210,41 @@ export function createSky({ scene, renderer, requestRender }: CreateSkyOptions):
       lastAz = az;
       lastAlt = alt;
       const d = sunVec(az, alt);
-      sunDirVec.set(d.x, d.y, d.z);
+      // Sky reads only the direction of sunPosition for scattering geometry
+      // (and a y-based fade via exp(-y/450000) that stays ≈ 1 at radius 1000).
+      (uSunPos.value as THREE.Vector3).set(d.x, d.y, d.z).multiplyScalar(1000);
       probeDirty = true;
       regenProbe();
       requestRender();
     },
     setParams(partial) {
       let changed = false;
-      if (partial.sunIntensity !== undefined && partial.sunIntensity !== uSunIntensity.value) {
-        uSunIntensity.value = partial.sunIntensity;
+      if (partial.turbidity !== undefined && partial.turbidity !== uTurbidity.value) {
+        uTurbidity.value = partial.turbidity;
         changed = true;
       }
-      if (partial.mieCoefficient !== undefined && partial.mieCoefficient !== uMieCoefficient.value) {
-        uMieCoefficient.value = partial.mieCoefficient;
+      if (partial.rayleigh !== undefined && partial.rayleigh !== uRayleigh.value) {
+        uRayleigh.value = partial.rayleigh;
         changed = true;
       }
-      if (partial.mieAnisotropy !== undefined && partial.mieAnisotropy !== uMieG.value) {
-        uMieG.value = partial.mieAnisotropy;
+      if (partial.mieCoefficient !== undefined && partial.mieCoefficient !== uMieCoef.value) {
+        uMieCoef.value = partial.mieCoefficient;
+        changed = true;
+      }
+      if (partial.mieDirectionalG !== undefined && partial.mieDirectionalG !== uMieG.value) {
+        uMieG.value = partial.mieDirectionalG;
+        changed = true;
+      }
+      if (partial.cloudCoverage !== undefined && partial.cloudCoverage !== uCloudCoverage.value) {
+        uCloudCoverage.value = partial.cloudCoverage;
+        changed = true;
+      }
+      if (partial.cloudDensity !== undefined && partial.cloudDensity !== uCloudDensity.value) {
+        uCloudDensity.value = partial.cloudDensity;
+        changed = true;
+      }
+      if (partial.cloudElevation !== undefined && partial.cloudElevation !== uCloudElevation.value) {
+        uCloudElevation.value = partial.cloudElevation;
         changed = true;
       }
       if (!changed) return;
