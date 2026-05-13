@@ -12,8 +12,9 @@ export const DEFAULT_FOV = 75;
 // ~15 % at 33 km, ~38 % at 95 km (Rainier from Seattle), ~63 % at 200 km, and
 // ~93 % at 525 km. Beer-Lambert leaves more contrast at distance than the
 // standard exp-squared falloff for the same near-haze level. Photos at
-// radius 100 m get effectively no fog (~5e-4). HAZE_COLOR matches the
-// panorama background grid so distant terrain dissolves into the "sky".
+// radius 100 m get effectively no fog (~5e-4). The fogColor is only the
+// fallback for materials that haven't opted into sky.ts's view-direction
+// haze via applySkyHaze; for those, this constant still drives haze tint.
 const HAZE_COLOR = 0xe6e6e6;
 export const HAZE_DENSITY_DEFAULT = 5e-6;
 // Slider's 100 % maps here. Wildfire-smoke level — at this density Beer-Lambert
@@ -50,49 +51,6 @@ export interface Viewer {
   start(): void;
 }
 
-function makeGridTexture(): HTMLCanvasElement {
-  const W = 2048, H = 1024;
-  const canvas = document.createElement('canvas');
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#e6e6e6';
-  ctx.fillRect(0, 0, W, H);
-  // Minor lines every 15°.
-  ctx.strokeStyle = '#d0d0d0';
-  ctx.lineWidth = 1;
-  for (let lon = 0; lon <= 360; lon += 15) {
-    const x = lon / 360 * W;
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-  }
-  for (let lat = -90; lat <= 90; lat += 15) {
-    const y = (90 - lat) / 180 * H;
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-  }
-  // Major lines every 90° + equator.
-  ctx.strokeStyle = '#a0a0a0';
-  ctx.lineWidth = 2;
-  for (let lon = 0; lon <= 360; lon += 90) {
-    const x = lon / 360 * W;
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-  }
-  ctx.beginPath(); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.stroke();
-
-  // Compass rose on the floor (cardinal labels at altitude −75°).
-  // Equirect u mapping (Three.js convention u = atan2(z, x)/(2π) + 0.5):
-  //   N (-Z) → u=0.25, E (+X) → u=0.5, S (+Z) → u=0.75, W (-X) → u=0/1.
-  ctx.fillStyle = '#888';
-  ctx.font = 'bold 90px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  const yLabel = (90 - (-75)) / 180 * H;
-  for (const [label, u] of [['N', 0.25], ['E', 0.5], ['S', 0.75], ['W', 0]] as const) {
-    ctx.fillText(label, u * W, yLabel);
-  }
-  ctx.fillText('W', W, yLabel); // wraparound copy so W at u=0 isn't half-clipped
-
-  return canvas;
-}
-
 export interface CreateViewerOptions {
   container: HTMLElement;
   // Fired after every accepted setFov; the host re-scales any view-size-
@@ -116,13 +74,9 @@ export function createViewer({ container, onFovChange }: CreateViewerOptions): V
   const camera = new THREE.PerspectiveCamera(DEFAULT_FOV, innerWidth / innerHeight, 0.1, 1000000);
   camera.rotation.order = 'YXZ';
 
-  const baseTex = new THREE.CanvasTexture(makeGridTexture());
-  baseTex.mapping = THREE.EquirectangularReflectionMapping;
-  baseTex.colorSpace = THREE.SRGBColorSpace;
-  baseTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-
+  // Background is owned by sky.ts (full-screen sky-shader quad in scene).
+  // Leaving scene.background unset lets the sky quad show through.
   const scene = new THREE.Scene();
-  scene.background = baseTex;
   const fog = new THREE.FogExp2(HAZE_COLOR, HAZE_DENSITY_DEFAULT);
   scene.fog = fog;
   const overlaysGroup = new THREE.Group();

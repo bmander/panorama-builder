@@ -14,6 +14,7 @@ import type { LatLng } from './types.js';
 import type { Viewer } from './viewer.js';
 import type { TerrainView } from './terrain/index.js';
 import type { SunMarker } from './sun-marker.js';
+import type { Sky } from './sky.js';
 
 export interface SettingsPanel {
   refreshSunDirection(): void;
@@ -23,6 +24,7 @@ export interface CreateSettingsPanelOptions {
   viewer: Viewer;
   terrain: TerrainView;
   sunMarker: SunMarker;
+  sky: Sky;
   getCameraLocation: () => LatLng | null;
   onShowAllCPsChange: (value: boolean) => void;
   onSurfaceOpacityChange: (opacity: number) => void;
@@ -34,7 +36,7 @@ function hazeSliderToDensity(v: number): number {
 }
 
 export function createSettingsPanel({
-  viewer, terrain, sunMarker,
+  viewer, terrain, sunMarker, sky,
   getCameraLocation, onShowAllCPsChange, onSurfaceOpacityChange,
 }: CreateSettingsPanelOptions): SettingsPanel {
   const terrainToggleEl = getElement<HTMLInputElement>('terrain-toggle');
@@ -64,6 +66,7 @@ export function createSettingsPanel({
     const { az, alt } = solarAzAlt(date, camLoc.lat, camLoc.lng);
     terrain.setSunDirection(az, alt);
     sunMarker.setDirection(az, alt);
+    sky.setSunDirection(az, alt);
   }
 
   function refreshRefractionAvailability(): void {

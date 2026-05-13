@@ -13,6 +13,7 @@ import type { PhotoBodyHit } from './input.js';
 import { createHud, attachDownload } from './ui.js';
 import { createTerrainView } from './terrain/index.js';
 import { createSunMarker } from './sun-marker.js';
+import { createSky } from './sky.js';
 import { createControlPointColumns, findHitColumn } from './map-poi-columns.js';
 import type { ControlPointColumn } from './map-poi-columns.js';
 import { createObservationRays } from './observation-rays.js';
@@ -99,6 +100,11 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     getAnisotropy: () => viewer.renderer.capabilities.getMaxAnisotropy(),
   });
 
+  const sky = createSky({
+    scene: viewer.scene,
+    renderer: viewer.renderer,
+    requestRender: () => { viewer.requestRender(); },
+  });
   const terrain = createTerrainView({
     scene: viewer.scene,
     requestRender: () => { viewer.requestRender(); },
@@ -171,6 +177,10 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       if (!visible) sundialLine.visible = false;
       photoPreviews.setBakeHidden(!visible);
       if (!visible) previewLine.visible = false;
+      // Suppress sky.regenProbe during the bake's CubeCamera render (it
+      // would compete for the renderer's render-target state). The sky
+      // quad in the main scene still renders into each cube face.
+      if (visible) sky.endBake(); else sky.beginBake();
     },
   });
   const hud = createHud(() => {
@@ -442,7 +452,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   createSessionPanel(getElement('session-host'));
 
   const settings = createSettingsPanel({
-    viewer, terrain, sunMarker,
+    viewer, terrain, sunMarker, sky,
     getCameraLocation: () => worldCamera.getPose().stationAnchor,
     onShowAllCPsChange: value => {
       showAllCPs = value;
