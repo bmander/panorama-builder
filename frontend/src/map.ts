@@ -246,7 +246,7 @@ export function createMapView({
     const half = STATION_ICON_PX / 2;
     return `<svg class="station-frustum" viewBox="${-half} ${-half} ${STATION_ICON_PX} ${STATION_ICON_PX}" width="${STATION_ICON_PX}" height="${STATION_ICON_PX}" xmlns="http://www.w3.org/2000/svg">`
       + `<g class="station-frustum-wedges">${wedges}</g>`
-      + `<circle class="station-frustum-apex" cx="0" cy="0" r="2"/>`
+      + `<circle class="station-frustum-apex" cx="0" cy="0" r="4"/>`
       + `</svg>`;
   }
   function stationDivIcon(cones: readonly Cone[]): L.DivIcon {
@@ -259,6 +259,68 @@ export function createMapView({
   }
   const NULL_RAY_STYLE: L.PolylineOptions = { color: NULL_CP_RAY_CSS, weight: 2, opacity: 0.85 };
   const stationMarkers = new Map<string, { marker: L.Marker; view: StationMarker }>();
+
+  // Move mode: marker follows the cursor; click commits, right-click reverts.
+  // Map dragging is suspended while active so panning doesn't fight tracking.
+  type MoveState =
+    | { kind: 'station'; id: string; marker: L.Marker; origin: L.LatLng }
+    | { kind: 'cp'; id: string; marker: L.Marker; origin: L.LatLng };
+  let moveState: MoveState | null = null;
+  function onMoveModeMouseMove(e: L.LeafletMouseEvent): void {
+    if (!moveState) return;
+    moveState.marker.setLatLng(e.latlng);
+  }
+  function onMoveModeClick(e: L.LeafletMouseEvent): void {
+    if (!moveState) return;
+    const ll: LatLng = { lat: e.latlng.lat, lng: e.latlng.lng };
+    const { kind, id } = moveState;
+    exitMoveMode();
+    if (kind === 'station') onStationMarkerMove?.(id, ll);
+    else onControlPointMove?.(id, ll);
+  }
+  function onMoveModeContextMenu(e: L.LeafletMouseEvent): void {
+    L.DomEvent.preventDefault(e.originalEvent);
+    if (!moveState) return;
+    moveState.marker.setLatLng(moveState.origin);
+    exitMoveMode();
+  }
+  function enterMoveMode(state: MoveState): void {
+    if (moveState) {
+      moveState.marker.setLatLng(moveState.origin);
+      exitMoveMode();
+    }
+    moveState = state;
+    map.getContainer().classList.add('move-mode-active');
+    map.dragging.disable();
+    map.on('mousemove', onMoveModeMouseMove);
+    map.on('click', onMoveModeClick);
+    map.on('contextmenu', onMoveModeContextMenu);
+  }
+  function exitMoveMode(): void {
+    if (!moveState) return;
+    moveState = null;
+    map.getContainer().classList.remove('move-mode-active');
+    map.dragging.enable();
+    map.off('mousemove', onMoveModeMouseMove);
+    map.off('click', onMoveModeClick);
+    map.off('contextmenu', onMoveModeContextMenu);
+  }
+  // In move mode we commit/cancel directly from the marker handler — Leaflet
+  // doesn't reliably propagate marker.click to map.click when the marker is
+  // right under the cursor (suppressed via _draggableMoved + stale Draggable
+  // state). The map-level handlers still catch clicks on empty map area.
+  function wireMarkerMoveAware(marker: L.Marker, onNormalClick: () => void): void {
+    marker.on('click', (e: L.LeafletMouseEvent) => {
+      if (moveState) { onMoveModeClick(e); return; }
+      L.DomEvent.stopPropagation(e);
+      onNormalClick();
+    });
+    marker.on('contextmenu', (e: L.LeafletMouseEvent) => {
+      L.DomEvent.preventDefault(e.originalEvent);
+      if (moveState) { onMoveModeContextMenu(e); return; }
+      L.DomEvent.stopPropagation(e);
+    });
+  }
   // Preview overlay drawn when a station marker is clicked.
   let stationPreview: StationPreview | null = null;
   const previewConeLayers: L.Polygon[] = [];
@@ -316,11 +378,17 @@ export function createMapView({
   function openIndexCpPopup(cp: IndexControlPoint): void {
     const label = cp.description || `cp ${cp.id.slice(0, 6)}`;
     const popupHtml = `<span class="name">${escapeHtml(label)}</span>`
-      + `<a class="go" href="${cpHref(cp.id)}">View details →</a>`;
-    L.popup(INDEX_CP_POPUP_OPTS)
+      + `<a class="go" href="${cpHref(cp.id)}">View details →</a>`
+      + goButtonHtml('Move', 'move');
+    const popup = L.popup(INDEX_CP_POPUP_OPTS)
       .setLatLng([cp.latlng.lat, cp.latlng.lng])
       .setContent(popupHtml)
       .openOn(map);
+    wireGoButton(popup, '.move', () => {
+      const dot = indexCpDots.get(cp.id);
+      if (!dot) return;
+      enterMoveMode({ kind: 'cp', id: cp.id, marker: dot, origin: dot.getLatLng() });
+    });
   }
 
   // Rebuild the entire index-CP layer from `indexControlPoints`. Use only
@@ -330,19 +398,8 @@ export function createMapView({
     for (const dot of indexCpDots.values()) map.removeLayer(dot);
     indexCpDots.clear();
     for (const cp of indexControlPoints) {
-      const dot = L.marker([cp.latlng.lat, cp.latlng.lng], { icon: CP_ICON, draggable: true });
-      dot.on('click', (e: L.LeafletMouseEvent) => {
-        L.DomEvent.stopPropagation(e);
-        openIndexCpPopup(cp);
-      });
-      dot.on('contextmenu', (e: L.LeafletMouseEvent) => {
-        L.DomEvent.preventDefault(e.originalEvent);
-        L.DomEvent.stopPropagation(e);
-      });
-      dot.on('dragend', () => {
-        const ll = dot.getLatLng();
-        onControlPointMove?.(cp.id, { lat: ll.lat, lng: ll.lng });
-      });
+      const dot = L.marker([cp.latlng.lat, cp.latlng.lng], { icon: CP_ICON });
+      wireMarkerMoveAware(dot, () => { openIndexCpPopup(cp); });
       dot.addTo(map);
       // Observed-state class can only be toggled after the icon element exists.
       dot.getElement()?.classList.toggle('observed', isCpObserved(cp.id));
@@ -441,21 +498,9 @@ export function createMapView({
           continue;
         }
         const m = L.marker([p.latlng.lat, p.latlng.lng], {
-          draggable: true,
           icon: stationDivIcon(p.cones),
         });
-        m.on('click', (e: L.LeafletMouseEvent) => {
-          L.DomEvent.stopPropagation(e);
-          openStationPopup(p);
-        });
-        m.on('contextmenu', (e: L.LeafletMouseEvent) => {
-          L.DomEvent.preventDefault(e.originalEvent);
-          L.DomEvent.stopPropagation(e);
-        });
-        m.on('dragend', () => {
-          const ll = m.getLatLng();
-          onStationMarkerMove?.(p.id, { lat: ll.lat, lng: ll.lng });
-        });
+        wireMarkerMoveAware(m, () => { openStationPopup(p); });
         m.addTo(map);
         stationMarkers.set(p.id, { marker: m, view: p });
       }
@@ -474,7 +519,8 @@ export function createMapView({
 
   function openStationPopup(p: StationMarker): void {
     const popupHtml = `<span class="name">${escapeHtml(p.label)}</span>`
-      + goButtonHtml('Go to station →');
+      + goButtonHtml('Go to station →')
+      + goButtonHtml('Move', 'move');
     // openOn auto-closes any prior popup; its 'remove' event clears the
     // previous station's preview before the new preview is kicked off below.
     const popup = L.popup(GO_POPUP_OPTS)
@@ -486,6 +532,13 @@ export function createMapView({
       onStationPreviewClose?.();
     });
     onStationMarkerPreview?.(p.id);
-    wireGoButton(popup, '.go', () => onStationMarkerOpen?.(p.id));
+    // The "Go to station →" button shares the .go base class with .move, so
+    // disambiguate using ':not(.move)' rather than just '.go'.
+    wireGoButton(popup, '.go:not(.move)', () => onStationMarkerOpen?.(p.id));
+    wireGoButton(popup, '.move', () => {
+      const cur = stationMarkers.get(p.id);
+      if (!cur) return;
+      enterMoveMode({ kind: 'station', id: p.id, marker: cur.marker, origin: cur.marker.getLatLng() });
+    });
   }
 }

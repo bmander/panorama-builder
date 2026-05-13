@@ -76,16 +76,33 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .station-popup .go:hover { background: #155bbd; }
 .poi-anchor-marker { color: #5080ff; filter: drop-shadow(0 0 2px rgba(0,0,0,0.85)); }
 .cp-dot { background: #ff5050; border: 1px solid rgba(0,0,0,0.6); border-radius: 50%;
-          box-sizing: border-box; cursor: grab; }
+          box-sizing: border-box; cursor: pointer; }
 .cp-dot.observed { background: #50d050; }
-.leaflet-dragging .cp-dot { cursor: grabbing; }
-.station-frustum-icon { background: transparent; border: none; cursor: grab; }
-.leaflet-dragging .station-frustum-icon { cursor: grabbing; }
+/* Hitbox limited to the apex circle: the wedge fan is decoration only, so
+   clicks on the wedges fall through to the map. The apex re-enables
+   pointer events for itself and bubbles its events up to the marker
+   container, where Leaflet dispatches them. Three classes are required
+   to out-specific Leaflet's own
+   `.leaflet-marker-icon.leaflet-interactive { pointer-events: auto }`
+   rule — equal specificity isn't enough because Vite injects Leaflet's
+   bundled CSS after our static `styles.css` link, so the later rule wins
+   on ties. Adding `.leaflet-interactive` (which Leaflet adds to every
+   interactive marker container) makes us strictly more specific. */
+.leaflet-marker-icon.leaflet-interactive.station-frustum-icon { background: transparent; border: none; pointer-events: none; }
+/* Move-mode: the marker follows the cursor until commit (click) or cancel
+   (right-click). Override per-marker cursors so the whole map reads as one
+   targeting surface, including over other markers the cursor passes. */
+.leaflet-container.move-mode-active,
+.leaflet-container.move-mode-active .leaflet-marker-icon { cursor: crosshair; }
 .station-frustum-wedges polygon {
   fill: #a050ff; fill-opacity: 0.45;
   stroke: rgba(0,0,0,0.6); stroke-width: 0.6; stroke-linejoin: round;
 }
-.station-frustum-apex { fill: #a050ff; stroke: rgba(0,0,0,0.85); stroke-width: 0.6; }
+.station-frustum-apex {
+  fill: #a050ff; stroke: rgba(0,0,0,0.85); stroke-width: 0.6;
+  pointer-events: auto; cursor: pointer;
+}
+.leaflet-container.move-mode-active .station-frustum-apex { cursor: crosshair; }
 #map.photo-drop-active { box-shadow: inset 0 0 0 4px #5080ff; }
 .poi-anchor-marker.selected { color: #ffff66; }
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.6);
