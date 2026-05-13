@@ -38,7 +38,7 @@ import {
 } from './types.js';
 import { latLngToCameraRelativeMeters, tangentMetersToLatLng, vecToAzAlt } from './geo.js';
 import { controlPointVertex, latLngAltVertex, vertexToLatLngAlt } from './camera-anchored.js';
-import { degToRad } from './mathx.js';
+import { degToRad, radToDeg } from './mathx.js';
 import type { CPConstraintView, CPSurfaceView, ControlPointView, LatLng } from './types.js';
 import { createSyncManager } from './sync.js';
 import { createSessionPanel } from './session-panel.js';
@@ -53,7 +53,7 @@ import { createUndoManager } from './undo.js';
 import { createStationNavigation, meanPhotoAzAlt } from './station-navigation.js';
 import { createStationFields } from './station-fields.js';
 import { attachSolveActions } from './solve-actions.js';
-import { createWorldCamera } from './world-camera.js';
+import { createWorldCamera, locEq } from './world-camera.js';
 
 export interface MountStationPageOptions {
   initialStationId: string;
@@ -65,6 +65,16 @@ const SHIFT_WHEEL_LOG_PER_PX = 0.005;
 const COLUMN_NDC_HIT_RADIUS = 0.01;
 const STATION_DOT_HIT_PX = 10;
 const FOCUS_FOV_DEG = 25;
+
+// `cam_la`/`cam_lo`/`cam_msl` are written only when the live camera has
+// detached from the station anchor (shift-wheel/fly), so typical URLs stay
+// short.
+const URL_AZ = 'az';
+const URL_ALT = 'alt';
+const URL_FOV = 'fov';
+const URL_CAM_LA = 'cam_la';
+const URL_CAM_LO = 'cam_lo';
+const URL_CAM_MSL = 'cam_msl';
 
 export async function mountStationPage(opts: MountStationPageOptions): Promise<void> {
   const { initialStationId, focusImageMeasurementId } = opts;
@@ -786,10 +796,61 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     contextMenu.open(sx + 20, sy, items, header);
   }
 
+  function writeCameraToURL(): void {
+    const url = new URL(location.href);
+    const sp = url.searchParams;
+    const { azimuth, altitude } = viewer.getAzAlt();
+    sp.set(URL_AZ, radToDeg(azimuth).toFixed(1));
+    sp.set(URL_ALT, radToDeg(altitude).toFixed(1));
+    sp.set(URL_FOV, viewer.camera.fov.toFixed(1));
+    const pose = worldCamera.getPose();
+    const anchored = locEq(pose.location, pose.stationAnchor)
+      && pose.altitudeMSL === pose.stationAltitudeMSL;
+    if (!anchored && pose.location) {
+      sp.set(URL_CAM_LA, pose.location.lat.toFixed(6));
+      sp.set(URL_CAM_LO, pose.location.lng.toFixed(6));
+      sp.set(URL_CAM_MSL, pose.altitudeMSL.toFixed(2));
+    } else {
+      sp.delete(URL_CAM_LA);
+      sp.delete(URL_CAM_LO);
+      sp.delete(URL_CAM_MSL);
+    }
+    if (url.href === location.href) return;
+    history.replaceState(null, '', url);
+  }
+
+  function parseUrlFloat(sp: URLSearchParams, key: string, validate?: (v: number) => boolean): number | null {
+    const v = parseFloat(sp.get(key) ?? '');
+    if (!Number.isFinite(v)) return null;
+    if (validate && !validate(v)) return null;
+    return v;
+  }
+
+  function applyCameraFromURL(): void {
+    const sp = new URLSearchParams(location.search);
+    const az = parseUrlFloat(sp, URL_AZ);
+    const alt = parseUrlFloat(sp, URL_ALT, v => Math.abs(v) <= 90);
+    if (az !== null && alt !== null) viewer.setAzAlt(degToRad(az), degToRad(alt));
+    const fov = parseUrlFloat(sp, URL_FOV, v => v > 0 && v < 180);
+    if (fov !== null) viewer.setFov(fov);
+    const camLat = parseUrlFloat(sp, URL_CAM_LA, v => Math.abs(v) <= 90);
+    const camLng = parseUrlFloat(sp, URL_CAM_LO, v => Math.abs(v) <= 180);
+    const camMsl = parseUrlFloat(sp, URL_CAM_MSL);
+    if (camLat !== null && camLng !== null && camMsl !== null) {
+      worldCamera.setLiveCamera({ location: { lat: camLat, lng: camLng }, altitudeMSL: camMsl });
+    }
+    viewer.requestRender();
+  }
+
   attachInput({
     viewer,
     overlays,
-    onChange: () => { viewer.requestRender(); hud.refresh(); photoHud.refresh(); },
+    onChange: () => {
+      viewer.requestRender();
+      hud.refresh();
+      photoHud.refresh();
+      writeCameraToURL();
+    },
     onPhotoDropped: (tex, blob, aspect, dir, revokeUrl) => {
       void handlers.onPhotoDropped(tex, blob, aspect, dir, revokeUrl);
     },
@@ -811,6 +872,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         altitudeMSL: pose.altitudeMSL + step * look.y,
       });
       pushTerrainFromPose();
+      writeCameraToURL();
     },
     findColumnAtNDC: ndc => {
       const pose = worldCamera.getPose();
@@ -1048,6 +1110,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     clearStationData();
     await hydrateFromAPI(newId, prefetched);
     if (newId !== stationId) return;  // another loadStation took over
+    applyCameraFromURL();
     sync.markLoaded();
   }
 
@@ -1058,7 +1121,9 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
 
   addEventListener('popstate', () => {
     const sta = parseStaFromURL();
-    if (sta) void applyStation(sta);
+    if (!sta) return;
+    if (sta !== stationId) void applyStation(sta);
+    else applyCameraFromURL();
   });
 
   async function hydrateFromAPI(id: string, prefetched?: ApiHydratedStation): Promise<void> {
@@ -1252,6 +1317,9 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   } else if (focusImageMeasurementId && !focusCameraOnImageMeasurement(focusImageMeasurementId)) {
     console.warn('focus image measurement not found:', focusImageMeasurementId);
   }
+  // Explicit camera params in the URL override defaults + focus so bookmarks
+  // and back/forward restore the exact viewpoint.
+  applyCameraFromURL();
 
   sync.markLoaded();
   hud.refresh();

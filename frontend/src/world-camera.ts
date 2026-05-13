@@ -32,7 +32,7 @@ export interface WorldCamera {
   subscribe(cb: () => void): () => void;
 }
 
-function locEq(a: LatLng | null, b: LatLng | null): boolean {
+export function locEq(a: LatLng | null, b: LatLng | null): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
   return a.lat === b.lat && a.lng === b.lng;
