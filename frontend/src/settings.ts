@@ -8,6 +8,7 @@
 
 import { HAZE_DENSITY_MAX } from './viewer.js';
 import { solarAzAlt } from './solar.js';
+import { setCurvatureEnabled, setRefractionEnabled } from './curvature.js';
 import { formatLocalDateTime, getElement } from './types.js';
 import type { LatLng } from './types.js';
 import type { Viewer } from './viewer.js';
@@ -81,12 +82,12 @@ export function createSettingsPanel({
   });
 
   curvatureToggleEl.addEventListener('change', () => {
-    terrain.setCurvatureEnabled(curvatureToggleEl.checked);
+    setCurvatureEnabled(curvatureToggleEl.checked);
     refreshRefractionAvailability();
   });
 
   refractionToggleEl.addEventListener('change', () => {
-    terrain.setRefractionEnabled(refractionToggleEl.checked);
+    setRefractionEnabled(refractionToggleEl.checked);
   });
 
   showAllCPsEl.addEventListener('change', () => {

@@ -16,14 +16,7 @@ import * as THREE from 'three';
 import type { LatLng } from '../types.js';
 import { latLngToCameraRelativeMeters } from '../geo.js';
 import { applyGroupTransform as applyAnchoredTransform } from '../camera-anchored.js';
-import {
-  getCurvatureEnabled,
-  getCurvatureFactor,
-  getRefractionEnabled,
-  setCurvatureEnabled,
-  setRefractionEnabled,
-  subscribeCurvatureChange,
-} from '../curvature.js';
+import { getCurvatureFactor, subscribeCurvatureChange } from '../curvature.js';
 import { buildTerrainSnapshot } from './builder.js';
 import { createTerrainSceneLayer } from './scene-layer.js';
 
@@ -33,15 +26,6 @@ export interface TerrainView {
   setLocation(camLoc: LatLng | null): void;
   setMode(mode: TerrainMode): void;
   getMode(): TerrainMode;
-  // Earth-curvature drop applied to each vertex (`d² / (2R)`). Off = flat
-  // tangent-plane; distant peaks sit too high in the model. On = correct.
-  setCurvatureEnabled(enabled: boolean): void;
-  getCurvatureEnabled(): boolean;
-  // Standard surveyor's atmospheric-refraction correction. Multiplies the
-  // curvature drop by (1 - k) where k = 0.14. Only meaningful when curvature
-  // is on; setting it without curvature is a no-op.
-  setRefractionEnabled(enabled: boolean): void;
-  getRefractionEnabled(): boolean;
   // Sun direction for the 'shaded' mode. Azimuth is radians from north
   // clockwise; altitude is radians above the horizon. Negative altitudes are
   // accepted (sun below horizon → terrain falls into ambient-only).
@@ -177,13 +161,6 @@ export function createTerrainView({ scene, requestRender }: CreateTerrainViewOpt
       }
     },
     getMode: () => mode,
-    // Curvature / refraction state lives in ../curvature.js so the CP
-    // renderers can read the same factor. subscribeCurvatureChange above
-    // rebuilds terrain when the effective factor moves.
-    setCurvatureEnabled,
-    getCurvatureEnabled,
-    setRefractionEnabled,
-    getRefractionEnabled,
     setSunDirection(az, alt) {
       if (sunAz === az && sunAlt === alt) return;
       sunAz = az;
