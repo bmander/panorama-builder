@@ -37,6 +37,12 @@ varying vec2 vUv;
 uniform mat4 uInverseProjection;
 uniform mat4 uInverseView;
 uniform vec3 uSunDirection;
+// Runtime-tunable knobs surfaced in the display-settings panel. The fixed
+// constants below (scale heights, step counts, atmosphere radius) stay put
+// because they affect integration accuracy / cost rather than look.
+uniform float uSunIntensity;
+uniform float uMieCoefficient;   // multiplied with BETA_M_BASE
+uniform float uMieG;             // Henyey-Greenstein anisotropy in [0, 0.99]
 
 const float PI = 3.14159265358979;
 const float EARTH_R = 6371000.0;
@@ -45,14 +51,11 @@ const float ATMO_R  = 6471000.0;            // 100 km thick shell
 // noon (blue dominates overhead, red survives to the horizon) without the
 // blue channel saturating to white through the tone-map.
 const vec3  BETA_R  = vec3(5.8e-6, 13.5e-6, 33.1e-6);
-// Mie reduced from the textbook 21e-6 — at 21e-6 the forward-scatter halo
-// near the sun dominates the rest of the cubemap; 8e-6 gives a soft halo
-// without washing out the rest of the sky.
-const float BETA_M  = 8e-6;
-const float MIE_G   = 0.76;                 // Henyey-Greenstein anisotropy
+// Base Mie value; the user-facing slider scales it by uMieCoefficient.
+// Default 1.0 reproduces the previous look (8e-6); textbook is ~2.6.
+const float BETA_M_BASE = 8e-6;
 const float SCALE_R = 8000.0;
 const float SCALE_M = 1200.0;
-const float SUN_INTENSITY = 22.0;
 const int   PRIMARY_STEPS = 16;
 const int   LIGHT_STEPS   = 8;
 
@@ -68,6 +71,7 @@ vec2 raySphere(vec3 ro, vec3 rd, float r) {
 }
 
 vec3 atmosphere(vec3 ro, vec3 rd, vec3 sun) {
+  float betaM = BETA_M_BASE * uMieCoefficient;
   vec2 tA = raySphere(ro, rd, ATMO_R);
   if (tA.y < 0.0) return vec3(0.0);
   float t0 = max(tA.x, 0.0);
@@ -105,7 +109,7 @@ vec3 atmosphere(vec3 ro, vec3 rd, vec3 sun) {
       odRs += exp(-hs / SCALE_R) * dts;
       odMs += exp(-hs / SCALE_M) * dts;
     }
-    vec3 tau = BETA_R * (odR + odRs) + BETA_M * 1.1 * (odM + odMs);
+    vec3 tau = BETA_R * (odR + odRs) + betaM * 1.1 * (odM + odMs);
     vec3 attn = exp(-tau);
     sumR += attn * dR;
     sumM += attn * dM;
@@ -113,11 +117,11 @@ vec3 atmosphere(vec3 ro, vec3 rd, vec3 sun) {
 
   float mu = dot(rd, sun);
   float pR = 3.0 / (16.0 * PI) * (1.0 + mu * mu);
-  float g2 = MIE_G * MIE_G;
+  float g2 = uMieG * uMieG;
   float pM = 3.0 / (8.0 * PI) * ((1.0 - g2) * (1.0 + mu * mu)) /
-             ((2.0 + g2) * pow(max(1.0 + g2 - 2.0 * MIE_G * mu, 0.0), 1.5));
+             ((2.0 + g2) * pow(max(1.0 + g2 - 2.0 * uMieG * mu, 0.0), 1.5));
 
-  return SUN_INTENSITY * (sumR * BETA_R * pR + sumM * BETA_M * pM);
+  return uSunIntensity * (sumR * BETA_R * pR + sumM * betaM * pM);
 }
 
 void main() {
@@ -213,8 +217,23 @@ export function applySkyHaze(material: THREE.Material): void {
   material.customProgramCacheKey = () => SKY_HAZE_PROGRAM_KEY;
 }
 
+// Runtime-tunable look parameters surfaced as sliders in the settings panel.
+// Defaults match the previously-hardcoded GLSL constants.
+export interface SkyParams {
+  sunIntensity: number;     // scales overall sky brightness; default 22
+  mieCoefficient: number;   // scalar on BETA_M_BASE; default 1.0
+  mieAnisotropy: number;    // Henyey-Greenstein g in [0, 0.99]; default 0.76
+}
+
+export const DEFAULT_SKY_PARAMS: SkyParams = {
+  sunIntensity: 22,
+  mieCoefficient: 1.0,
+  mieAnisotropy: 0.76,
+};
+
 export interface Sky {
   setSunDirection(az: number, alt: number): void;
+  setParams(partial: Partial<SkyParams>): void;
   beginBake(): void;
   endBake(): void;
 }
@@ -235,6 +254,9 @@ export function createSky({ scene, renderer, requestRender }: CreateSkyOptions):
       uInverseProjection: { value: new THREE.Matrix4() },
       uInverseView: { value: new THREE.Matrix4() },
       uSunDirection: { value: sunDirVec },
+      uSunIntensity: { value: DEFAULT_SKY_PARAMS.sunIntensity },
+      uMieCoefficient: { value: DEFAULT_SKY_PARAMS.mieCoefficient },
+      uMieG: { value: DEFAULT_SKY_PARAMS.mieAnisotropy },
     },
     depthWrite: false,
     depthTest: false,
@@ -297,6 +319,10 @@ export function createSky({ scene, renderer, requestRender }: CreateSkyOptions):
   // Render once synchronously so the first frame already has a valid sky.
   regenProbe();
 
+  const uSunIntensity = skyMat.uniforms.uSunIntensity!;
+  const uMieCoefficient = skyMat.uniforms.uMieCoefficient!;
+  const uMieG = skyMat.uniforms.uMieG!;
+
   return {
     setSunDirection(az, alt) {
       if (az === lastAz && alt === lastAlt) return;
@@ -304,6 +330,25 @@ export function createSky({ scene, renderer, requestRender }: CreateSkyOptions):
       lastAlt = alt;
       const d = sunVec(az, alt);
       sunDirVec.set(d.x, d.y, d.z);
+      probeDirty = true;
+      regenProbe();
+      requestRender();
+    },
+    setParams(partial) {
+      let changed = false;
+      if (partial.sunIntensity !== undefined && partial.sunIntensity !== uSunIntensity.value) {
+        uSunIntensity.value = partial.sunIntensity;
+        changed = true;
+      }
+      if (partial.mieCoefficient !== undefined && partial.mieCoefficient !== uMieCoefficient.value) {
+        uMieCoefficient.value = partial.mieCoefficient;
+        changed = true;
+      }
+      if (partial.mieAnisotropy !== undefined && partial.mieAnisotropy !== uMieG.value) {
+        uMieG.value = partial.mieAnisotropy;
+        changed = true;
+      }
+      if (!changed) return;
       probeDirty = true;
       regenProbe();
       requestRender();

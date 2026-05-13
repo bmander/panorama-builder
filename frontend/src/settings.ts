@@ -44,6 +44,9 @@ export function createSettingsPanel({
   const settingsBtnEl = getElement<HTMLButtonElement>('settings-btn');
   const settingsPanelEl = getElement('settings-panel');
   const hazeSliderEl = getElement<HTMLInputElement>('haze-slider');
+  const skySunIntensityEl = getElement<HTMLInputElement>('sky-sun-intensity');
+  const skyMieCoefEl = getElement<HTMLInputElement>('sky-mie-coef');
+  const skyMieGEl = getElement<HTMLInputElement>('sky-mie-g');
   const curvatureToggleEl = getElement<HTMLInputElement>('curvature-toggle');
   const refractionToggleEl = getElement<HTMLInputElement>('refraction-toggle');
   const showAllCPsEl = getElement<HTMLInputElement>('show-all-cps');
@@ -91,6 +94,24 @@ export function createSettingsPanel({
 
   hazeSliderEl.addEventListener('input', () => {
     viewer.setFogDensity(hazeSliderToDensity(parseFloat(hazeSliderEl.value)));
+  });
+
+  // Push the HTML defaults into the sky now so the rendered probe matches
+  // what the sliders read. Session-only — same policy as the rest of this
+  // panel (no localStorage).
+  sky.setParams({
+    sunIntensity: parseFloat(skySunIntensityEl.value),
+    mieCoefficient: parseFloat(skyMieCoefEl.value),
+    mieAnisotropy: parseFloat(skyMieGEl.value),
+  });
+  skySunIntensityEl.addEventListener('input', () => {
+    sky.setParams({ sunIntensity: parseFloat(skySunIntensityEl.value) });
+  });
+  skyMieCoefEl.addEventListener('input', () => {
+    sky.setParams({ mieCoefficient: parseFloat(skyMieCoefEl.value) });
+  });
+  skyMieGEl.addEventListener('input', () => {
+    sky.setParams({ mieAnisotropy: parseFloat(skyMieGEl.value) });
   });
 
   curvatureToggleEl.addEventListener('change', () => {
