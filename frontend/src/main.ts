@@ -38,9 +38,10 @@ if (location.pathname === '/world') {
     });
   }
 } else {
-  // Index mode hides the station-scoped chrome — the upper-right buttons
-  // only make sense once a station is loaded.
-  getElement('top-right').hidden = true;
+  // Map/menu buttons only make sense with a station loaded; the session
+  // widget shares the same row and stays visible.
+  getElement('view-on-map').hidden = true;
+  getElement('menu-btn').hidden = true;
   mountIndexPage({
     focusIndexControlPointId: focusParam(INDEX_CP_QUERY_PARAM),
     focusIndexStationId: focusParam(INDEX_STATION_QUERY_PARAM),

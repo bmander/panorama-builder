@@ -14,7 +14,6 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .top-right-fixed { position: fixed; top: 8px; right: 8px; display: flex; gap: 4px;
                    align-items: center; z-index: 1000; }
 .top-right-fixed[hidden] { display: none; }
-#index-top-right { z-index: 1000; }
 #menu-dropdown { position: fixed; top: 38px; right: 8px; z-index: 2400;
                  background: rgba(0,0,0,0.9); color: #fff; border: 1px solid #fff;
                  font: 12px monospace; min-width: 160px;
@@ -24,24 +23,14 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
              color: #fff; font: inherit; text-align: left; cursor: pointer; }
 .menu-item:hover { background: rgba(255,255,255,0.15); }
 .menu-item[hidden] { display: none; }
-.session-host { position: fixed; top: 48px; right: 8px; z-index: 1000; }
-.session-panel { position: relative; display: inline-block; }
-.session-badge { background: rgba(0,0,0,0.7); border: 1px solid #fff;
-                 padding: 4px 8px; color: #fff; font: 12px monospace;
-                 cursor: pointer; }
-.session-badge.has-conflicts { border-color: #f88; color: #f88; }
-.session-popover { position: absolute; top: calc(100% + 4px); right: 0;
-                   min-width: 260px; background: rgba(0,0,0,0.85);
-                   border: 1px solid #fff; padding: 8px 10px; color: #fff;
-                   font: 12px monospace; display: flex; flex-direction: column;
-                   gap: 6px; }
-.session-popover[hidden] { display: none; }
-.session-head { font-weight: 600; }
-.session-conflicts { color: #f88; word-break: break-all; }
-.session-actions { display: flex; gap: 4px; flex-wrap: wrap; }
-.session-empty { color: #aaa; font-style: italic; }
-.session-history-link { color: #5080ff; text-decoration: none; }
-.session-history-link:hover { text-decoration: underline; }
+.session-widget { display: inline-flex; gap: 6px; align-items: center;
+                  padding: 4px 8px; background: rgba(0,0,0,0.7);
+                  border: 1px solid rgba(255,255,255,0.4); color: #fff;
+                  font: 12px monospace; }
+.session-widget[hidden] { display: none; }
+.session-widget-counter { white-space: nowrap; }
+.session-widget .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.session-widget .btn:disabled:hover { background: rgba(0,0,0,0.5); }
 #settings-panel { position: fixed; top: 36px; right: 8px; padding: 8px 10px;
                   background: rgba(0,0,0,0.7); color: #fff; font: 12px monospace;
                   border: 1px solid #fff; min-width: 200px; z-index: 1000;

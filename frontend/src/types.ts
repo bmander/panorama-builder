@@ -297,6 +297,15 @@ export function fmtAlt(alt: number | null): string {
 // Display label for a CP — the description, or "(unnamed)" if blank.
 export const cpLabel = (description: string): string => description || '(unnamed)';
 
+// Truncate an opaque server id for compact display.
+const SHORT_ID_LEN = 6;
+export const shortId = (id: string): string =>
+  id.length > SHORT_ID_LEN ? id.slice(0, SHORT_ID_LEN) : id;
+
+// Format a session/commit conflict ref like "photo/abc123" for the user.
+export const fmtRef = (r: { entity_type: string; entity_id: string }): string =>
+  `${r.entity_type}/${shortId(r.entity_id)}`;
+
 // Display label for a station — its name, or a short-id stub if untitled.
 export const stationLabel = (id: string, name: string | null): string =>
   name ?? `(untitled ${id.slice(0, 6)})`;

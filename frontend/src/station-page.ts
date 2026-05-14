@@ -53,6 +53,7 @@ import { createUndoManager } from './undo.js';
 import { createStationNavigation, meanPhotoAzAlt } from './station-navigation.js';
 import { createStationFields } from './station-fields.js';
 import { attachSolveActions } from './solve-actions.js';
+import type { SolveActions } from './solve-actions.js';
 import { createWorldCamera, locEq } from './world-camera.js';
 
 export interface MountStationPageOptions {
@@ -459,7 +460,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
 
   const sync = createSyncManager({ overlays, getCurrentStationId });
 
-  createSessionPanel(getElement('session-host'));
+  // attachSolveActions runs much later in this function; the widget's Solve
+  // button isn't reachable until then, so the late binding is safe.
+  let solveActions: SolveActions | null = null;
+  createSessionPanel(getElement('session-host'), {
+    onSolve: () => { solveActions?.open(); },
+  });
 
   const settings = createSettingsPanel({
     viewer, terrain, sunMarker, sky,
@@ -1044,7 +1050,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     });
   }
 
-  attachSolveActions({
+  solveActions = attachSolveActions({
     getCurrentStationId,
     rehydrate: rehydrateAfterSolve,
     reportError: (label, err) => { sync.reportError(label, err); },

@@ -10,6 +10,7 @@
 import type { LatLng } from './types.js';
 import type { components } from './api-types.gen.js';
 import { sessionManager } from './session.js';
+import { sessionPending } from './session-pending.js';
 
 const API = '/api';
 
@@ -109,6 +110,12 @@ async function requestVoid(method: string, path: string): Promise<void> {
   }
 }
 
+// Tag a write that affects solver inputs so the session widget can count it.
+// Wraps a request promise; only bumps on success.
+function bump<T>(p: Promise<T>): Promise<T> {
+  return p.then(v => { sessionPending.bumpUser(); return v; });
+}
+
 // --- Stations ---
 
 export function createStation(latlng: LatLng, capturedAt: string, name?: string): Promise<ApiStation> {
@@ -129,7 +136,7 @@ export function getStation(id: string): Promise<ApiHydratedStation> {
 }
 
 export function updateStation(id: string, patch: StationUpdate): Promise<ApiStation> {
-  return request<ApiStation>('PUT', `/stations/${encodeURIComponent(id)}`, patch);
+  return bump(request<ApiStation>('PUT', `/stations/${encodeURIComponent(id)}`, patch));
 }
 
 export function deleteStation(id: string): Promise<void> {
@@ -147,7 +154,7 @@ export function createPhoto(stationId: string, init: PhotoPosePatch): Promise<Ap
 }
 
 export function updatePhoto(id: string, patch: PhotoUpdate): Promise<ApiPhoto> {
-  return request<ApiPhoto>('PUT', `/photos/${encodeURIComponent(id)}`, patch);
+  return bump(request<ApiPhoto>('PUT', `/photos/${encodeURIComponent(id)}`, patch));
 }
 
 export function deletePhoto(id: string): Promise<void> {
@@ -178,23 +185,23 @@ export function photoBlobUrl(id: string): string {
 export function createImageMeasurement(
   photoId: string, init: ImageMeasurementPatch,
 ): Promise<ApiImageMeasurement> {
-  return request<ApiImageMeasurement>('POST', `/photos/${encodeURIComponent(photoId)}/image-measurements`, init);
+  return bump(request<ApiImageMeasurement>('POST', `/photos/${encodeURIComponent(photoId)}/image-measurements`, init));
 }
 
 export function updateImageMeasurement(
   id: string, patch: ImageMeasurementUpdate,
 ): Promise<ApiImageMeasurement> {
-  return request<ApiImageMeasurement>('PUT', `/image-measurements/${encodeURIComponent(id)}`, patch);
+  return bump(request<ApiImageMeasurement>('PUT', `/image-measurements/${encodeURIComponent(id)}`, patch));
 }
 
 export function deleteImageMeasurement(id: string): Promise<void> {
-  return requestVoid('DELETE', `/image-measurements/${encodeURIComponent(id)}`);
+  return bump(requestVoid('DELETE', `/image-measurements/${encodeURIComponent(id)}`));
 }
 
 // --- Control points ---
 
 export function createControlPoint(body: ControlPointPatch): Promise<ApiControlPoint> {
-  return request<ApiControlPoint>('POST', '/control-points', body);
+  return bump(request<ApiControlPoint>('POST', '/control-points', body));
 }
 
 export function listControlPoints(): Promise<ApiControlPoint[]> {
@@ -222,11 +229,11 @@ export function listControlPointFits(): Promise<ApiControlPointFits> {
 }
 
 export function updateControlPoint(id: string, body: ControlPointPatch): Promise<ApiControlPoint> {
-  return request<ApiControlPoint>('PUT', `/control-points/${encodeURIComponent(id)}`, body);
+  return bump(request<ApiControlPoint>('PUT', `/control-points/${encodeURIComponent(id)}`, body));
 }
 
 export function deleteControlPoint(id: string): Promise<void> {
-  return requestVoid('DELETE', `/control-points/${encodeURIComponent(id)}`);
+  return bump(requestVoid('DELETE', `/control-points/${encodeURIComponent(id)}`));
 }
 
 // --- Control point constraints ---

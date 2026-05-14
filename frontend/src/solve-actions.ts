@@ -1,5 +1,4 @@
 import * as api from './api.js';
-import { getElement } from './types.js';
 import { createSolveModal } from './solve-modal.js';
 
 export interface SolveActionsDeps {
@@ -8,23 +7,27 @@ export interface SolveActionsDeps {
   reportError: (label: string, err: unknown) => void;
 }
 
-export function attachSolveActions(deps: SolveActionsDeps): void {
+export interface SolveActions {
+  open: () => void;
+}
+
+export function attachSolveActions(deps: SolveActionsDeps): SolveActions {
   const { getCurrentStationId, rehydrate, reportError } = deps;
 
   const solveModal = createSolveModal({
-    onComplete: (result, dryRun) => {
-      if (dryRun || result.diverged) return;
+    onComplete: () => {
       rehydrate().catch((err: unknown) => { reportError('reload after solve', err); });
     },
   });
 
-  const solveStationBtn = getElement<HTMLButtonElement>('solve-station-btn');
-  solveStationBtn.addEventListener('click', () => {
+  const open = (): void => {
     const stationId = getCurrentStationId();
     solveModal.open({
       title: 'Solve station',
       start: (cfg, onEvent, signal) =>
         api.solveStationStream(stationId, cfg, onEvent, signal),
     });
-  });
+  };
+
+  return { open };
 }

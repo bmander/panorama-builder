@@ -10,6 +10,7 @@
 
 import { getElement } from './types.js';
 import * as api from './api.js';
+import { sessionPending } from './session-pending.js';
 
 // Caller-supplied bridge to a specific streaming endpoint.
 export interface SolveRun {
@@ -26,7 +27,10 @@ export interface SolveModal {
 }
 
 export interface CreateSolveModalOptions {
-  onComplete: (result: api.SolveResult, dryRun: boolean) => void;
+  // Fires only on a successful solve that wrote back (i.e. not dry-run, not
+  // diverged, not cancelled). The session-pending counter is updated by the
+  // modal itself before this is called.
+  onComplete: (result: api.SolveResult) => void;
 }
 
 interface ChartState {
@@ -264,7 +268,10 @@ export function createSolveModal(
         return;
       }
       statusEl.textContent = summarize(result, dryRun, terminalKind);
-      onComplete(result, dryRun);
+      if (!dryRun && !result.diverged) {
+        sessionPending.recordSolve(result.changes.length);
+        onComplete(result);
+      }
     }, (err: unknown) => {
       if (activeAbort === abort) activeAbort = null;
       setRunning(false);

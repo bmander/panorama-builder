@@ -11,6 +11,7 @@
     <div id="map"></div>
   </div>
   <div id="top-right" class="top-right-fixed">
+    <div id="session-host" class="session-host"></div>
     <a id="view-on-map" class="btn" href="/">Map →</a>
     <button id="menu-btn" class="btn" aria-expanded="false" aria-haspopup="menu" aria-controls="menu-dropdown">☰</button>
   </div>
@@ -20,10 +21,6 @@
     <button id="sun-dial-btn" class="menu-item" role="menuitem">Sun dial</button>
     <button id="download" class="menu-item" role="menuitem">Download PNG</button>
   </div>
-  <div id="index-top-right" class="top-right-fixed" hidden>
-    <button id="index-solve-btn" class="btn">Solve</button>
-  </div>
-  <div id="session-host" class="session-host"></div>
   <div id="time-filter" hidden>
     <div class="time-filter-row">
       <label for="time-filter-date">Show CPs extant on</label>
@@ -225,9 +222,6 @@
   </div>
   <div id="context-menu" hidden></div>
   <div id="settings-panel" hidden>
-    <div class="settings-row">
-      <button type="button" id="solve-station-btn" class="btn">Solve station…</button>
-    </div>
     <label class="settings-check"><input type="checkbox" id="terrain-toggle" checked> Terrain</label>
     <label class="settings-inline">Sun <input type="datetime-local" id="sun-datetime" step="60"></label>
     <div class="settings-row">
@@ -277,6 +271,18 @@
   <div id="save-error" hidden>
     <span id="save-error-msg"></span>
     <button type="button" id="save-error-retry" class="btn">Retry</button>
+  </div>
+  <div id="session-conflict-modal" class="modal" hidden>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <span>Save blocked by conflicts</span>
+        <button type="button" id="session-conflict-close" class="btn">✕</button>
+      </div>
+      <div id="session-conflict-list" class="modal-field"></div>
+      <div class="modal-actions">
+        <button type="button" id="session-conflict-abandon" class="btn danger">Abandon session</button>
+      </div>
+    </div>
   </div>
   <script type="module" src="/src/main.ts"></script>
 </body>

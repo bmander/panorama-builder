@@ -4,15 +4,8 @@
 
 import * as api from './api.js';
 import { SessionConflictError } from './api.js';
-import type { ApiCommit, ApiEntityRef } from './api.js';
-import { getElement } from './types.js';
-
-const SHORT_ID_LEN = 6;
-const shortId = (id: string): string =>
-  id.length > SHORT_ID_LEN ? id.slice(0, SHORT_ID_LEN) : id;
-
-const fmtRef = (r: ApiEntityRef): string =>
-  `${r.entity_type}/${shortId(r.entity_id)}`;
+import type { ApiCommit } from './api.js';
+import { fmtRef, getElement, shortId } from './types.js';
 
 function fmtDate(iso: string): string {
   const d = new Date(iso);

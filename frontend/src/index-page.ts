@@ -335,18 +335,15 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     },
   });
   const solveModal = createSolveModal({
-    onComplete: (result, dryRun) => {
-      if (dryRun || result.diverged) return;
+    onComplete: () => {
       void showStationMarkers();
       void showIndexControlPoints();
     },
   });
-  getElement('index-top-right').hidden = false;
-  getElement<HTMLButtonElement>('index-solve-btn').addEventListener('click', () => {
+  const openJointSolve = (): void => {
     solveModal.open({ start: api.solveJointStream, title: 'Solve all (joint)' });
-  });
-
-  createSessionPanel(getElement('session-host'));
+  };
+  createSessionPanel(getElement('session-host'), { onSolve: openJointSolve });
   const stationsReady = showStationMarkers();
   const cpsReady = showIndexControlPoints();
   if (focusIndexControlPointId) {
