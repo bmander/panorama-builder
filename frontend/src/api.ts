@@ -354,17 +354,6 @@ export function solveJointStream(
   return solveStream('/solve/joint/stream', config, onEvent, signal);
 }
 
-export function solveStationStream(
-  stationId: string,
-  config: SolveConfig,
-  onEvent: (e: SolveProgressEvent) => void,
-  signal?: AbortSignal,
-): Promise<void> {
-  return solveStream(
-    `/solve/stations/${encodeURIComponent(stationId)}/stream`,
-    config, onEvent, signal);
-}
-
 // Signal an in-flight streaming solve to stop gracefully — the solver
 // returns the best iterate so far and the server writes it back. 404 if no
 // solve is currently running (caller should treat as no-op). Shared across

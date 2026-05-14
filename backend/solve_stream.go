@@ -60,16 +60,7 @@ func (s *Server) streamSolve(w http.ResponseWriter, r *http.Request, sess *Sessi
 	defer s.solveMu.Unlock()
 
 	ctx := r.Context()
-	var prob solver.Problem
-	var seededCPIDs []string
-	var exists bool
-	var err error
-	if cfg.Mode == solver.ModeJoint {
-		prob, seededCPIDs, err = s.loadJointProblemSession(ctx, sess)
-		exists = true
-	} else {
-		prob, seededCPIDs, exists, err = s.loadProblem(ctx, cfg)
-	}
+	prob, seededCPIDs, exists, err := s.loadProblem(ctx, cfg, sess)
 	if err != nil {
 		log.Printf("solver load: %v", err)
 		writeError(w, http.StatusInternalServerError, "load failed")

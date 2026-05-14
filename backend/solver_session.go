@@ -4,12 +4,131 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/bmander/panorama-builder/backend/solver"
 )
+
+// loadSingleStationProblemSession restricts the overlaid joint set to one
+// station and the photos / observations / CPs that anchor to it. ok=false
+// means the focus station isn't in the (overlaid) station set.
+func (s *Server) loadSingleStationProblemSession(ctx context.Context, sess *Session, stationID string) (solver.Problem, bool, error) {
+	overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)
+	if err != nil {
+		return solver.Problem{}, false, err
+	}
+	stations, err := s.loadAllSolverStationsOverlaid(ctx, overlay)
+	if err != nil {
+		return solver.Problem{}, false, err
+	}
+	i := slices.IndexFunc(stations, func(st solver.Station) bool { return st.ID == stationID })
+	if i < 0 {
+		return solver.Problem{}, false, nil
+	}
+	station := stations[i]
+	allPhotos, err := s.loadAllSolverPhotosOverlaid(ctx, overlay)
+	if err != nil {
+		return solver.Problem{}, false, err
+	}
+	photos := filterSlice(allPhotos, func(p solver.Photo) bool { return p.StationID == stationID })
+	allObs, err := s.loadAllSolverObservationsOverlaid(ctx, overlay)
+	if err != nil {
+		return solver.Problem{}, false, err
+	}
+	photoIDSet := idSet(photos, func(p solver.Photo) string { return p.ID })
+	var obs []solver.Observation
+	cpIDSet := map[string]struct{}{}
+	for _, o := range allObs {
+		if _, ok := photoIDSet[o.PhotoID]; !ok {
+			continue
+		}
+		obs = append(obs, o)
+		cpIDSet[o.ControlPointID] = struct{}{}
+	}
+	allCPs, _, err := s.loadAllSolverCPsOverlaid(ctx, overlay)
+	if err != nil {
+		return solver.Problem{}, false, err
+	}
+	cps := filterByIDSet(allCPs, func(cp solver.ControlPoint) string { return cp.ID }, cpIDSet)
+	cons, err := s.loadProblemCPConstraintsOverlaid(ctx, overlay, cps)
+	if err != nil {
+		return solver.Problem{}, false, err
+	}
+	return solver.Problem{
+		Stations: []solver.Station{station}, Photos: photos,
+		ControlPoints: cps, Observations: obs,
+		CPConstraints: cons,
+	}, true, nil
+}
+
+// loadSingleCPProblemSession restricts the overlaid joint set to one CP and
+// the photos / stations that observe it, seeding a NULL-location CP from
+// the mean of its contributing stations.
+func (s *Server) loadSingleCPProblemSession(ctx context.Context, sess *Session, cpID string) (solver.Problem, bool, error) {
+	overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)
+	if err != nil {
+		return solver.Problem{}, false, err
+	}
+	allCPs, _, err := s.loadAllSolverCPsOverlaid(ctx, overlay)
+	if err != nil {
+		return solver.Problem{}, false, err
+	}
+	i := slices.IndexFunc(allCPs, func(c solver.ControlPoint) bool { return c.ID == cpID })
+	if i < 0 {
+		return solver.Problem{}, false, nil
+	}
+	cp := allCPs[i]
+	allObs, err := s.loadAllSolverObservationsOverlaid(ctx, overlay)
+	if err != nil {
+		return solver.Problem{}, false, err
+	}
+	var obs []solver.Observation
+	photoIDSet := map[string]struct{}{}
+	for _, o := range allObs {
+		if o.ControlPointID != cpID {
+			continue
+		}
+		obs = append(obs, o)
+		photoIDSet[o.PhotoID] = struct{}{}
+	}
+	allPhotos, err := s.loadAllSolverPhotosOverlaid(ctx, overlay)
+	if err != nil {
+		return solver.Problem{}, false, err
+	}
+	var photos []solver.Photo
+	stationIDSet := map[string]struct{}{}
+	for _, p := range allPhotos {
+		if _, ok := photoIDSet[p.ID]; !ok {
+			continue
+		}
+		photos = append(photos, p)
+		stationIDSet[p.StationID] = struct{}{}
+	}
+	allStations, err := s.loadAllSolverStationsOverlaid(ctx, overlay)
+	if err != nil {
+		return solver.Problem{}, false, err
+	}
+	stations := filterByIDSet(allStations, func(st solver.Station) string { return st.ID }, stationIDSet)
+	if cp.EstLat == 0 && cp.EstLng == 0 {
+		if lat, lng, ok := meanStationLatLng(stations); ok {
+			cp.EstLat = lat
+			cp.EstLng = lng
+		}
+	}
+	cps := []solver.ControlPoint{cp}
+	cons, err := s.loadProblemCPConstraintsOverlaid(ctx, overlay, cps)
+	if err != nil {
+		return solver.Problem{}, false, err
+	}
+	return solver.Problem{
+		Stations: stations, Photos: photos,
+		ControlPoints: cps, Observations: obs,
+		CPConstraints: cons,
+	}, true, nil
+}
 
 func (s *Server) loadJointProblemSession(ctx context.Context, sess *Session) (solver.Problem, []string, error) {
 	overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)

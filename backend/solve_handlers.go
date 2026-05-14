@@ -90,18 +90,7 @@ func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg solver.Con
 	defer s.solveMu.Unlock()
 
 	ctx := r.Context()
-	var prob solver.Problem
-	var seededCPIDs []string
-	var exists bool
-	var err error
-	if cfg.Mode == solver.ModeJoint {
-		prob, seededCPIDs, err = s.loadJointProblemSession(ctx, sess)
-		exists = true
-	} else {
-		// Single-station / single-CP loaders aren't overlay-aware: they read
-		// inputs from main only. Writeback still journals the output.
-		prob, seededCPIDs, exists, err = s.loadProblem(ctx, cfg)
-	}
+	prob, seededCPIDs, exists, err := s.loadProblem(ctx, cfg, sess)
 	if err != nil {
 		log.Printf("solver load: %v", err)
 		writeError(w, http.StatusInternalServerError, "load failed")

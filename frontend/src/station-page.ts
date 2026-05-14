@@ -1051,7 +1051,6 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   }
 
   solveActions = attachSolveActions({
-    getCurrentStationId,
     rehydrate: rehydrateAfterSolve,
     reportError: (label, err) => { sync.reportError(label, err); },
   });

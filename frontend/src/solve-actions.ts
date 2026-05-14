@@ -2,7 +2,6 @@ import * as api from './api.js';
 import { createSolveModal } from './solve-modal.js';
 
 export interface SolveActionsDeps {
-  getCurrentStationId: () => string;
   rehydrate: () => Promise<void>;
   reportError: (label: string, err: unknown) => void;
 }
@@ -12,7 +11,7 @@ export interface SolveActions {
 }
 
 export function attachSolveActions(deps: SolveActionsDeps): SolveActions {
-  const { getCurrentStationId, rehydrate, reportError } = deps;
+  const { rehydrate, reportError } = deps;
 
   const solveModal = createSolveModal({
     onComplete: () => {
@@ -21,12 +20,7 @@ export function attachSolveActions(deps: SolveActionsDeps): SolveActions {
   });
 
   const open = (): void => {
-    const stationId = getCurrentStationId();
-    solveModal.open({
-      title: 'Solve station',
-      start: (cfg, onEvent, signal) =>
-        api.solveStationStream(stationId, cfg, onEvent, signal),
-    });
+    solveModal.open({ title: 'Solve all (joint)', start: api.solveJointStream });
   };
 
   return { open };
