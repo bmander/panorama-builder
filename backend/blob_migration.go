@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -15,16 +14,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// migrateLegacyBlobs converts photos.blob_path values from the old
-// "photos/<id>" form (id-keyed, mutable in place) to "blobs/<hash>"
-// (content-addressed, immutable). Runs once at startup; idempotent — once
-// every row is migrated the WHERE clause matches nothing and the function
-// returns immediately.
-//
-// Per row: hash the on-disk file, move it to blobs/<hash> (or remove it if
-// the destination already exists), then UPDATE blob_path. Rows whose
-// on-disk file is missing are logged and skipped — blob_path stays as-is so
-// a later manual recovery can find them.
+// migrateLegacyBlobs rewrites photos.blob_path from "photos/<id>" (id-keyed,
+// mutable) to "blobs/<hash>" (content-addressed, immutable). Idempotent —
+// once everything's migrated the WHERE clause matches nothing.
 func migrateLegacyBlobs(ctx context.Context, db *pgxpool.Pool, blobs *blobStore) error {
 	rows, err := db.Query(ctx,
 		`SELECT id, blob_path FROM photos WHERE blob_path LIKE 'photos/%'`)
@@ -56,6 +48,8 @@ func migrateLegacyBlobs(ctx context.Context, db *pgxpool.Pool, blobs *blobStore)
 			log.Printf("blob migration: skip photo %s (%s): %v", l.id, l.path, err)
 			continue
 		}
+		// Guarded UPDATE: a concurrent process that already rewrote the row
+		// would have produced the same hash, so a no-op match is fine.
 		if _, err := db.Exec(ctx,
 			`UPDATE photos SET blob_path=$2 WHERE id=$1 AND blob_path=$3`,
 			l.id, newPath, l.path); err != nil {
@@ -65,11 +59,6 @@ func migrateLegacyBlobs(ctx context.Context, db *pgxpool.Pool, blobs *blobStore)
 	return nil
 }
 
-// rewriteLegacyBlob hashes the file at STORAGE_DIR/<oldPath>, moves it to
-// STORAGE_DIR/blobs/<hash>, and returns the new relative path. If a blob
-// with the same hash already exists (e.g. two photo rows pointed at byte-
-// identical files), the legacy file is removed and the existing one is
-// reused.
 func rewriteLegacyBlob(b *blobStore, oldPath string) (string, error) {
 	if !strings.HasPrefix(oldPath, "photos/") {
 		return "", fmt.Errorf("unexpected legacy path %q", oldPath)
@@ -88,18 +77,5 @@ func rewriteLegacyBlob(b *blobStore, oldPath string) (string, error) {
 	if closeErr != nil {
 		return "", closeErr
 	}
-	sum := hex.EncodeToString(hasher.Sum(nil))
-	rel := filepath.Join("blobs", sum)
-	dest := filepath.Join(b.root, rel)
-	switch _, err := os.Stat(dest); {
-	case errors.Is(err, os.ErrNotExist):
-		if err := os.Rename(src, dest); err != nil {
-			return "", err
-		}
-	case err == nil:
-		_ = os.Remove(src)
-	default:
-		return "", err
-	}
-	return rel, nil
+	return b.placeAtHash(src, hex.EncodeToString(hasher.Sum(nil)))
 }

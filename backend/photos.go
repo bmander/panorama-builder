@@ -1,9 +1,6 @@
 package main
 
 import (
-	"context"
-	"errors"
-	"io"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
@@ -111,14 +108,9 @@ func (s *Server) putPhotoBlob(w http.ResponseWriter, r *http.Request) {
 	s.putPhotoBlobInSession(w, r, sess)
 }
 
-// getPhotoBlob resolves the photo's stored blob_path (overlay-aware when
-// X-Session-Id is present) and streams the bytes. Returns 404 when the row
-// doesn't exist in the requested view, when blob_path is null, or when the
-// referenced file is missing.
-//
-// Content-addressed blobs aren't derivable from photo id alone — callers
-// that have the hash should prefer GET /api/blobs/{hash}, which serves the
-// bytes directly with immutable cache headers.
+// getPhotoBlob resolves the row's blob_path (overlay-aware via X-Session-Id)
+// and streams. Callers that already have the hash should hit /api/blobs/{hash}
+// — content-addressed, immutable, no session lookup.
 func (s *Server) getPhotoBlob(w http.ResponseWriter, r *http.Request) {
 	id := requireID(w, r, "id")
 	if id == "" {
@@ -129,7 +121,15 @@ func (s *Server) getPhotoBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	p, present, err := s.resolvePhotoForBlob(ctx, sess, id)
+	overlay := sessionOverlay{}
+	if sess != nil {
+		var err error
+		if overlay, err = loadSessionOverlay(ctx, s.db, sess.ID); err != nil {
+			writeErrorFromDB(w, err)
+			return
+		}
+	}
+	p, present, err := currentPhoto(ctx, s.db, overlay, id)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -147,37 +147,18 @@ func (s *Server) getPhotoBlob(w http.ResponseWriter, r *http.Request) {
 	if p.MimeType != nil {
 		w.Header().Set("Content-Type", *p.MimeType)
 	}
-	if _, err := io.Copy(w, f); err != nil {
+	// Row may repoint to new bytes on next re-upload+merge; never let
+	// browsers cache the id-keyed URL.
+	w.Header().Set("Cache-Control", "no-cache")
+	info, err := f.Stat()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "stat")
 		return
 	}
+	http.ServeContent(w, r, "", info.ModTime(), f)
 }
 
-// resolvePhotoForBlob loads a photo via the session overlay when sess is
-// non-nil, otherwise direct from main. Returns (zero, false, nil) when the
-// row doesn't exist in the requested view.
-func (s *Server) resolvePhotoForBlob(ctx context.Context, sess *Session, id string) (Photo, bool, error) {
-	if sess != nil {
-		overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)
-		if err != nil {
-			return Photo{}, false, err
-		}
-		return currentPhoto(ctx, s.db, overlay, id)
-	}
-	p, err := scanPhoto(s.db.QueryRow(ctx,
-		`SELECT `+photoCols+` FROM photos WHERE id = $1`, id))
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Photo{}, false, nil
-		}
-		return Photo{}, false, err
-	}
-	return p, true, nil
-}
-
-// getBlob serves a content-addressed blob directly by its hash. The hash
-// alone identifies immutable bytes, so the response carries far-future
-// cache headers. mime_type isn't recorded per-blob, so Content-Type is
-// sniffed from the first 512 bytes.
+// getBlob serves bytes content-addressed by sha256. Immutable forever.
 func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
 	hash := r.PathValue("hash")
 	f, err := s.blobs.openByHash(hash)
@@ -186,15 +167,13 @@ func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	var head [512]byte
-	n, _ := io.ReadFull(f, head[:])
-	w.Header().Set("Content-Type", http.DetectContentType(head[:n]))
+	info, err := f.Stat()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "stat")
+		return
+	}
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		writeError(w, http.StatusInternalServerError, "seek")
-		return
-	}
-	if _, err := io.Copy(w, f); err != nil {
-		return
-	}
+	// ServeContent will sniff Content-Type from the first 512 bytes when
+	// the header isn't already set, and gives us range support + 304s.
+	http.ServeContent(w, r, "", info.ModTime(), f)
 }
