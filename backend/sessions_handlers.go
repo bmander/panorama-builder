@@ -233,8 +233,14 @@ type netOp struct {
 	Seq        int64
 }
 
-// orderOpsForApply sorts journal ops by entity rank (parents before children
-// so FK references resolve) and seq within rank.
+// orderOpsForApply orders journal ops so FK invariants hold at apply time:
+//   - inserts first, parents before children (entityRank ascending)
+//   - updates next (FK shape can't change in an update)
+//   - deletes last, children before parents (entityRank descending)
+//
+// FKs are RESTRICT (migration 0024), so a delete that arrives before its
+// dependents would fail loudly — the descending order on the delete phase
+// keeps merge transactions clean.
 func orderOpsForApply(ops []journalOp) []netOp {
 	out := make([]netOp, len(ops))
 	for i, op := range ops {
@@ -248,15 +254,23 @@ func orderOpsForApply(ops []journalOp) []netOp {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		ri := entityRank[out[i].EntityType]
-		rj := entityRank[out[j].EntityType]
+		pi, pj := opPhase[out[i].Op], opPhase[out[j].Op]
+		if pi != pj {
+			return pi < pj
+		}
+		ri, rj := entityRank[out[i].EntityType], entityRank[out[j].EntityType]
 		if ri != rj {
+			if out[i].Op == "delete" {
+				return ri > rj
+			}
 			return ri < rj
 		}
 		return out[i].Seq < out[j].Seq
 	})
 	return out
 }
+
+var opPhase = map[string]int{"insert": 0, "update": 1, "delete": 2}
 
 // mergeSession applies all ops in the session as a single commit. Refuses
 // on conflict.

@@ -735,11 +735,83 @@ func (s *Server) deleteControlPointInSession(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	if err := s.recordOpDirect(ctx, sess.ID, entityControlPoint, id, "delete", jsonMust(cur), nil); err != nil {
+	// FKs are RESTRICT (migration 0024) — the session must journal an
+	// explicit delete for every dependent so revert can restore them.
+	ims, err := s.imageMeasurementsForCP(ctx, overlay, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	constraints, err := s.collectCPConstraintsForCP(ctx, overlay, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	surfaces, err := s.collectCPSurfacesForCP(ctx, overlay, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	for _, im := range ims {
+		if err := recordOp(ctx, tx, sess.ID, entityImageMeasurement, im.ID, "delete", jsonMust(im), nil); err != nil {
+			writeErrorFromDB(w, err)
+			return
+		}
+	}
+	for _, c := range constraints {
+		if err := recordOp(ctx, tx, sess.ID, entityCPConstraint, c.ID, "delete", jsonMust(c), nil); err != nil {
+			writeErrorFromDB(w, err)
+			return
+		}
+	}
+	for _, sf := range surfaces {
+		if err := recordOp(ctx, tx, sess.ID, entityCPSurface, sf.ID, "delete", jsonMust(sf), nil); err != nil {
+			writeErrorFromDB(w, err)
+			return
+		}
+	}
+	if err := recordOp(ctx, tx, sess.ID, entityControlPoint, id, "delete", jsonMust(cur), nil); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) collectCPConstraintsForCP(ctx context.Context, overlay sessionOverlay, cpID string) ([]CPConstraint, error) {
+	base, err := s.cpConstraintsByCP(ctx, cpID)
+	if err != nil {
+		return nil, err
+	}
+	return mergeOverlay(base, overlay[entityCPConstraint],
+		func(c CPConstraint) string { return c.ID },
+		decodeJSON[CPConstraint],
+		func(c CPConstraint) bool { return c.CpAId == cpID || c.CpBId == cpID })
+}
+
+func (s *Server) collectCPSurfacesForCP(ctx context.Context, overlay sessionOverlay, cpID string) ([]CPSurface, error) {
+	base, err := s.cpSurfacesByCP(ctx, cpID)
+	if err != nil {
+		return nil, err
+	}
+	return mergeOverlay(base, overlay[entityCPSurface],
+		func(sf CPSurface) string { return sf.ID },
+		decodeJSON[CPSurface],
+		func(sf CPSurface) bool {
+			if sf.Cp1ID == cpID || sf.Cp2ID == cpID || sf.Cp3ID == cpID {
+				return true
+			}
+			return sf.Cp4ID != nil && *sf.Cp4ID == cpID
+		})
 }
 
 func (s *Server) getControlPointInSession(w http.ResponseWriter, r *http.Request, sess *Session) {

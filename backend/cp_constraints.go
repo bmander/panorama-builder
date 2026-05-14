@@ -1,10 +1,33 @@
 package main
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
 )
+
+// cpConstraintsByCP returns the constraints in main that reference cpID
+// from either side of the pair. Used by delete-CP cascade walking.
+func (s *Server) cpConstraintsByCP(ctx context.Context, cpID string) ([]CPConstraint, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT `+cpConstraintCols+` FROM cp_constraints
+		 WHERE cp_a_id=$1 OR cp_b_id=$1
+		 ORDER BY created_at`, cpID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CPConstraint{}
+	for rows.Next() {
+		c, err := scanCPConstraint(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
 
 // Writes (POST/PUT/DELETE) require an open session. List remains
 // session-agnostic for now; the index-page CP-constraint reader doesn't yet
