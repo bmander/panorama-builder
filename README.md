@@ -28,6 +28,15 @@ make run                                     # API on :8080
 
 `backend/README.md` lists env vars, endpoints, and a curl smoke test.
 
+## Trust model
+
+Panorama-builder follows a Wikipedia-style **radical trust** model: anonymous users can contribute, and there are no accounts. Two principles keep this safe:
+
+1. **Intentional.** No edit reaches `main` without an explicit sign-off. Writes accumulate in a server-issued *session* (append-only journal of ops), and only a `POST /api/sessions/{id}/merge` carrying a non-empty `sign_off` promotes them into a commit. The same rule should govern any path that mutates shared state (e.g. `revert`).
+2. **Non-destructive.** Every contribution is rollback-able. The commit log is append-only; merges and reverts are themselves commits; the session journal preserves before/after snapshots so a revert can replay the inverse. Disk/blob state must follow the same rule — bytes that back a row must not be overwritten or lost outside of a journaled, revertible step.
+
+If you're adding a write path, schema-level cascade, or any operation that touches stored bytes, check it against both principles before merging.
+
 ## Use
 
 - **Map tab** (default until a camera location is set) — click *Set location*, then click on the map. Drag the camera marker to refine. *+ POI* drops a free-floating map landmark (blue crosshair on the map; blue column in 360°).

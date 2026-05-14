@@ -9,6 +9,21 @@ Monorepo with two top-level dirs:
 - **`frontend/`** — TypeScript frontend. Source under `frontend/src/`; **Vite** bundles to `frontend/dist/` (gitignored). Six HTML entry points at `frontend/*.html` (index, cp, cp-index, history, photos-index, stations-index), each loading its TS entry via `<script type="module" src="/src/<name>.ts">`. Three.js + Leaflet are npm `dependencies` (no importmap). Static CSS lives in `frontend/public/` and is copied to `dist/` as-is. **Vite for build + dev server with HMR; no test suite, by design.**
 - **`backend/`** — Go HTTP API backed by Postgres + PostGIS. Also serves the frontend static files (`STATIC_DIR=../frontend/dist` by default; SPA fallback for `/station/<id>` and `/cp/<id>` routes). Stores stations (camera setup points), photos with embedded pose, map measurements, image measurements (which optionally reference a control point to encode a "match"). Single binary, no framework. Runs locally via `docker compose` for the DB.
 
+## Trust model (load-bearing)
+
+Panorama-builder is a **radically trusting**, account-less app — anyone reaching the API can contribute. Two invariants keep that safe; preserve both when adding write paths or schema changes:
+
+1. **Intentional.** No mutation reaches `main` without an explicit, user-supplied sign-off. Today this is enforced by funneling every write through `s.requireSession` (`backend/session.go`) — writes journal ops into `session_ops` rather than touching main tables — and by `mergeSession` rejecting an empty `sign_off`. The same gate should apply to anything that alters shared state, including reverts.
+2. **Non-destructive.** Every change must be rollback-able. The commit log is append-only; `session_ops.before_json/after_json` carry full row snapshots so `revertCommit` can apply the inverse. Disk-backed state (photo blobs) must obey the same rule — don't overwrite or delete bytes outside a journaled, revertible step.
+
+### Rules for new code
+
+- **New write endpoint?** Call `s.requireSession(w, r)` first; mutate via `recordOp` / `recordOpDirect`, never directly against main. The solver writeback in `solver_writeback.go` is the canonical example.
+- **New entity type?** Add it to `entityRank` in `session.go`, to the `session_ops.entity_type` CHECK constraint (see migration `0022_session_ops_cp_surface.sql`), and to `insertEntityFromJSON` / `updateEntityFromJSON` / `deleteEntityByID` in `session_apply.go`.
+- **`ON DELETE CASCADE` in a migration?** The cascade must be explicitly walked + journaled in the corresponding `delete*InSession` handler (see `deleteStationInSession` for the pattern). A cascade that fires only at merge time will silently bypass the journal and break revert.
+- **Touching disk bytes (blobs)?** Don't overwrite by id. Blob bytes that back a row must survive a revert of the row's deletion — content-addressing or per-session staging is the right shape; direct `id`-keyed `os.Rename` is not.
+- **New "destructive" operation (revert, bulk delete, etc.)?** It needs the same sign-off shape as merge — non-empty `sign_off` recorded on the resulting commit row (`commits.sign_off` exists for this).
+
 ## Frontend architecture
 
 Factory functions, not classes. Each module exports a `createX({...}): X` factory plus an `interface X` for the return type. Modules under `frontend/src/`:
