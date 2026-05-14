@@ -52,12 +52,13 @@ export function createSessionPanel(
 
   function render(): void {
     const sessionActive = sessionManager.current() !== null;
-    if (!sessionActive) {
+    const { userPending, solverChanges } = sessionPending.get();
+    const hasWork = userPending > 0 || solverChanges !== null;
+    if (!sessionActive || !hasWork) {
       root.hidden = true;
       return;
     }
     root.hidden = false;
-    const { userPending, solverChanges } = sessionPending.get();
     counter.textContent = solverChanges === null
       ? `${userPending.toString()} pending`
       : `${userPending.toString()} pending · ${solverChanges.toString()} solver`;
