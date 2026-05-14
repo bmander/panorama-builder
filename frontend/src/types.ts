@@ -163,6 +163,11 @@ export interface OverlayUserData {
   id: string;
   sizeRad: number;
   aspect: number;
+  // Canonical pose angles; cached here to avoid float drift on the
+  // o.position → atan2/asin round-trip, which otherwise made every solve
+  // look like a 1-photo edit and produced a phantom PUT on rehydrate.
+  photoAz: number;
+  photoTilt: number;
   // In-plane roll around the overlay's center axis (radians, CCW positive).
   // 0 means the photo's local +Y is in the world's vertical plane through the
   // overlay center.

@@ -124,10 +124,6 @@ export function placeAt(
   if (roll !== 0) o.rotateZ(roll);
 }
 
-function posToAzAlt(o: THREE.Object3D): { az: number; alt: number } {
-  return vecToAzAlt(o.position.x, o.position.y, o.position.z);
-}
-
 const azScratch = new THREE.Vector3();
 export function azFromLocal(o: THREE.Object3D, lx: number, ly: number, lz: number): number {
   o.updateMatrixWorld();
@@ -299,6 +295,8 @@ export function createPhotoStore(
     data.id = id ?? crypto.randomUUID();
     data.sizeRad = DEFAULT_SIZE_RAD;
     data.aspect = aspect;
+    data.photoAz = 0;
+    data.photoTilt = 0;
     data.photoRoll = 0;
     data.lockPhotoAz = false;
     data.lockPhotoTilt = false;
@@ -412,9 +410,17 @@ export function createPhotoStore(
     if (mat.map && mat.map !== placeholderTex) mat.map.dispose();
   }
 
+  function placeFromDir(o: THREE.Group, dir: THREE.Vector3, roll = 0): void {
+    placeAt(o, dir, roll);
+    const { az, alt } = vecToAzAlt(dir.x, dir.y, dir.z);
+    const data = overlayData(o);
+    data.photoAz = az;
+    data.photoTilt = alt;
+  }
+
   function placeNewOverlay(tex: THREE.Texture, aspect: number, dir: THREE.Vector3, opts: AddPhotoOptions): THREE.Group {
     const o = makeOverlay(tex, aspect, opts.id);
-    placeAt(o, dir);
+    placeFromDir(o, dir);
     overlaysGroup.add(o);
     store.setSelected(o);
     notify();
@@ -476,7 +482,7 @@ export function createPhotoStore(
     },
     moveSelectedTo(point) {
       if (!selected) return;
-      placeAt(selected, point, overlayData(selected).photoRoll);
+      placeFromDir(selected, point, overlayData(selected).photoRoll);
       notify();
     },
     resizeSelectedTo(sizeRad) {
@@ -543,11 +549,10 @@ export function createPhotoStore(
       d.lockDistK2 = locks.lockDistK2;
     },
     extractPose(o, camLoc) {
-      const { az, alt } = posToAzAlt(o);
       const data = overlayData(o);
       return {
-        photoAz: az,
-        photoTilt: alt,
+        photoAz: data.photoAz,
+        photoTilt: data.photoTilt,
         photoRoll: data.photoRoll,
         sizeRad: data.sizeRad,
         aspect: data.aspect,
@@ -558,11 +563,14 @@ export function createPhotoStore(
       };
     },
     applyPose(o, pose) {
-      overlayData(o).photoRoll = pose.photoRoll;
+      const data = overlayData(o);
+      data.photoAz = pose.photoAz;
+      data.photoTilt = pose.photoTilt;
+      data.photoRoll = pose.photoRoll;
       placeAt(o, dirFromAzAlt(pose.photoAz, pose.photoTilt), pose.photoRoll);
-      overlayData(o).sizeRad = clamp(pose.sizeRad, SIZE_MIN, SIZE_MAX);
-      overlayData(o).distK1 = pose.k1;
-      overlayData(o).distK2 = pose.k2;
+      data.sizeRad = clamp(pose.sizeRad, SIZE_MIN, SIZE_MAX);
+      data.distK1 = pose.k1;
+      data.distK2 = pose.k2;
       applySize(o); // also re-syncs distortion uniforms (uW + uK1/uK2)
       notify();
     },
