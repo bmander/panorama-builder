@@ -63,7 +63,9 @@ export function createSettingsPanel({
     onSurfaceOpacityChange(parseFloat(surfaceOpacityEl.value) / 100);
   });
 
-  sunDateTimeEl.value = formatLocalDateTime(new Date());
+  // Default to May 20 at noon (this year) — bright, mid-spring sun gives a
+  // legible scene regardless of when the page is loaded.
+  sunDateTimeEl.value = formatLocalDateTime(new Date(new Date().getFullYear(), 4, 20, 12, 0));
 
   function refreshSunDirection(): void {
     const camLoc = getCameraLocation();
