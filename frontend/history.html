@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Commit history</title>
   <link rel="stylesheet" href="/cp.css">
+  <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <main>
@@ -12,6 +13,27 @@
     <h1>Commit history</h1>
     <ul id="list" class="cp-list"></ul>
   </main>
+  <div id="revert-modal" class="modal" hidden>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <span id="revert-modal-title">Revert commit</span>
+        <button type="button" id="revert-close" class="btn">✕</button>
+      </div>
+      <div class="modal-field">
+        <label for="revert-signoff">Sign-off</label>
+        <input type="text" id="revert-signoff" required>
+      </div>
+      <div class="modal-field">
+        <label for="revert-description">Description (optional)</label>
+        <textarea id="revert-description" rows="3"></textarea>
+      </div>
+      <div id="revert-error" class="modal-error" hidden></div>
+      <div class="modal-actions">
+        <button type="button" id="revert-cancel" class="btn">Cancel</button>
+        <button type="button" id="revert-confirm" class="btn" disabled>Revert</button>
+      </div>
+    </div>
+  </div>
   <script type="module" src="/src/history-page.ts"></script>
 </body>
 </html>

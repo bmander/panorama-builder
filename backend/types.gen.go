@@ -284,11 +284,6 @@ type Commit struct {
 // CommitKind defines model for Commit.Kind.
 type CommitKind string
 
-// CommitMessage defines model for CommitMessage.
-type CommitMessage struct {
-	Message *string `json:"message,omitempty"`
-}
-
 // CommitRef defines model for CommitRef.
 type CommitRef struct {
 	// CommitID 13-character base32 server-assigned id
@@ -649,6 +644,12 @@ type PhotoUpdate struct {
 	SizeRad       *float64 `json:"size_rad,omitempty"`
 }
 
+// RevertRequest defines model for RevertRequest.
+type RevertRequest struct {
+	Message *string `json:"message,omitempty"`
+	SignOff string  `json:"sign_off"`
+}
+
 // SessionOp defines model for SessionOp.
 type SessionOp struct {
 	// After Row state after the op (NULL for deletes).
@@ -821,7 +822,7 @@ type ListStationsParams struct {
 }
 
 // RevertCommitJSONRequestBody defines body for RevertCommit for application/json ContentType.
-type RevertCommitJSONRequestBody = CommitMessage
+type RevertCommitJSONRequestBody = RevertRequest
 
 // CreateCPConstraintJSONRequestBody defines body for CreateCPConstraint for application/json ContentType.
 type CreateCPConstraintJSONRequestBody = CPConstraintCreate

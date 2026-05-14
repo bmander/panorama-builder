@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -66,6 +67,17 @@ func requireID(w http.ResponseWriter, r *http.Request, name string) string {
 		return ""
 	}
 	return id
+}
+
+// requireSignOff trims the supplied value and rejects an empty result with
+// 400 sign_off required. Used by every handler that creates a commit row.
+func requireSignOff(w http.ResponseWriter, raw string) (string, bool) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		writeError(w, http.StatusBadRequest, "sign_off required")
+		return "", false
+	}
+	return s, true
 }
 
 func inRange(v, lo, hi float64) bool { return v >= lo && v <= hi }

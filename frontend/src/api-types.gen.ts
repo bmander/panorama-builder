@@ -1264,6 +1264,10 @@ export interface components {
             sign_off: string;
             message?: string;
         };
+        RevertRequest: {
+            sign_off: string;
+            message?: string;
+        };
         CommitRef: {
             commit_id: components["schemas"]["Id"];
             /** Format: int64 */
@@ -2412,9 +2416,9 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
-                "application/json": components["schemas"]["CommitMessage"];
+                "application/json": components["schemas"]["RevertRequest"];
             };
         };
         responses: {

@@ -3,8 +3,8 @@
 // map / station chrome on the main routes.
 
 import * as api from './api.js';
-import { SessionConflictError } from './api.js';
 import type { ApiCommit } from './api.js';
+import { openSignOffModal } from './signoff-modal.js';
 import { fmtRef, getElement, shortId } from './types.js';
 
 function fmtDate(iso: string): string {
@@ -39,26 +39,35 @@ function renderList(commits: readonly ApiCommit[]): void {
     revertBtn.type = 'button';
     revertBtn.className = 'btn';
     revertBtn.textContent = 'Revert';
-    revertBtn.addEventListener('click', () => { void onRevert(c); });
+    revertBtn.addEventListener('click', () => { openRevertModal(c); });
     li.appendChild(revertBtn);
 
     list.appendChild(li);
   }
 }
 
-async function onRevert(c: ApiCommit): Promise<void> {
-  if (!confirm(`Revert commit ${shortId(c.id)}?`)) return;
-  try {
-    const ref = await api.revertCommit(c.id);
-    alert(`Reverted as commit ${shortId(ref.commit_id)} (seq ${String(ref.seq)}).`);
-    await refresh();
-  } catch (err) {
-    if (err instanceof SessionConflictError) {
+function openRevertModal(c: ApiCommit): void {
+  openSignOffModal({
+    ids: {
+      modal: 'revert-modal',
+      signoff: 'revert-signoff',
+      description: 'revert-description',
+      confirm: 'revert-confirm',
+      cancel: 'revert-cancel',
+      close: 'revert-close',
+      error: 'revert-error',
+      title: 'revert-modal-title',
+    },
+    title: `Revert ${shortId(c.id)}`,
+    submit: async req => {
+      const ref = await api.revertCommit(c.id, req);
+      alert(`Reverted as commit ${shortId(ref.commit_id)} (seq ${String(ref.seq)}).`);
+      await refresh();
+    },
+    onConflict: err => {
       alert(`Revert blocked by conflicts: ${err.conflicts.map(fmtRef).join(', ')}`);
-      return;
-    }
-    alert(`Revert failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
+    },
+  });
 }
 
 async function refresh(): Promise<void> {

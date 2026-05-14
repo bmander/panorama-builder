@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -283,9 +282,8 @@ func (s *Server) mergeSession(w http.ResponseWriter, r *http.Request) {
 	if !parseJSON(w, r, &body) {
 		return
 	}
-	signOff := strings.TrimSpace(body.SignOff)
-	if signOff == "" {
-		writeError(w, http.StatusBadRequest, "sign_off required")
+	signOff, ok := requireSignOff(w, body.SignOff)
+	if !ok {
 		return
 	}
 	ctx := r.Context()

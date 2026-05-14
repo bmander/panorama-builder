@@ -857,10 +857,10 @@ paths:
         any later commit has touched any of the target's entities.
       operationId: revertCommit
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CommitMessage' }
+            schema: { $ref: '#/components/schemas/RevertRequest' }
       responses:
         '201':
           description: Reverted
@@ -1505,6 +1505,13 @@ components:
         message: { type: string }
 
     MergeRequest:
+      type: object
+      required: [sign_off]
+      properties:
+        sign_off: { type: string, minLength: 1 }
+        message: { type: string }
+
+    RevertRequest:
       type: object
       required: [sign_off]
       properties:

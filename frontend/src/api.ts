@@ -51,6 +51,7 @@ export type ApiCommit = Schemas['Commit'];
 export type ApiCommitWithOps = Schemas['CommitWithOps'];
 export type ApiEntityRef = Schemas['EntityRef'];
 export type ApiMergeRequest = Schemas['MergeRequest'];
+export type ApiRevertRequest = Schemas['RevertRequest'];
 
 // SessionConflictError: thrown by mergeSession / revertCommit on a 409 with
 // a conflict list. Callers can branch on `instanceof` to render the conflict
@@ -426,12 +427,13 @@ export function getCommit(id: string): Promise<ApiCommitWithOps> {
   return request<ApiCommitWithOps>('GET', `/commits/${encodeURIComponent(id)}`);
 }
 
-// revertCommit: same conflict-as-error semantics as mergeSession.
-export async function revertCommit(id: string, message?: string): Promise<ApiCommitRef> {
+// revertCommit: requires a sign_off (same peppercorn rule as mergeSession);
+// shares the conflict-as-error semantics.
+export async function revertCommit(id: string, body: ApiRevertRequest): Promise<ApiCommitRef> {
   const init: RequestInit = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(message !== undefined ? { message } : {}),
+    body: JSON.stringify(body),
   };
   const res = await fetch(`${API}/commits/${encodeURIComponent(id)}/revert`, init);
   if (res.status === 409) {

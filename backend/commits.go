@@ -105,13 +105,13 @@ func (s *Server) revertCommit(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		return
 	}
-	var body struct {
-		Message string `json:"message"`
+	var body RevertRequest
+	if !parseJSON(w, r, &body) {
+		return
 	}
-	if r.ContentLength > 0 {
-		if !parseJSON(w, r, &body) {
-			return
-		}
+	signOff, ok := requireSignOff(w, body.SignOff)
+	if !ok {
+		return
 	}
 	ctx := r.Context()
 
@@ -184,14 +184,14 @@ func (s *Server) revertCommit(w http.ResponseWriter, r *http.Request) {
 	commitID := newID()
 	var newSeq int64
 	var msg *string
-	if body.Message != "" {
-		msg = &body.Message
+	if body.Message != nil && *body.Message != "" {
+		msg = body.Message
 	}
 	revertOf := id
 	err = tx.QueryRow(ctx, `
-		INSERT INTO commits (id, source_session_id, parent_seq, kind, reverts_commit_id, message)
-		VALUES ($1, NULL, (SELECT MAX(seq) FROM commits), 'revert', $2, $3)
-		RETURNING seq`, commitID, revertOf, msg,
+		INSERT INTO commits (id, source_session_id, parent_seq, kind, reverts_commit_id, message, sign_off)
+		VALUES ($1, NULL, (SELECT MAX(seq) FROM commits), 'revert', $2, $3, $4)
+		RETURNING seq`, commitID, revertOf, msg, signOff,
 	).Scan(&newSeq)
 	if err != nil {
 		writeErrorFromDB(w, err)
