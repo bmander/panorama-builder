@@ -66,6 +66,10 @@ func main() {
 		log.Fatalf("storage: %v", err)
 	}
 
+	if err := migrateLegacyBlobs(ctx, pool, blobs); err != nil {
+		log.Fatalf("blob migration: %v", err)
+	}
+
 	s := &Server{
 		db:            pool,
 		blobs:         blobs,

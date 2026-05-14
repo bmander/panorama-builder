@@ -16,6 +16,7 @@ import type { LatLng } from './types.js';
 
 export interface PhotoPreview {
   readonly photoId: string;
+  readonly blobPath: string | null;
   readonly fromLat: number;
   readonly fromLng: number;
   readonly fromAlt: number;
@@ -88,7 +89,7 @@ export function createPhotoPreviews(opts: CreatePhotoPreviewsOptions): PhotoPrev
       loadedTexture: null,
     };
     new THREE.TextureLoader().load(
-      api.photoBlobUrl(preview.photoId),
+      api.photoBlobUrl({ id: preview.photoId, blob_path: preview.blobPath }),
       tex => {
         // Mesh removed (clear() called before load resolved) — drop the texture.
         if (!mesh.parent) { tex.dispose(); return; }

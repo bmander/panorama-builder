@@ -517,7 +517,7 @@ func (s *Server) putPhotoBlobInSession(w http.ResponseWriter, r *http.Request, s
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	n, path, err := s.blobs.writePhoto(id, r.Body, s.maxBlobBytes)
+	path, n, err := s.blobs.writeBlob(r.Body, s.maxBlobBytes)
 	if err != nil {
 		if errors.Is(err, errPayloadTooLarge) {
 			writeError(w, http.StatusRequestEntityTooLarge, "blob too large")

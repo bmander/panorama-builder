@@ -177,8 +177,17 @@ export async function uploadPhotoBlob(id: string, blob: Blob): Promise<void> {
 }
 
 // URL the browser can use directly (e.g., as a TextureLoader source).
-export function photoBlobUrl(id: string): string {
-  return `${API}/photos/${encodeURIComponent(id)}/blob`;
+//
+// `photo.blob_path` of the new content-addressed form `blobs/<sha256>` is
+// served by `/blobs/{hash}` — immutable, header-free, and reachable
+// regardless of whether the photo lives in main or in a pending session.
+// Legacy/null paths fall back to `/photos/{id}/blob`, which only resolves
+// rows visible in `main` (cp-page observations are always post-merge, so
+// the fallback is safe for that use case).
+export function photoBlobUrl(photo: { id: string; blob_path?: string | null }): string {
+  const m = photo.blob_path && /^blobs\/([0-9a-f]{64})$/.exec(photo.blob_path);
+  if (m) return `${API}/blobs/${m[1]}`;
+  return `${API}/photos/${encodeURIComponent(photo.id)}/blob`;
 }
 
 // --- Image measurements ---

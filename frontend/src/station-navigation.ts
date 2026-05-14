@@ -172,7 +172,7 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
     cpColumns.setVisible(false);
 
     photoPreviews.set(dest.photos.map(p => ({
-      photoId: p.id,
+      photoId: p.id, blobPath: p.blob_path,
       fromLat: dest.station.lat, fromLng: dest.station.lng, fromAlt: dest.station.alt,
       photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
       sizeRad: p.size_rad, aspect: p.aspect,

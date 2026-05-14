@@ -1185,7 +1185,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
           dist_k1: p.dist_k1, dist_k2: p.dist_k2,
         });
         loader.load(
-          api.photoBlobUrl(p.id),
+          api.photoBlobUrl(p),
           tex => { overlays.photos.setTexture(o, tex); },
           undefined,
           err => { console.error(`photo ${p.id} load failed:`, err); },

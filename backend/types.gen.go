@@ -552,7 +552,12 @@ type MergeRequest struct {
 // Photo defines model for Photo.
 type Photo struct {
 	// Aspect width / height of the photo in pixels
-	Aspect    float64   `json:"aspect"`
+	Aspect float64 `json:"aspect"`
+
+	// BlobPath Relative path under STORAGE_DIR where the photo's bytes live.
+	// New uploads land at `blobs/<sha256>` (content-addressed,
+	// immutable). Legacy rows may still carry `photos/<id>` until the
+	// startup migration rewrites them.
 	BlobPath  *string   `json:"blob_path"`
 	CreatedAt time.Time `json:"created_at"`
 

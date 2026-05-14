@@ -21,7 +21,9 @@ function createObservationClip(m: api.ApiControlPointImageObservation): HTMLElem
   a.className = 'clip';
   a.href = stationHref(m.station_id, { focusImageId: m.id });
   const img = document.createElement('img');
-  img.src = api.photoBlobUrl(m.photo_id);
+  // No blob_path on observations — fall back to the id-keyed endpoint.
+  // Observations only exist after merge, so the lookup against `main` works.
+  img.src = api.photoBlobUrl({ id: m.photo_id });
   img.alt = '';
   img.draggable = false;
   img.loading = 'lazy';

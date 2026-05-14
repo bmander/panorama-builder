@@ -27,6 +27,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/photos/{id}", s.deletePhoto)
 	mux.HandleFunc("PUT /api/photos/{id}/blob", s.putPhotoBlob)
 	mux.HandleFunc("GET /api/photos/{id}/blob", s.getPhotoBlob)
+	mux.HandleFunc("GET /api/blobs/{hash}", s.getBlob)
 
 	mux.HandleFunc("POST /api/photos/{id}/image-measurements", s.postImageMeasurement)
 	mux.HandleFunc("PUT /api/image-measurements/{id}", s.putImageMeasurement)

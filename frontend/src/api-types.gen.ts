@@ -153,10 +153,47 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Download the photo's image blob */
+        /**
+         * Download the photo's image blob
+         * @description Resolves the photo's `blob_path` (overlay-aware when `X-Session-Id`
+         *     is supplied) and streams the bytes. Callers that already have the
+         *     content hash should prefer `GET /blobs/{hash}`, which serves the
+         *     bytes directly with immutable cache headers and works without a
+         *     session lookup.
+         */
         get: operations["getPhotoBlob"];
-        /** Upload the photo's image blob */
+        /**
+         * Upload the photo's image blob
+         * @description Stores the uploaded bytes content-addressed at `blobs/<sha256>` and
+         *     writes the resulting path into the photo's `blob_path`. Re-uploading
+         *     different bytes produces a new hash; the previous bytes remain on
+         *     disk and are still referenced by any prior commit's view of the row.
+         */
         put: operations["uploadPhotoBlob"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/blobs/{hash}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hash: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Download an image blob by its content hash
+         * @description Content-addressed blob fetch. Bytes are immutable; the response is
+         *     marked `Cache-Control: public, max-age=31536000, immutable`.
+         *     Content-Type is sniffed from the first 512 bytes.
+         */
+        get: operations["getBlob"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -714,6 +751,12 @@ export interface components {
         Photo: {
             id: components["schemas"]["Id"];
             station_id: components["schemas"]["Id"];
+            /**
+             * @description Relative path under STORAGE_DIR where the photo's bytes live.
+             *     New uploads land at `blobs/<sha256>` (content-addressed,
+             *     immutable). Legacy rows may still carry `photos/<id>` until the
+             *     startup migration rewrites them.
+             */
             blob_path: string | null;
             mime_type: string | null;
             /** Format: int64 */
@@ -1632,6 +1675,29 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    getBlob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hash: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/*": string;
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     createImageMeasurement: {
