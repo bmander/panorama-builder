@@ -272,6 +272,27 @@
     <span id="save-error-msg"></span>
     <button type="button" id="save-error-retry" class="btn">Retry</button>
   </div>
+  <div id="session-save-modal" class="modal" hidden>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <span>Save session</span>
+        <button type="button" id="session-save-close" class="btn">✕</button>
+      </div>
+      <div class="modal-field">
+        <label for="session-save-signoff">Sign-off</label>
+        <input type="text" id="session-save-signoff" required>
+      </div>
+      <div class="modal-field">
+        <label for="session-save-description">Description (optional)</label>
+        <textarea id="session-save-description" rows="3"></textarea>
+      </div>
+      <div id="session-save-error" class="modal-error" hidden></div>
+      <div class="modal-actions">
+        <button type="button" id="session-save-cancel" class="btn">Cancel</button>
+        <button type="button" id="session-save-confirm" class="btn" disabled>Save</button>
+      </div>
+    </div>
+  </div>
   <div id="session-conflict-modal" class="modal" hidden>
     <div class="modal-panel">
       <div class="modal-header">

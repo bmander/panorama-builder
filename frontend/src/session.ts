@@ -8,7 +8,7 @@
 
 import * as api from './api.js';
 import type {
-  ApiSessionState, ApiCreateSessionResponse, ApiCommitRef,
+  ApiSessionState, ApiCreateSessionResponse, ApiCommitRef, ApiMergeRequest,
 } from './api.js';
 
 const STORAGE_KEY = 'panorama:session';
@@ -25,7 +25,7 @@ export interface SessionManager {
   abandon(): Promise<void>;
   // Merge the current session into main; clears local state on success.
   // Throws on 409 with conflicts in err.message; caller decides next step.
-  merge(message?: string): Promise<ApiCommitRef>;
+  merge(req: ApiMergeRequest): Promise<ApiCommitRef>;
   // Refresh the session metadata (op_count, conflicts, etc.). Returns null
   // if no session is active.
   refreshState(): Promise<ApiSessionState | null>;
@@ -90,10 +90,10 @@ export function createSessionManager(): SessionManager {
     }
   }
 
-  async function merge(message?: string): Promise<ApiCommitRef> {
+  async function merge(req: ApiMergeRequest): Promise<ApiCommitRef> {
     const id = current();
     if (id === null) throw new Error('no active session to merge');
-    const ref = await api.mergeSession(id, message);
+    const ref = await api.mergeSession(id, req);
     setStored(null);
     notify();
     return ref;

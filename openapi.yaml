@@ -747,10 +747,10 @@ paths:
         session has been modified by a commit since the session's base.
       operationId: mergeSession
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CommitMessage' }
+            schema: { $ref: '#/components/schemas/MergeRequest' }
       responses:
         '201':
           description: Merged
@@ -1462,6 +1462,13 @@ components:
       properties:
         message: { type: string }
 
+    MergeRequest:
+      type: object
+      required: [sign_off]
+      properties:
+        sign_off: { type: string, minLength: 1 }
+        message: { type: string }
+
     CommitRef:
       type: object
       required: [commit_id, seq]
@@ -1471,7 +1478,7 @@ components:
 
     Commit:
       type: object
-      required: [id, seq, kind, created_at]
+      required: [id, seq, kind, sign_off, created_at]
       properties:
         id: { $ref: '#/components/schemas/Id' }
         seq: { type: integer, format: int64 }
@@ -1484,6 +1491,7 @@ components:
           allOf: [{ $ref: '#/components/schemas/Id' }]
           nullable: true
         message: { type: string, nullable: true }
+        sign_off: { type: string }
         created_at: { type: string, format: date-time }
 
     CommitWithOps:

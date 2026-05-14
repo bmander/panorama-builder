@@ -9,10 +9,10 @@
 // single Abandon-session action.
 
 import { SessionConflictError } from './api.js';
-import type { ApiEntityRef } from './api.js';
+import type { ApiEntityRef, ApiMergeRequest } from './api.js';
 import { sessionManager } from './session.js';
 import { sessionPending } from './session-pending.js';
-import { fmtRef, getElement, shortId } from './types.js';
+import { fmtRef, getElement } from './types.js';
 
 export interface SessionPanel {
   destroy(): void;
@@ -42,7 +42,7 @@ export function createSessionPanel(
   root.appendChild(solveBtn);
 
   const saveBtn = btn('Save');
-  saveBtn.addEventListener('click', () => { void onSave(); });
+  saveBtn.addEventListener('click', () => { onSave(); });
   root.appendChild(saveBtn);
 
   const abandonBtn = btn('Abandon');
@@ -65,19 +65,11 @@ export function createSessionPanel(
     saveBtn.disabled = solverChanges === null || userPending !== 0;
   }
 
-  async function onSave(): Promise<void> {
-    try {
-      const ref = await sessionManager.merge();
-      alert(`Merged as commit ${shortId(ref.commit_id)} (seq ${String(ref.seq)}).`);
+  function onSave(): void {
+    openSaveModal(async (req) => {
+      await sessionManager.merge(req);
       location.reload();
-    } catch (err) {
-      if (err instanceof SessionConflictError) {
-        openConflictModal(err.conflicts);
-        return;
-      }
-      console.error('merge failed:', err);
-      alert(`Merge failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    });
   }
 
   async function onAbandon(): Promise<void> {
@@ -108,6 +100,81 @@ function btn(label: string): HTMLButtonElement {
   b.className = 'btn';
   b.textContent = label;
   return b;
+}
+
+// --- Save modal ------------------------------------------------------------
+
+let saveModalWired = false;
+let saveSubmit: ((req: ApiMergeRequest) => Promise<void>) | null = null;
+
+function openSaveModal(submit: (req: ApiMergeRequest) => Promise<void>): void {
+  const modal = getElement('session-save-modal');
+  const signoffEl = getElement<HTMLInputElement>('session-save-signoff');
+  const descriptionEl = getElement<HTMLTextAreaElement>('session-save-description');
+  const confirmBtn = getElement<HTMLButtonElement>('session-save-confirm');
+  const cancelBtn = getElement<HTMLButtonElement>('session-save-cancel');
+  const closeBtn = getElement<HTMLButtonElement>('session-save-close');
+  const errorEl = getElement('session-save-error');
+
+  const setLoading = (loading: boolean): void => {
+    confirmBtn.classList.toggle('loading', loading);
+    confirmBtn.disabled = loading || signoffEl.value.trim() === '';
+    cancelBtn.disabled = loading;
+    closeBtn.disabled = loading;
+    signoffEl.disabled = loading;
+    descriptionEl.disabled = loading;
+  };
+
+  signoffEl.value = '';
+  descriptionEl.value = '';
+  errorEl.textContent = '';
+  errorEl.hidden = true;
+  setLoading(false);
+  saveSubmit = submit;
+
+  if (!saveModalWired) {
+    const close = (): void => {
+      if (confirmBtn.classList.contains('loading')) return;
+      modal.hidden = true;
+      saveSubmit = null;
+    };
+    closeBtn.addEventListener('click', close);
+    cancelBtn.addEventListener('click', close);
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+    signoffEl.addEventListener('input', () => {
+      confirmBtn.disabled = signoffEl.value.trim() === '';
+    });
+    confirmBtn.addEventListener('click', () => {
+      const signOff = signoffEl.value.trim();
+      if (signOff === '' || !saveSubmit) return;
+      const description = descriptionEl.value.trim();
+      const req: ApiMergeRequest = description === ''
+        ? { sign_off: signOff }
+        : { sign_off: signOff, message: description };
+      const handler = saveSubmit;
+      errorEl.hidden = true;
+      errorEl.textContent = '';
+      setLoading(true);
+      handler(req).then(() => {
+        // Success path reloads the page; keep the spinner visible until
+        // the new document arrives so the modal can't be re-clicked.
+      }, (err: unknown) => {
+        setLoading(false);
+        if (err instanceof SessionConflictError) {
+          modal.hidden = true;
+          saveSubmit = null;
+          openConflictModal(err.conflicts);
+          return;
+        }
+        console.error('merge failed:', err);
+        errorEl.textContent = err instanceof Error ? err.message : String(err);
+        errorEl.hidden = false;
+      });
+    });
+    saveModalWired = true;
+  }
+  modal.hidden = false;
+  signoffEl.focus();
 }
 
 // --- Conflict modal --------------------------------------------------------

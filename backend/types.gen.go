@@ -277,6 +277,7 @@ type Commit struct {
 	ParentSeq       *int64     `json:"parent_seq,omitempty"`
 	RevertsCommitID *ID        `json:"reverts_commit_id,omitempty"`
 	Seq             int64      `json:"seq"`
+	SignOff         string     `json:"sign_off"`
 	SourceSessionID *ID        `json:"source_session_id,omitempty"`
 }
 
@@ -540,6 +541,12 @@ type ImageMeasurementUpdate struct {
 	ControlPointID *ID      `json:"control_point_id,omitempty"`
 	U              *float64 `json:"u,omitempty"`
 	V              *float64 `json:"v,omitempty"`
+}
+
+// MergeRequest defines model for MergeRequest.
+type MergeRequest struct {
+	Message *string `json:"message,omitempty"`
+	SignOff string  `json:"sign_off"`
 }
 
 // Photo defines model for Photo.
@@ -836,7 +843,7 @@ type UpdatePhotoJSONRequestBody = PhotoUpdate
 type CreateImageMeasurementJSONRequestBody = ImageMeasurementPatch
 
 // MergeSessionJSONRequestBody defines body for MergeSession for application/json ContentType.
-type MergeSessionJSONRequestBody = CommitMessage
+type MergeSessionJSONRequestBody = MergeRequest
 
 // SolveControlPointJSONRequestBody defines body for SolveControlPoint for application/json ContentType.
 type SolveControlPointJSONRequestBody = SolveConfig

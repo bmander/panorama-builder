@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -264,13 +265,14 @@ func (s *Server) mergeSession(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		return
 	}
-	var body struct {
-		Message string `json:"message"`
+	var body MergeRequest
+	if !parseJSON(w, r, &body) {
+		return
 	}
-	if r.ContentLength > 0 {
-		if !parseJSON(w, r, &body) {
-			return
-		}
+	signOff := strings.TrimSpace(body.SignOff)
+	if signOff == "" {
+		writeError(w, http.StatusBadRequest, "sign_off required")
+		return
 	}
 	ctx := r.Context()
 
@@ -322,13 +324,13 @@ func (s *Server) mergeSession(w http.ResponseWriter, r *http.Request) {
 	commitID := newID()
 	var seq int64
 	var msg *string
-	if body.Message != "" {
-		msg = &body.Message
+	if body.Message != nil && *body.Message != "" {
+		msg = body.Message
 	}
 	err = tx.QueryRow(ctx, `
-		INSERT INTO commits (id, source_session_id, parent_seq, kind, message)
-		VALUES ($1, $2, (SELECT MAX(seq) FROM commits), 'merge', $3)
-		RETURNING seq`, commitID, id, msg,
+		INSERT INTO commits (id, source_session_id, parent_seq, kind, message, sign_off)
+		VALUES ($1, $2, (SELECT MAX(seq) FROM commits), 'merge', $3, $4)
+		RETURNING seq`, commitID, id, msg, signOff,
 	).Scan(&seq)
 	if err != nil {
 		writeErrorFromDB(w, err)

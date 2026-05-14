@@ -1217,6 +1217,10 @@ export interface components {
         CommitMessage: {
             message?: string;
         };
+        MergeRequest: {
+            sign_off: string;
+            message?: string;
+        };
         CommitRef: {
             commit_id: components["schemas"]["Id"];
             /** Format: int64 */
@@ -1233,6 +1237,7 @@ export interface components {
             kind: "merge" | "revert";
             reverts_commit_id?: components["schemas"]["Id"] | null;
             message?: string | null;
+            sign_off: string;
             /** Format: date-time */
             created_at: string;
         };
@@ -2257,9 +2262,9 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
-                "application/json": components["schemas"]["CommitMessage"];
+                "application/json": components["schemas"]["MergeRequest"];
             };
         };
         responses: {

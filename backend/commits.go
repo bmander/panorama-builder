@@ -25,7 +25,7 @@ func (s *Server) listCommits(w http.ResponseWriter, r *http.Request) {
 			beforeSeq = n
 		}
 	}
-	q := `SELECT id, seq, parent_seq, source_session_id, kind, reverts_commit_id, message, created_at
+	q := `SELECT id, seq, parent_seq, source_session_id, kind, reverts_commit_id, message, sign_off, created_at
 	      FROM commits`
 	args := []any{}
 	if beforeSeq > 0 {
@@ -62,7 +62,7 @@ func scanCommit(row pgx.Row) (Commit, error) {
 	var c Commit
 	var kind string
 	err := row.Scan(&c.ID, &c.Seq, &c.ParentSeq, &c.SourceSessionID, &kind,
-		&c.RevertsCommitID, &c.Message, &c.CreatedAt)
+		&c.RevertsCommitID, &c.Message, &c.SignOff, &c.CreatedAt)
 	if err != nil {
 		return c, err
 	}
@@ -76,7 +76,7 @@ func (s *Server) getCommit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c, err := scanCommit(s.db.QueryRow(r.Context(), `
-		SELECT id, seq, parent_seq, source_session_id, kind, reverts_commit_id, message, created_at
+		SELECT id, seq, parent_seq, source_session_id, kind, reverts_commit_id, message, sign_off, created_at
 		FROM commits WHERE id=$1`, id))
 	if err != nil {
 		writeErrorFromDB(w, err)

@@ -50,6 +50,7 @@ export type ApiCommitRef = Schemas['CommitRef'];
 export type ApiCommit = Schemas['Commit'];
 export type ApiCommitWithOps = Schemas['CommitWithOps'];
 export type ApiEntityRef = Schemas['EntityRef'];
+export type ApiMergeRequest = Schemas['MergeRequest'];
 
 // SessionConflictError: thrown by mergeSession / revertCommit on a 409 with
 // a conflict list. Callers can branch on `instanceof` to render the conflict
@@ -386,11 +387,11 @@ export function abandonSession(id: string): Promise<void> {
 
 // mergeSession: throws SessionConflictError on 409 so the caller can render
 // a conflict UI instead of a generic error banner.
-export async function mergeSession(id: string, message?: string): Promise<ApiCommitRef> {
+export async function mergeSession(id: string, body: ApiMergeRequest): Promise<ApiCommitRef> {
   const init: RequestInit = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(message !== undefined ? { message } : {}),
+    body: JSON.stringify(body),
   };
   const res = await fetch(`${API}/sessions/${encodeURIComponent(id)}/merge`, init);
   if (res.status === 409) {
