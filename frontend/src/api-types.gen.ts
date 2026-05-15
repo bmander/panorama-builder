@@ -1275,8 +1275,8 @@ export interface components {
         };
         /**
          * @description One entity whose free parameters are geometrically unobservable
-         *     under the requested solve mode. Returned in the 409 body when the
-         *     solve gate refuses.
+         *     under the requested solve mode. Returned in the 422 body when the
+         *     merge gate refuses.
          */
         RankDeficientAxis: {
             /** @enum {string} */
@@ -1286,6 +1286,13 @@ export interface components {
             axes: string[];
             /** @description Human-readable explanation. */
             reason: string;
+            /**
+             * @description For kind=photo, the station that owns this photo. Lets clients
+             *     build deep links into the photo's station view (e.g.
+             *     /world?sta=<station_id>&focus=<id>). Absent (null) for kinds
+             *     station / control_point.
+             */
+            station_id?: components["schemas"]["Id"] | null;
         };
         /**
          * @description Body of the 422 returned by /sessions/{id}/merge when any touched

@@ -182,6 +182,15 @@ export interface OverlayUserData {
   distK2: number;
   lockDistK1: boolean;
   lockDistK2: boolean;
+  // Per-axis σ from the most recent solve. null = unknown (no solve has
+  // touched this axis yet, or the axis was locked at solve time). Mirrors
+  // photos.sigma_* on the API.
+  sigmaPhotoAz: number | null;
+  sigmaPhotoTilt: number | null;
+  sigmaPhotoRoll: number | null;
+  sigmaSizeRad: number | null;
+  sigmaDistK1: number | null;
+  sigmaDistK2: number | null;
   body: THREE.Mesh;
   outline?: THREE.LineSegments;
   // HUD-style action handles that appear at the photo's upper-right when
@@ -201,6 +210,17 @@ export interface PhotoLocks {
   readonly lockSizeRad: boolean;
   readonly lockDistK1: boolean;
   readonly lockDistK2: boolean;
+}
+
+// Per-axis σ for a photo. null = unknown. Maps 1:1 to photos.sigma_* on
+// the API.
+export interface PhotoSigmas {
+  readonly sigmaPhotoAz: number | null;
+  readonly sigmaPhotoTilt: number | null;
+  readonly sigmaPhotoRoll: number | null;
+  readonly sigmaSizeRad: number | null;
+  readonly sigmaDistK1: number | null;
+  readonly sigmaDistK2: number | null;
 }
 
 export interface POIUserData {
@@ -364,10 +384,15 @@ export function appendSigmaMeters(
 
 // Renders the "{kind} {id} [{axes}] — {reason}" list shared by the session
 // widget's problems dropdown and the save modal's inline warning panel.
+// Each entry's entity-identifier is an <a> that jumps to the affected
+// entity (station view / focused photo in station view / CP detail page).
 // Truncates after maxItems with a "…and N more" tail. Returns a <ul> the
 // caller appends into its container.
 export function renderDeficientAxesList(
-  axes: readonly { kind: string; id: string; axes: readonly string[]; reason: string }[],
+  axes: readonly {
+    kind: string; id: string; axes: readonly string[]; reason: string;
+    station_id?: string | null;
+  }[],
   maxItems = Infinity,
 ): HTMLUListElement {
   const ul = document.createElement('ul');
@@ -375,14 +400,13 @@ export function renderDeficientAxesList(
   const shown = axes.slice(0, maxItems);
   for (const a of shown) {
     const li = document.createElement('li');
-    const head = document.createElement('span');
-    head.textContent = `${a.kind} ${a.id} `;
+    const head = deficientAxisLink(a);
     const axesEl = document.createElement('span');
     axesEl.className = 'axes';
     axesEl.textContent = `[${a.axes.join(',')}]`;
     const tail = document.createElement('span');
     tail.textContent = ` — ${a.reason}`;
-    li.append(head, axesEl, tail);
+    li.append(head, ' ', axesEl, tail);
     ul.append(li);
   }
   if (axes.length > shown.length) {
@@ -391,6 +415,35 @@ export function renderDeficientAxesList(
     ul.append(li);
   }
   return ul;
+}
+
+// deficientAxisLink builds the "{kind} {id}" prefix as an <a> when the
+// destination is known. A photo without station_id falls back to plain
+// text (defensive — backend should always populate it for kind=photo).
+function deficientAxisLink(a: {
+  kind: string; id: string; station_id?: string | null;
+}): HTMLElement {
+  let href: string | null = null;
+  switch (a.kind) {
+    case 'station':
+      href = stationHref(a.id);
+      break;
+    case 'photo':
+      if (a.station_id) href = stationHref(a.station_id, { focusImageId: a.id });
+      break;
+    case 'control_point':
+      href = cpHref(a.id);
+      break;
+  }
+  if (href === null) {
+    const span = document.createElement('span');
+    span.textContent = `${a.kind} ${a.id}`;
+    return span;
+  }
+  const link = document.createElement('a');
+  link.href = href;
+  link.textContent = `${a.kind} ${a.id}`;
+  return link;
 }
 
 // Format a σ value (meters) for compact display. Chooses unit by magnitude

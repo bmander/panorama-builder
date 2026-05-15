@@ -1053,6 +1053,14 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
           lockPhotoRoll: p.lock_photo_roll, lockSizeRad: p.lock_size_rad,
           lockDistK1: p.lock_dist_k1, lockDistK2: p.lock_dist_k2,
         });
+        overlays.photos.setSigmas(o, {
+          sigmaPhotoAz: p.sigma_photo_az ?? null,
+          sigmaPhotoTilt: p.sigma_photo_tilt ?? null,
+          sigmaPhotoRoll: p.sigma_photo_roll ?? null,
+          sigmaSizeRad: p.sigma_size_rad ?? null,
+          sigmaDistK1: p.sigma_dist_k1 ?? null,
+          sigmaDistK2: p.sigma_dist_k2 ?? null,
+        });
         sync.registerPhoto(p.id, {
           aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,
           photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
@@ -1193,6 +1201,14 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
           lockPhotoAz: p.lock_photo_az, lockPhotoTilt: p.lock_photo_tilt,
           lockPhotoRoll: p.lock_photo_roll, lockSizeRad: p.lock_size_rad,
           lockDistK1: p.lock_dist_k1, lockDistK2: p.lock_dist_k2,
+        });
+        overlays.photos.setSigmas(o, {
+          sigmaPhotoAz: p.sigma_photo_az ?? null,
+          sigmaPhotoTilt: p.sigma_photo_tilt ?? null,
+          sigmaPhotoRoll: p.sigma_photo_roll ?? null,
+          sigmaSizeRad: p.sigma_size_rad ?? null,
+          sigmaDistK1: p.sigma_dist_k1 ?? null,
+          sigmaDistK2: p.sigma_dist_k2 ?? null,
         });
         sync.registerPhoto(p.id, {
           aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,

@@ -44,6 +44,12 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .deficient-axes-list { list-style: none; margin: 0; padding: 0; }
 .deficient-axes-list li { padding: 2px 0; }
 .deficient-axes-list .axes { color: #d0a060; }
+.sigma { font-size: 10px; margin-left: 0.4em; opacity: 0.85; }
+.sigma-good    { color: #60c080; }
+.sigma-warn    { color: #d0a060; }
+.sigma-bad     { color: #d06060; }
+.sigma-unknown { color: #707070; font-style: italic; }
+.sigma[hidden] { display: none; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn:disabled:hover { background: rgba(0,0,0,0.5); }
 #settings-panel { position: fixed; top: 36px; right: 8px; padding: 8px 10px;

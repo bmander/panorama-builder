@@ -10,13 +10,21 @@
 // and forward-compat.
 
 import * as api from './api.js';
-import { formatLocalDateTime, getElement, syncInputChecked, syncInputValue } from './types.js';
+import {
+  fmtSigmaMeters, formatLocalDateTime, getElement, sigmaSeverityClass,
+  syncInputChecked, syncInputValue,
+} from './types.js';
 import type { LatLng } from './types.js';
+import {
+  SIGMA_ALT_REFUSE_M, SIGMA_ALT_WARN_M,
+  SIGMA_POS_REFUSE_M, SIGMA_POS_WARN_M,
+} from './sigma-thresholds.js';
 
 export interface StationFields {
   name: string | null;
   lat: number; lng: number; alt: number;
   lockLat: boolean; lockLng: boolean; lockAlt: boolean;
+  sigmaLat: number | null; sigmaLng: number | null; sigmaAlt: number | null;
   // ISO timestamp for when the photographer set up the camera at this
   // station. The backend stores TIMESTAMPTZ; the UI converts to/from
   // datetime-local.
@@ -56,6 +64,34 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
   const lockAltEl = getElement<HTMLInputElement>('station-lock-alt');
   const capturedAtEl = getElement<HTMLInputElement>('station-captured-at');
 
+  // σ spans live in the lat/lng row (max-of-two pattern, matches
+  // stations-index.ts) and the alt row. They're created once and updated
+  // in place by render(); hidden when the corresponding axis is locked.
+  const sigmaPosEl = document.createElement('span');
+  sigmaPosEl.className = 'sigma sigma-unknown';
+  lngEl.parentElement?.after(sigmaPosEl);
+  const sigmaAltEl = document.createElement('span');
+  sigmaAltEl.className = 'sigma sigma-unknown';
+  altEl.parentElement?.after(sigmaAltEl);
+
+  function renderSigma(): void {
+    if (!cache) return;
+    const posLocked = cache.lockLat && cache.lockLng;
+    sigmaPosEl.hidden = posLocked;
+    if (!posLocked) {
+      const worst = Math.max(cache.sigmaLat ?? 0, cache.sigmaLng ?? 0) || null;
+      sigmaPosEl.textContent = `±${fmtSigmaMeters(worst)}`;
+      sigmaPosEl.className = `sigma ${sigmaSeverityClass(worst, SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M)}`;
+      sigmaPosEl.title = 'σ from last solve (max of lat/lng, in meters)';
+    }
+    sigmaAltEl.hidden = cache.lockAlt;
+    if (!cache.lockAlt) {
+      sigmaAltEl.textContent = `±${fmtSigmaMeters(cache.sigmaAlt)}`;
+      sigmaAltEl.className = `sigma ${sigmaSeverityClass(cache.sigmaAlt, SIGMA_ALT_WARN_M, SIGMA_ALT_REFUSE_M)}`;
+      sigmaAltEl.title = 'σ of alt from last solve';
+    }
+  }
+
   // Local mirror of the canonical station fields, populated by hydrate().
   // Used for rendering inputs and detecting no-op edits; the PUT itself only
   // carries the changed key, so this is a display cache, not a round-trip
@@ -75,6 +111,7 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
     if (document.activeElement !== capturedAtEl) renderCapturedAt();
     syncInputChecked(lockPosEl, cache.lockLat && cache.lockLng);
     syncInputChecked(lockAltEl, cache.lockAlt);
+    renderSigma();
   }
 
   function hydrate(s: api.ApiStation): void {
@@ -82,6 +119,9 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
       name: s.name,
       lat: s.lat, lng: s.lng, alt: s.alt,
       lockLat: s.lock_lat, lockLng: s.lock_lng, lockAlt: s.lock_alt,
+      sigmaLat: s.sigma_lat ?? null,
+      sigmaLng: s.sigma_lng ?? null,
+      sigmaAlt: s.sigma_alt ?? null,
       capturedAt: s.captured_at,
     };
     onAltitudeChanged(s.alt);

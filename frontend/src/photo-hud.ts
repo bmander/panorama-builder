@@ -2,7 +2,10 @@
 // change; opacity commits live as the slider moves. One commit = one undo
 // entry.
 
-import { getElement, overlayData, syncInputChecked, syncInputValue } from './types.js';
+import {
+  fmtSigmaRad, getElement, overlayData, sigmaSeverityClass,
+  syncInputChecked, syncInputValue,
+} from './types.js';
 import { SIZE_MAX, SIZE_MIN } from './overlay.js';
 import type { OverlayManager } from './overlay.js';
 import type { SyncManager } from './sync.js';
@@ -10,6 +13,7 @@ import { clamp, degToRad, radToDeg } from './mathx.js';
 import { applyPhotoSnapshot, snapshotPhoto } from './undo.js';
 import type { PhotoSnapshot, UndoManager } from './undo.js';
 import type { PhotoLocks } from './types.js';
+import { SIGMA_ANGLE_REFUSE_RAD, SIGMA_ANGLE_WARN_RAD } from './sigma-thresholds.js';
 import type * as THREE from 'three';
 
 export interface PhotoHud {
@@ -41,11 +45,37 @@ export function createPhotoHud(
   const k1LockEl = getElement<HTMLInputElement>('photo-hud-k1-lock');
   const k2LockEl = getElement<HTMLInputElement>('photo-hud-k2-lock');
 
+  // One σ span per free-axis input. Created once, inserted after each
+  // input element, updated in place on every populate(). Hidden when the
+  // axis is locked. K1/K2 σ is dimensionless but uses the angle threshold
+  // as its natural scale (same convention as merge_gate.go).
+  function makeSigma(after: HTMLElement): HTMLSpanElement {
+    const s = document.createElement('span');
+    s.className = 'sigma sigma-unknown';
+    after.after(s);
+    return s;
+  }
+  const azSigmaEl = makeSigma(azEl);
+  const tiltSigmaEl = makeSigma(tiltEl);
+  const rollSigmaEl = makeSigma(rollEl);
+  const fovSigmaEl = makeSigma(fovEl);
+  const k1SigmaEl = makeSigma(k1El);
+  const k2SigmaEl = makeSigma(k2El);
+
+  function setSigma(el: HTMLSpanElement, sigma: number | null, locked: boolean, label: string): void {
+    el.hidden = locked;
+    if (locked) return;
+    el.textContent = `±${fmtSigmaRad(sigma)}`;
+    el.className = `sigma ${sigmaSeverityClass(sigma, SIGMA_ANGLE_WARN_RAD, SIGMA_ANGLE_REFUSE_RAD)}`;
+    el.title = `σ of ${label} from last solve`;
+  }
+
   let bound: THREE.Group | null = null;
 
   function populate(overlay: THREE.Group): void {
     const pose = overlays.photos.extractPose(overlay, null);
     const locks = overlays.photos.getLocks(overlay);
+    const sigmas = overlays.photos.getSigmas(overlay);
     syncInputValue(opacityEl, String(Math.round(overlays.photos.getOpacity(overlay) * 100)));
     syncInputValue(azEl, radToDeg(pose.photoAz).toFixed(2));
     syncInputValue(tiltEl, radToDeg(pose.photoTilt).toFixed(2));
@@ -60,6 +90,12 @@ export function createPhotoHud(
     syncInputChecked(fovLockEl, locks.lockSizeRad);
     syncInputChecked(k1LockEl, locks.lockDistK1);
     syncInputChecked(k2LockEl, locks.lockDistK2);
+    setSigma(azSigmaEl, sigmas.sigmaPhotoAz, locks.lockPhotoAz, 'azimuth');
+    setSigma(tiltSigmaEl, sigmas.sigmaPhotoTilt, locks.lockPhotoTilt, 'tilt');
+    setSigma(rollSigmaEl, sigmas.sigmaPhotoRoll, locks.lockPhotoRoll, 'roll');
+    setSigma(fovSigmaEl, sigmas.sigmaSizeRad, locks.lockSizeRad, 'FOV');
+    setSigma(k1SigmaEl, sigmas.sigmaDistK1, locks.lockDistK1, 'k1');
+    setSigma(k2SigmaEl, sigmas.sigmaDistK2, locks.lockDistK2, 'k2');
   }
 
   function refresh(): void {

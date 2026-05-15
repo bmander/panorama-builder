@@ -1533,8 +1533,8 @@ components:
       type: object
       description: |
         One entity whose free parameters are geometrically unobservable
-        under the requested solve mode. Returned in the 409 body when the
-        solve gate refuses.
+        under the requested solve mode. Returned in the 422 body when the
+        merge gate refuses.
       required: [kind, id, axes, reason]
       properties:
         kind:
@@ -1548,6 +1548,14 @@ components:
         reason:
           type: string
           description: Human-readable explanation.
+        station_id:
+          allOf: [{ $ref: '#/components/schemas/Id' }]
+          nullable: true
+          description: |
+            For kind=photo, the station that owns this photo. Lets clients
+            build deep links into the photo's station view (e.g.
+            /world?sta=<station_id>&focus=<id>). Absent (null) for kinds
+            station / control_point.
 
     RankDeficientError:
       type: object

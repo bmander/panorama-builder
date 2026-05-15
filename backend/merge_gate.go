@@ -17,8 +17,8 @@ import (
 // a well-solved problem clears them comfortably but tight enough that
 // "diverged" or "wandered into the null space" results don't.
 const (
-	mergeSigmaPosRefuseM    = 1.0                        // station/CP lat/lng meters
-	mergeSigmaAltRefuseM    = 0.5                        // station/CP alt meters
+	mergeSigmaPosRefuseM    = 50.0                       // station/CP lat/lng meters
+	mergeSigmaAltRefuseM    = 10.0                       // station/CP alt meters
 	mergeSigmaAngleRefuseRad = 2.0 * math.Pi / 180       // photo angles
 )
 
@@ -103,15 +103,18 @@ func flaggedAxesFor(ctx context.Context, tx pgx.Tx, kind, id string) (*RankDefic
 		}, nil
 
 	case entityPhoto:
+		var stationID string
 		var lockAz, lockTilt, lockRoll, lockSize, lockK1, lockK2 bool
 		var sAz, sTilt, sRoll, sSize, sK1, sK2 *float64
 		err := tx.QueryRow(ctx, `
-			SELECT lock_photo_az, lock_photo_tilt, lock_photo_roll, lock_size_rad,
+			SELECT station_id,
+			       lock_photo_az, lock_photo_tilt, lock_photo_roll, lock_size_rad,
 			       lock_dist_k1, lock_dist_k2,
 			       sigma_photo_az, sigma_photo_tilt, sigma_photo_roll,
 			       sigma_size_rad, sigma_dist_k1, sigma_dist_k2
 			FROM photos WHERE id=$1`, id,
-		).Scan(&lockAz, &lockTilt, &lockRoll, &lockSize, &lockK1, &lockK2,
+		).Scan(&stationID,
+			&lockAz, &lockTilt, &lockRoll, &lockSize, &lockK1, &lockK2,
 			&sAz, &sTilt, &sRoll, &sSize, &sK1, &sK2)
 		if err != nil {
 			if err == pgx.ErrNoRows {
@@ -133,6 +136,7 @@ func flaggedAxesFor(ctx context.Context, tx pgx.Tx, kind, id string) (*RankDefic
 		}
 		return &RankDeficientAxis{
 			Kind: RankDeficientAxisKindPhoto, ID: id, Axes: axes, Reason: flaggedReason,
+			StationID: &stationID,
 		}, nil
 
 	case entityControlPoint:

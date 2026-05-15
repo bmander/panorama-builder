@@ -7,6 +7,7 @@ import type {
   Cone,
   LatLng,
   PhotoLocks,
+  PhotoSigmas,
   Pose,
   Role,
 } from './types.js';
@@ -240,6 +241,8 @@ export interface PhotoStore {
   getSelectedOpacity(): number | null;
   getLocks(o: THREE.Group): PhotoLocks;
   setLocks(o: THREE.Group, locks: PhotoLocks): void;
+  getSigmas(o: THREE.Group): PhotoSigmas;
+  setSigmas(o: THREE.Group, sigmas: PhotoSigmas): void;
   extractPose(o: THREE.Group, camLoc: LatLng | null): Pose;
   applyPose(o: THREE.Group, pose: Pose): void;
   getCones(): Cone[];
@@ -306,6 +309,12 @@ export function createPhotoStore(
     data.distK2 = 0;
     data.lockDistK1 = true;
     data.lockDistK2 = true;
+    data.sigmaPhotoAz = null;
+    data.sigmaPhotoTilt = null;
+    data.sigmaPhotoRoll = null;
+    data.sigmaSizeRad = null;
+    data.sigmaDistK1 = null;
+    data.sigmaDistK2 = null;
     data.body = body;
     data.outline = outline;
     applySize(o);
@@ -547,6 +556,26 @@ export function createPhotoStore(
       d.lockSizeRad = locks.lockSizeRad;
       d.lockDistK1 = locks.lockDistK1;
       d.lockDistK2 = locks.lockDistK2;
+    },
+    getSigmas(o) {
+      const d = overlayData(o);
+      return {
+        sigmaPhotoAz: d.sigmaPhotoAz,
+        sigmaPhotoTilt: d.sigmaPhotoTilt,
+        sigmaPhotoRoll: d.sigmaPhotoRoll,
+        sigmaSizeRad: d.sigmaSizeRad,
+        sigmaDistK1: d.sigmaDistK1,
+        sigmaDistK2: d.sigmaDistK2,
+      };
+    },
+    setSigmas(o, sigmas) {
+      const d = overlayData(o);
+      d.sigmaPhotoAz = sigmas.sigmaPhotoAz;
+      d.sigmaPhotoTilt = sigmas.sigmaPhotoTilt;
+      d.sigmaPhotoRoll = sigmas.sigmaPhotoRoll;
+      d.sigmaSizeRad = sigmas.sigmaSizeRad;
+      d.sigmaDistK1 = sigmas.sigmaDistK1;
+      d.sigmaDistK2 = sigmas.sigmaDistK2;
     },
     extractPose(o, camLoc) {
       const data = overlayData(o);

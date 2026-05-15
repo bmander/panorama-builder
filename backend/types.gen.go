@@ -717,8 +717,8 @@ type PhotoUpdate struct {
 }
 
 // RankDeficientAxis One entity whose free parameters are geometrically unobservable
-// under the requested solve mode. Returned in the 409 body when the
-// solve gate refuses.
+// under the requested solve mode. Returned in the 422 body when the
+// merge gate refuses.
 type RankDeficientAxis struct {
 	// Axes Field names per kind (e.g. ["lat","lng"] for station, ["photo_az"] for photo).
 	Axes []string `json:"axes"`
@@ -729,6 +729,12 @@ type RankDeficientAxis struct {
 
 	// Reason Human-readable explanation.
 	Reason string `json:"reason"`
+
+	// StationID For kind=photo, the station that owns this photo. Lets clients
+	// build deep links into the photo's station view (e.g.
+	// /world?sta=<station_id>&focus=<id>). Absent (null) for kinds
+	// station / control_point.
+	StationID *ID `json:"station_id,omitempty"`
 }
 
 // RankDeficientAxisKind defines model for RankDeficientAxis.Kind.
