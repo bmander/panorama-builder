@@ -137,10 +137,9 @@ type solveContext struct {
 	cpBasis      []ENUBasis
 	cpOffset     [][3]float64
 
-	obs        []Observation // observations in scope for this mode
-	slots      []slot        // free parameters (post mode + lock filtering)
-	regCount   int           // count of slots with regWeight > 0; cached for residual sizing
-	autoLocked []string      // slot.kind:slot.id:slot.name for columns frozen mid-solve
+	obs      []Observation // observations in scope for this mode
+	slots    []slot        // free parameters (post mode + lock filtering)
+	regCount int           // count of slots with regWeight > 0; cached for residual sizing
 
 	// Per-axis CP equivalence classes from problem.CPConstraints. Empty
 	// constraints yield singleton classes which collapse to the no-constraint
@@ -150,8 +149,8 @@ type solveContext struct {
 	cpAxisRep     [3]map[string]string
 	cpClassMember [3]map[string][]int
 
-	// Per-observation cached entity indices. Computed once and reused by
-	// computeOneObsResidual and (for the legacy GN path) the Jacobian fill.
+	// Per-observation cached entity indices. Computed once in buildObsIndex
+	// and passed across the FFI to bridge.cc.
 	obsStationIdx []int
 	obsPhotoIdx   []int
 	obsCPIdx      []int
@@ -507,44 +506,6 @@ func (c *solveContext) appendPhotoSlots(photos []Photo) {
 	}
 }
 
-func (c *solveContext) writeSlot(k int, v float64) {
-	s := c.slots[k]
-	switch s.kind {
-	case "station":
-		idx := c.stationIdx[s.id]
-		switch s.name {
-		case "east":
-			c.stationOffset[idx][axisEast] = v
-		case "north":
-			c.stationOffset[idx][axisNorth] = v
-		case "up":
-			c.stationOffset[idx][axisUp] = v
-		}
-	case "photo":
-		idx := c.photoIdx[s.id]
-		p := c.photoPose[idx]
-		switch s.name {
-		case "photo_az":
-			p.PhotoAz = v
-		case "photo_tilt":
-			p.PhotoTilt = v
-		case "photo_roll":
-			p.PhotoRoll = v
-		case "size_rad":
-			p.SizeRad = clampSize(v)
-		case "dist_k1":
-			p.K1 = v
-		case "dist_k2":
-			p.K2 = v
-		}
-		c.photoPose[idx] = p
-	case "control_point":
-		for _, idx := range s.cpMembers {
-			c.cpOffset[idx][s.cpAxis] = v
-		}
-	}
-}
-
 func (c *solveContext) readSlot(k int) float64 {
 	s := c.slots[k]
 	switch s.kind {
@@ -608,50 +569,13 @@ func (c *solveContext) readState() []float64 {
 	return out
 }
 
-func (c *solveContext) applyState(state []float64) {
-	for k, v := range state {
-		c.writeSlot(k, v)
-	}
-}
-
-// computeOneObsResidual returns the (az, el) residual rows for a single
-// observation. Uses cached entity indices (obsStationIdx/PhotoIdx/CPIdx) so
-// the inner loop never touches the per-ID maps.
-//
-// The CP-relative position is computed in the *station's* own local ENU:
-// reconstruct each entity's effective ECEF (origin + slot offset · basis),
-// take the ECEF delta, project into the station's basis, and add the
-// k=0.14 atmospheric refraction correction. The geometric Earth-curvature
-// drop is implicit in the ECEF math; only refraction needs an explicit term.
-//
-// az-row = WrapPi(az_pred − az_target) · cos(el_target),
-// el-row = el_pred − el_target. The cos(el) weight makes 1° at the horizon
-// weigh more arc-length than 1° near the zenith.
-func (c *solveContext) computeOneObsResidual(k int) (float64, float64) {
-	o := c.obs[k]
-	pIdx := c.obsPhotoIdx[k]
-	pose := c.photoPose[pIdx]
-	sIdx := c.obsStationIdx[k]
-	cpIdx := c.obsCPIdx[k]
-
-	sECEF := currentECEF(c.stationOriginECEF[sIdx], c.stationBasis[sIdx], c.stationOffset[sIdx])
-	cECEF := currentECEF(c.cpOriginECEF[cpIdx], c.cpBasis[cpIdx], c.cpOffset[cpIdx])
-	basis := c.stationBasis[sIdx]
-	dE, dN, dU := ProjectECEFDeltaToLocalENU(
-		cECEF[0]-sECEF[0], cECEF[1]-sECEF[1], cECEF[2]-sECEF[2], basis)
-	dU += RefractionK * (dE*dE + dN*dN) / (2 * basis.Rlocal)
-
-	azPred, elPred := ProjectPOI(pose, o.U, o.V)
-	azTgt, elTgt := BearingENU(dE, dN, dU)
-
-	return ResidualFromBearings(azPred, elPred, azTgt, elTgt)
-}
-
 // ResidualFromBearings combines predicted and target viewer-frame
-// directions into the two-row angular residual the solver minimizes.
+// directions into the two-row angular residual the solver minimizes,
+// matching the math the C++ cost functor in cost_functor.h implements.
 // The az row is weighted by cos(el_target) so 1° at the horizon weighs
 // more arc-length than 1° near the zenith; the floor on cos(el) keeps
-// the polar singularity bounded.
+// the polar singularity bounded. Exported for control_point_fits.go,
+// which fits per-CP surfaces using the same residual definition.
 func ResidualFromBearings(azPred, elPred, azTgt, elTgt float64) (azRow, elRow float64) {
 	cosEl := math.Cos(elTgt)
 	if math.Abs(cosEl) < minCosEl {
@@ -661,37 +585,6 @@ func ResidualFromBearings(azPred, elPred, azTgt, elTgt float64) (azRow, elRow fl
 		}
 	}
 	return WrapPi(azPred-azTgt) * cosEl, elPred - elTgt
-}
-
-// residualSize returns the number of residual rows: 2 angular rows per
-// observation plus one Tikhonov row per regularized slot.
-func (c *solveContext) residualSize() int { return 2*len(c.obs) + c.regCount }
-
-// computeResidualsInto writes the residual vector into dst (resizing if
-// needed). Returns the populated slice. See computeOneObsResidual for the
-// per-observation rows; reg rows are λ·p, pulling each regularized slot
-// toward zero (equivalent to an N(0, 1/λ) Gaussian prior).
-func (c *solveContext) computeResidualsInto(dst []float64) []float64 {
-	m := c.residualSize()
-	if cap(dst) < m {
-		dst = make([]float64, m)
-	} else {
-		dst = dst[:m]
-	}
-	for k := range c.obs {
-		az, el := c.computeOneObsResidual(k)
-		dst[2*k] = az
-		dst[2*k+1] = el
-	}
-	regIdx := 2 * len(c.obs)
-	for k, s := range c.slots {
-		if s.regWeight == 0 {
-			continue
-		}
-		dst[regIdx] = s.regWeight * c.readSlot(k)
-		regIdx++
-	}
-	return dst
 }
 
 // scopedStationLocks reports the per-axis lock state used by the Ceres
@@ -894,28 +787,4 @@ func clampSize(v float64) float64 {
 		return hi
 	}
 	return v
-}
-
-func norm(r []float64) float64 {
-	s := 0.0
-	for _, v := range r {
-		s += v * v
-	}
-	return math.Sqrt(s)
-}
-
-func rms(n float64, m int) float64 {
-	if m == 0 {
-		return 0
-	}
-	return n / math.Sqrt(float64(m))
-}
-
-func contains(xs []string, x string) bool {
-	for _, v := range xs {
-		if v == x {
-			return true
-		}
-	}
-	return false
 }

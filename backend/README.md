@@ -8,9 +8,9 @@ so a single `make run` brings up both API and SPA on `:8080`.
 
 ## Quick start
 
-Requires Go 1.22+ for the stdlib method-routing mux. The default build
-also links Google Ceres-Solver via cgo for bundle adjustment (see
-`solver/bridge.cc`); install system deps first:
+Requires Go 1.22+ for the stdlib method-routing mux. Links Google
+Ceres-Solver via cgo for bundle adjustment (see `solver/bridge.cc`);
+install system deps first:
 
 ```sh
 # macOS
@@ -18,10 +18,6 @@ brew install ceres-solver eigen suite-sparse glog gflags
 # Linux
 sudo apt install libceres-dev libeigen3-dev libsuitesparse-dev libgoogle-glog-dev libgflags-dev
 ```
-
-To opt out (e.g. on a host without Ceres available) use `make build-legacy`,
-which builds with `-tags go_solver_gn` and selects the pure-Go Gauss-Newton
-solver in `solver/solve_legacy.go`.
 
 First run:
 

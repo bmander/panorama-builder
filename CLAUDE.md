@@ -63,10 +63,10 @@ Single Go package under `backend/`:
 - `map_measurements.go`, `image_measurements.go` — straightforward CRUD; `image_measurements.control_point_id` is the FK that encodes a "match"
 - `migrations.go` + `migrations/NNNN_*.sql` — embedded migrations applied at startup; tracked in `schema_migrations`
 - `types.gen.go` — generated from `../openapi.yaml` (the API contract); regenerate via `make generate`. Mirror file on the frontend is `frontend/src/api-types.gen.ts`
-- `solver/` — bundle-adjustment solver invoked from `solve_handlers.go` / `solve_stream.go`. Default build links Google Ceres-Solver via cgo (`solver/bridge.cc` + `solver/bridge_ceres.go`); a pure-Go Gauss-Newton fallback lives behind `//go:build go_solver_gn` in `solver/solve_legacy.go` for A/B and Ceres-free environments. Shared scaffolding (problem build, CP-class union-find, `composeChanges` diff emission) is in `solver/context.go` and stays the same regardless of backend.
+- `solver/` — bundle-adjustment solver invoked from `solve_handlers.go` / `solve_stream.go`. Links Google Ceres-Solver via cgo (`solver/bridge.cc` + `solver/bridge.go`). Problem build, CP-class union-find, and the `composeChanges` diff emission live in `solver/context.go`.
 - Domain vocabulary: **stations** (camera setup points; formerly "locations"/"projects"), **control points** (cross-station landmarks with latent estimated locations), **map measurements** (per-station ground-truth observations on the map; formerly "map POI"), **image measurements** (reticle anchors on photos; formerly "image POI"). Both measurement types FK to a control point
 
-External deps: `github.com/jackc/pgx/v5` (Postgres), `gonum.org/v1/gonum` (linear algebra for the legacy solver), and Ceres-Solver linked via cgo (system install — see `backend/README.md`). Targets Go 1.22+ for stdlib method-routing.
+External deps: `github.com/jackc/pgx/v5` (Postgres) and Ceres-Solver linked via cgo (system install — see `backend/README.md`). Targets Go 1.22+ for stdlib method-routing.
 
 ## Conventions
 

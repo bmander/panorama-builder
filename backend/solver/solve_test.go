@@ -427,28 +427,10 @@ func TestSolveRankDeficientColumnAutoLocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("solve: %v", err)
 	}
+	// The load-bearing assertion: a rank-deficient unobserved CP must not
+	// produce NaN in the residual. Ceres' LM damping handles this silently.
 	if math.IsNaN(res.FinalResidualRMS) {
 		t.Fatalf("residual is NaN; rank-defect not handled")
-	}
-	// Expect cp2's three slots in autoLocked, if the backend populates this
-	// diagnostic field. The Ceres backend handles rank deficiency silently
-	// via Levenberg-Marquardt damping and returns an empty list — both
-	// behaviors are acceptable; the load-bearing assertion is "no NaN".
-	if len(res.AutoLockedColumns) == 0 {
-		return
-	}
-	expect := []string{"control_point:cp2:north", "control_point:cp2:east", "control_point:cp2:up"}
-	for _, name := range expect {
-		found := false
-		for _, got := range res.AutoLockedColumns {
-			if got == name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected %q in AutoLockedColumns; got %v", name, res.AutoLockedColumns)
-		}
 	}
 }
 

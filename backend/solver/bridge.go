@@ -1,5 +1,3 @@
-//go:build !go_solver_gn
-
 package solver
 
 // #cgo CXXFLAGS: -std=c++17 -O2 -DGLOG_USE_GLOG_EXPORT -I/usr/local/include -I/usr/local/include/eigen3 -I/opt/homebrew/include -I/opt/homebrew/include/eigen3
@@ -91,9 +89,8 @@ func solveBridge(c *solveContext) (Result, error) {
 	if nObs == 0 {
 		state := c.readState()
 		return Result{
-			Converged:         true,
-			AutoLockedColumns: c.autoLocked,
-			Changes:           c.composeChanges(state, state),
+			Converged: true,
+			Changes:   c.composeChanges(state, state),
 		}, nil
 	}
 
@@ -358,7 +355,6 @@ func solveBridge(c *solveContext) (Result, error) {
 		FinalResidualRMS:   finalRMS,
 		Converged:          outConverged != 0 && !diverged,
 		Diverged:           diverged,
-		AutoLockedColumns:  c.autoLocked,
 		Changes:            changes,
 	}, nil
 }
