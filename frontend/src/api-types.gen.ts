@@ -570,6 +570,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/rank-deficient": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read-only dry-run of the merge σ gate; returns the per-entity flagged
+         *     axes the merge endpoint would block on. Empty list means clean.
+         * @description Applies the session's ops inside a transaction we never commit, runs
+         *     the same per-axis σ check the merge endpoint uses, then rolls back.
+         *     Used by the session widget to surface "X problems" between Solve and
+         *     Save without forcing the user to attempt the merge first.
+         */
+        get: operations["getSessionRankDeficient"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/abandon": {
         parameters: {
             query?: never;
@@ -747,6 +773,23 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+            /**
+             * Format: double
+             * @description Standard deviation of lat at the last successful solve, in meters
+             *     (local-ENU north). NULL until this station participates in a
+             *     converged solve, or when the axis is fully unobservable.
+             */
+            sigma_lat?: number | null;
+            /**
+             * Format: double
+             * @description σ of lng in meters (local-ENU east). NULL semantics as sigma_lat.
+             */
+            sigma_lng?: number | null;
+            /**
+             * Format: double
+             * @description σ of alt in meters. NULL semantics as sigma_lat.
+             */
+            sigma_alt?: number | null;
         };
         Photo: {
             id: components["schemas"]["Id"];
@@ -809,10 +852,43 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+            /**
+             * Format: double
+             * @description Standard deviation of photo_az at the last successful solve,
+             *     in radians. NULL until this photo participates in a converged
+             *     solve, or when the axis is locked / fully unobservable.
+             */
+            sigma_photo_az?: number | null;
+            /**
+             * Format: double
+             * @description σ of photo_tilt in radians. NULL semantics as sigma_photo_az.
+             */
+            sigma_photo_tilt?: number | null;
+            /**
+             * Format: double
+             * @description σ of photo_roll in radians. NULL semantics as sigma_photo_az.
+             */
+            sigma_photo_roll?: number | null;
+            /**
+             * Format: double
+             * @description σ of size_rad in radians. NULL semantics as sigma_photo_az.
+             */
+            sigma_size_rad?: number | null;
+            /**
+             * Format: double
+             * @description σ of dist_k1, dimensionless. NULL semantics as sigma_photo_az.
+             */
+            sigma_dist_k1?: number | null;
+            /**
+             * Format: double
+             * @description σ of dist_k2, dimensionless. NULL semantics as sigma_photo_az.
+             */
+            sigma_dist_k2?: number | null;
         };
         /**
          * @description Listing-only wrapper around Photo that adds the count of image
-         *     measurements anchored on this photo.
+         *     measurements anchored on this photo. Per-axis σ values from the
+         *     last successful solve are exposed inline on the Photo itself.
          */
         PhotoListItem: {
             photo: components["schemas"]["Photo"];
@@ -876,6 +952,23 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+            /**
+             * Format: double
+             * @description σ of est_lat in meters (local-ENU north) at the last successful
+             *     solve. NULL until this CP participates in a converged solve,
+             *     or when the axis is locked / fully unobservable.
+             */
+            sigma_est_lat?: number | null;
+            /**
+             * Format: double
+             * @description σ of est_lng in meters (local-ENU east). NULL semantics as sigma_est_lat.
+             */
+            sigma_est_lng?: number | null;
+            /**
+             * Format: double
+             * @description σ of est_alt in meters. NULL semantics as sigma_est_lat.
+             */
+            sigma_est_alt?: number | null;
         };
         ControlPointImageObservation: {
             id: components["schemas"]["Id"];
@@ -1180,6 +1273,31 @@ export interface components {
              */
             dry_run?: boolean;
         };
+        /**
+         * @description One entity whose free parameters are geometrically unobservable
+         *     under the requested solve mode. Returned in the 409 body when the
+         *     solve gate refuses.
+         */
+        RankDeficientAxis: {
+            /** @enum {string} */
+            kind: "station" | "photo" | "control_point";
+            id: components["schemas"]["Id"];
+            /** @description Field names per kind (e.g. ["lat","lng"] for station, ["photo_az"] for photo). */
+            axes: string[];
+            /** @description Human-readable explanation. */
+            reason: string;
+        };
+        /**
+         * @description Body of the 422 returned by /sessions/{id}/merge when any touched
+         *     entity's free-axis σ from the last solve exceeds the merge gate's
+         *     refuse threshold. Resubmit MergeRequest with
+         *     `allow_underdetermined: true` to bypass.
+         */
+        RankDeficientError: {
+            /** @enum {string} */
+            error: "rank_deficient";
+            deficient_axes: components["schemas"]["RankDeficientAxis"][];
+        };
         /** @description One row's before/after for the keys the solver actually moved. */
         EntityChange: {
             /** @enum {string} */
@@ -1263,6 +1381,12 @@ export interface components {
         MergeRequest: {
             sign_off: string;
             message?: string;
+            /**
+             * @description When false (default), merge refuses if any entity touched by the
+             *     session has a free-axis σ above the configured threshold. Set
+             *     true to override after the user reviews the flagged axes.
+             */
+            allow_underdetermined?: boolean;
         };
         RevertRequest: {
             sign_off: string;
@@ -2293,6 +2417,31 @@ export interface operations {
             };
         };
     };
+    getSessionRankDeficient: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        deficient_axes: components["schemas"]["RankDeficientAxis"][];
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
     abandonSession: {
         parameters: {
             query?: never;
@@ -2356,6 +2505,19 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConflictsResponse"];
+                };
+            };
+            /**
+             * @description Rank-deficient merge: one or more touched entities have a
+             *     free-axis σ above the configured refuse threshold. Resubmit
+             *     with allow_underdetermined=true to bypass.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RankDeficientError"];
                 };
             };
         };

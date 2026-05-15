@@ -17,12 +17,14 @@ import (
 // rather than mutating main. Reads (GET) apply the session overlay when an
 // X-Session-Id header is present; otherwise they return the main-only view.
 
-const stationCols = `id, lat, lng, alt, name, lock_lat, lock_lng, lock_alt, captured_at, created_at, updated_at`
+const stationCols = `id, lat, lng, alt, name, lock_lat, lock_lng, lock_alt, captured_at, created_at, updated_at,
+	sigma_lat, sigma_lng, sigma_alt`
 
 func scanStation(row pgx.Row) (Station, error) {
 	var st Station
 	err := row.Scan(&st.ID, &st.Lat, &st.Lng, &st.Alt, &st.Name,
-		&st.LockLat, &st.LockLng, &st.LockAlt, &st.CapturedAt, &st.CreatedAt, &st.UpdatedAt)
+		&st.LockLat, &st.LockLng, &st.LockAlt, &st.CapturedAt, &st.CreatedAt, &st.UpdatedAt,
+		&st.SigmaLat, &st.SigmaLng, &st.SigmaAlt)
 	return st, err
 }
 

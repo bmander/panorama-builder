@@ -2,6 +2,7 @@ package solver_test
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/bmander/panorama-builder/backend/solver"
@@ -74,8 +75,16 @@ func TestSolveIdentityNoChange(t *testing.T) {
 	if res.InitialResidualRMS > 1e-10 {
 		t.Errorf("identity world should have ~zero initial residual; got %v", res.InitialResidualRMS)
 	}
-	if len(res.Changes) != 0 {
-		t.Errorf("identity world should have no changes; got %d", len(res.Changes))
+	// An identity-world solve doesn't move any parameter, but it still
+	// computes per-entity σ from the converged Hessian and writes those
+	// back through the journal. The load-bearing assertion is that no
+	// *parameter* keys changed — σ-only changes are expected.
+	for _, c := range res.Changes {
+		for k := range c.After {
+			if !strings.HasPrefix(k, "sigma_") {
+				t.Errorf("identity world had a non-σ change: %s.%s.%s", c.Kind, c.ID, k)
+			}
+		}
 	}
 }
 

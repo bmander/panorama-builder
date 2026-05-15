@@ -190,4 +190,13 @@ type Result struct {
 	Diverged           bool           `json:"diverged"`
 	AutoLockedColumns  []string       `json:"auto_locked_columns,omitempty"`
 	Changes            []EntityChange `json:"changes"`
+
+	// PerEntitySigma is the per-parameter standard deviation at the
+	// converged solution, computed via Ceres' Covariance estimator. Keyed
+	// by entity ID; inner map keyed by field name (e.g. "lat", "lng",
+	// "alt" on stations; "photo_az" etc. on photos; "est_lat" etc. on CPs).
+	// Units: meters for positions, radians for angles, unitless for K1/K2.
+	// Missing keys → axis was locked or fully unobservable. Empty map ⇒
+	// covariance was not computed (e.g. solver failed before convergence).
+	PerEntitySigma map[string]map[string]float64 `json:"per_entity_sigma,omitempty"`
 }

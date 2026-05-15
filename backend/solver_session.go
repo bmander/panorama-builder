@@ -452,6 +452,15 @@ func applyChangeToStation(st *Station, after map[string]float64) {
 			st.Lng = v
 		case "alt":
 			st.Alt = v
+		case "sigma_lat":
+			s := v
+			st.SigmaLat = &s
+		case "sigma_lng":
+			s := v
+			st.SigmaLng = &s
+		case "sigma_alt":
+			s := v
+			st.SigmaAlt = &s
 		}
 	}
 }
@@ -471,6 +480,24 @@ func applyChangeToPhoto(p *Photo, after map[string]float64) {
 			p.DistK1 = v
 		case "dist_k2":
 			p.DistK2 = v
+		case "sigma_photo_az":
+			s := v
+			p.SigmaPhotoAz = &s
+		case "sigma_photo_tilt":
+			s := v
+			p.SigmaPhotoTilt = &s
+		case "sigma_photo_roll":
+			s := v
+			p.SigmaPhotoRoll = &s
+		case "sigma_size_rad":
+			s := v
+			p.SigmaSizeRad = &s
+		case "sigma_dist_k1":
+			s := v
+			p.SigmaDistK1 = &s
+		case "sigma_dist_k2":
+			s := v
+			p.SigmaDistK2 = &s
 		}
 	}
 }
@@ -485,6 +512,12 @@ func applyChangeToControlPoint(cp *ControlPoint, after map[string]float64) {
 			cp.EstLng = &val
 		case "est_alt":
 			cp.EstAlt = &val
+		case "sigma_est_lat":
+			cp.SigmaEstLat = &val
+		case "sigma_est_lng":
+			cp.SigmaEstLng = &val
+		case "sigma_est_alt":
+			cp.SigmaEstAlt = &val
 		}
 	}
 }

@@ -13,10 +13,12 @@
 
 #include <ceres/ceres.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -308,6 +310,101 @@ int Run(const pc_problem* prob) {
     *prob->out_final_cost   = summary.final_cost;
     *prob->out_converged    = summary.termination_type == ceres::CONVERGENCE ? 1 : 0;
     *prob->out_aborted      = aborted ? 1 : 0;
+
+    // Per-parameter σ from Ceres' covariance estimator. Pre-fill the output
+    // arrays with NaN; downstream Go treats NaN as "unknown / unobservable".
+    const double NaN = std::numeric_limits<double>::quiet_NaN();
+    for (int i = 0; i < n_stations * 3; ++i) prob->out_station_sigma[i] = NaN;
+    for (int i = 0; i < n_photos * 6;   ++i) prob->out_photo_sigma[i]   = NaN;
+    for (int i = 0; i < n_cps * 3;      ++i) prob->out_cp_sigma[i]      = NaN;
+    *prob->out_sigma_ok = 0;
+
+    // Skip covariance when the solve clearly didn't reach a meaningful state.
+    // (Aborted runs leave the snapshot in place but the Jacobian still
+    // reflects the final state; for ABORT we still attempt covariance so the
+    // caller gets per-axis observability for whatever fit was reached.)
+    if (summary.termination_type != ceres::FAILURE) {
+        ceres::Covariance::Options cov_opts;
+        // DENSE_SVD is the slowest but is the one option that copes with
+        // rank-deficient Hessians by reporting NaN for unobservable axes
+        // instead of erroring outright. For this app the parameter count is
+        // small (≤ thousands) so cost is acceptable.
+        cov_opts.algorithm_type = ceres::DENSE_SVD;
+        cov_opts.null_space_rank = -1;  // automatic — drop singular directions
+        ceres::Covariance covariance(cov_opts);
+
+        // Diagonal blocks only: we want per-axis σ, not cross-correlations.
+        // Deduplicate aliased CP blocks via cp_axis_rep so we don't ask for
+        // the same block twice.
+        std::vector<std::pair<const double*, const double*>> diag_blocks;
+        diag_blocks.reserve(n_stations*3 + n_photos + n_cps*3);
+        std::vector<const double*> seen;
+        auto add_block = [&](const double* p) {
+            for (const double* q : seen) if (q == p) return;
+            seen.push_back(p);
+            diag_blocks.emplace_back(p, p);
+        };
+        for (int i = 0; i < n_stations; ++i) {
+            for (int axis = 0; axis < 3; ++axis) add_block(station_block(i, axis));
+        }
+        for (int i = 0; i < n_photos; ++i) add_block(photo_block(i));
+        for (int i = 0; i < n_cps; ++i) {
+            for (int axis = 0; axis < 3; ++axis) add_block(cp_block(i, axis));
+        }
+
+        // Compute() returns false on a rank deficiency it couldn't resolve.
+        // Per-block extraction still works when we proceed though, so we try
+        // anyway and let NaN propagate naturally for failed blocks.
+        const bool cov_ok = covariance.Compute(diag_blocks, &problem);
+        *prob->out_sigma_ok = cov_ok ? 1 : 0;
+
+        // Ceres computes (JᵀJ)⁻¹ assuming residuals have unit variance. The
+        // real parameter covariance is σ_r² · (JᵀJ)⁻¹ where σ_r² is the
+        // estimated residual variance (2 · final_cost / (m − n)). Without
+        // this scaling the raw σ values would be the Cramér-Rao bound at
+        // unit noise — orders of magnitude too large for the actual residual
+        // floor we converge to.
+        const int m = problem.NumResiduals();
+        const int n = problem.NumParameters();
+        const int dof = m > n ? m - n : 1;
+        const double residual_var = 2.0 * summary.final_cost / dof;
+        const double residual_scale = residual_var > 0 ? std::sqrt(residual_var) : 1.0;
+
+        // Helper: read the diagonal of a covariance block and write sqrt(σ²)
+        // (scaled to the actual residual variance) into the output slot.
+        auto fill_sigma = [&](const double* block, double* out, int sz) {
+            std::vector<double> buf(sz * sz);
+            if (!covariance.GetCovarianceBlock(block, block, buf.data())) {
+                return;
+            }
+            for (int j = 0; j < sz; ++j) {
+                const double var = buf[j * sz + j];
+                if (var >= 0 && std::isfinite(var)) {
+                    out[j] = std::sqrt(var) * residual_scale;
+                } else {
+                    out[j] = NaN;
+                }
+            }
+        };
+
+        for (int i = 0; i < n_stations; ++i) {
+            for (int axis = 0; axis < 3; ++axis) {
+                fill_sigma(station_block(i, axis), prob->out_station_sigma + 3*i + axis, 1);
+            }
+        }
+        for (int i = 0; i < n_photos; ++i) {
+            fill_sigma(photo_block(i), prob->out_photo_sigma + 6*i, 6);
+        }
+        for (int i = 0; i < n_cps; ++i) {
+            for (int axis = 0; axis < 3; ++axis) {
+                // Non-rep CPs share their rep's block; reading it produces the
+                // same σ — emit it on every member so the per-CP output is
+                // self-contained.
+                fill_sigma(cp_block(i, axis), prob->out_cp_sigma + 3*i + axis, 1);
+            }
+        }
+    }
+
     return 0;
 }
 

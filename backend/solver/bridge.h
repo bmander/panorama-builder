@@ -71,6 +71,17 @@ typedef struct {
     int32_t *out_converged;     // 1 if Ceres reported CONVERGENCE
     int32_t *out_aborted;       // 1 if cancel callback fired
 
+    // Per-parameter standard deviation at the converged solution. C++ computes
+    // these via ceres::Covariance (DENSE_SVD, robust to rank deficiency).
+    // Same layout as the corresponding *_offset / *_pose buffers. NaN means
+    // the axis's covariance could not be determined (locked, or fully
+    // unobservable). All-NaN output is the signal that covariance computation
+    // failed entirely (e.g. solver diverged); caller treats as "no σ data".
+    double *out_station_sigma;  // [n_stations * 3]   (meters in local ENU)
+    double *out_photo_sigma;    // [n_photos * 6]     (radians for angles, unitless for K1/K2)
+    double *out_cp_sigma;       // [n_cps * 3]        (meters in local ENU)
+    int32_t *out_sigma_ok;      // 1 if covariance was computed; 0 means all NaN
+
     // Iteration-callback context: opaque to C++, passed back through to
     // pc_iter_callback verbatim. The Go side allocates a uint64 handle into
     // its own context table and stashes it here.

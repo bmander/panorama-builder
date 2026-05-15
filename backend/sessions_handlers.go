@@ -271,6 +271,68 @@ func orderOpsForApply(ops []journalOp) []netOp {
 
 var opPhase = map[string]int{"insert": 0, "update": 1, "delete": 2}
 
+// getSessionRankDeficient is the read-only dry-run companion to mergeSession's
+// σ gate. Applies the session's plan inside a transaction we never commit,
+// runs mergeGateCheck on the resulting state, then rolls back. Returns the
+// list the merge endpoint would block on (empty when clean). Used by the
+// session widget to surface "X problems" between Solve and Save.
+func (s *Server) getSessionRankDeficient(w http.ResponseWriter, r *http.Request) {
+	id := requireID(w, r, "id")
+	if id == "" {
+		return
+	}
+	ctx := r.Context()
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var sess Session
+	err = tx.QueryRow(ctx, `
+		SELECT id, base_seq, status, next_seq FROM sessions WHERE id=$1`, id,
+	).Scan(&sess.ID, &sess.BaseSeq, &sess.Status, &sess.NextSeq)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	type body struct {
+		DeficientAxes []RankDeficientAxis `json:"deficient_axes"`
+	}
+	// Closed sessions: their effect is already on main, so checking against
+	// the session journal would double-count. Return empty.
+	if sess.Status != "open" {
+		writeJSON(w, http.StatusOK, body{DeficientAxes: []RankDeficientAxis{}})
+		return
+	}
+
+	ops, err := loadSessionOpsTx(ctx, tx, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if len(ops) > 0 {
+		plan := orderOpsForApply(ops)
+		// Best-effort apply: a session with conflicts can't merge anyway, so
+		// return whatever the gate sees on the pre-apply state in that case.
+		if err := applyPlanToMain(ctx, tx, plan); err != nil {
+			// Fall through to mergeGateCheck on pre-apply state — main may
+			// already have σ values from previous commits.
+		}
+	}
+
+	flagged, err := mergeGateCheck(ctx, tx, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if flagged == nil {
+		flagged = []RankDeficientAxis{}
+	}
+	writeJSON(w, http.StatusOK, body{DeficientAxes: flagged})
+}
+
 // mergeSession applies all ops in the session as a single commit. Refuses
 // on conflict.
 func (s *Server) mergeSession(w http.ResponseWriter, r *http.Request) {
@@ -352,6 +414,21 @@ func (s *Server) mergeSession(w http.ResponseWriter, r *http.Request) {
 	if err := applyPlanToMain(ctx, tx, plan); err != nil {
 		writeApplyError(w, err)
 		return
+	}
+	// σ-gate: refuse merge if any touched entity has a free-axis σ over the
+	// refuse threshold. Runs AFTER apply so we see the post-merge state
+	// (which may include σ values just written by a solve in this session).
+	// MergeRequest.allow_underdetermined bypasses.
+	if body.AllowUnderdetermined == nil || !*body.AllowUnderdetermined {
+		flagged, err := mergeGateCheck(ctx, tx, id)
+		if err != nil {
+			writeErrorFromDB(w, err)
+			return
+		}
+		if len(flagged) > 0 {
+			writeRankDeficient(w, flagged)
+			return
+		}
 	}
 	if err := bumpEntityCommits(ctx, tx, plan, seq); err != nil {
 		writeErrorFromDB(w, err)

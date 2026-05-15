@@ -61,6 +61,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/sessions", s.postSession)
 	mux.HandleFunc("GET /api/sessions/{id}", s.getSession)
 	mux.HandleFunc("GET /api/sessions/{id}/ops", s.getSessionOps)
+	mux.HandleFunc("GET /api/sessions/{id}/rank-deficient", s.getSessionRankDeficient)
 	mux.HandleFunc("POST /api/sessions/{id}/abandon", s.abandonSession)
 	mux.HandleFunc("POST /api/sessions/{id}/merge", s.mergeSession)
 

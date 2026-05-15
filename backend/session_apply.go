@@ -25,9 +25,11 @@ func insertEntityFromJSON(ctx context.Context, tx pgx.Tx, entityType string, bod
 		}
 		_, err := tx.Exec(ctx, `
 			INSERT INTO stations
-			  (id, lat, lng, alt, name, lock_lat, lock_lng, lock_alt, captured_at, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
-			st.ID, st.Lat, st.Lng, st.Alt, st.Name, st.LockLat, st.LockLng, st.LockAlt, st.CapturedAt, st.CreatedAt)
+			  (id, lat, lng, alt, name, lock_lat, lock_lng, lock_alt, captured_at,
+			   sigma_lat, sigma_lng, sigma_alt, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())`,
+			st.ID, st.Lat, st.Lng, st.Alt, st.Name, st.LockLat, st.LockLng, st.LockAlt, st.CapturedAt,
+			st.SigmaLat, st.SigmaLng, st.SigmaAlt, st.CreatedAt)
 		return err
 	case entityPhoto:
 		var p Photo
@@ -39,15 +41,23 @@ func insertEntityFromJSON(ctx context.Context, tx pgx.Tx, entityType string, bod
 			  (id, station_id, blob_path, mime_type, size_bytes, aspect,
 			   photo_az, photo_tilt, photo_roll, size_rad, opacity,
 			   lock_photo_az, lock_photo_tilt, lock_photo_roll, lock_size_rad,
-			   dist_k1, dist_k2, lock_dist_k1, lock_dist_k2, created_at, updated_at)
+			   dist_k1, dist_k2, lock_dist_k1, lock_dist_k2,
+			   sigma_photo_az, sigma_photo_tilt, sigma_photo_roll,
+			   sigma_size_rad, sigma_dist_k1, sigma_dist_k2,
+			   created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6,
 			        $7, $8, $9, $10, $11,
 			        $12, $13, $14, $15,
-			        $16, $17, $18, $19, $20, NOW())`,
+			        $16, $17, $18, $19,
+			        $20, $21, $22, $23, $24, $25,
+			        $26, NOW())`,
 			p.ID, p.StationID, p.BlobPath, p.MimeType, p.SizeBytes, p.Aspect,
 			p.PhotoAz, p.PhotoTilt, p.PhotoRoll, p.SizeRad, p.Opacity,
 			p.LockPhotoAz, p.LockPhotoTilt, p.LockPhotoRoll, p.LockSizeRad,
-			p.DistK1, p.DistK2, p.LockDistK1, p.LockDistK2, p.CreatedAt)
+			p.DistK1, p.DistK2, p.LockDistK1, p.LockDistK2,
+			p.SigmaPhotoAz, p.SigmaPhotoTilt, p.SigmaPhotoRoll,
+			p.SigmaSizeRad, p.SigmaDistK1, p.SigmaDistK2,
+			p.CreatedAt)
 		return err
 	case entityImageMeasurement:
 		var im ImageMeasurement
@@ -69,13 +79,19 @@ func insertEntityFromJSON(ctx context.Context, tx pgx.Tx, entityType string, bod
 			INSERT INTO control_points
 			  (id, description, notes, est_lat, est_lng, est_alt, started_at, ended_at,
 			   started_after, ended_before,
-			   lock_est_lat, lock_est_lng, lock_est_alt, created_at, updated_at)
+			   lock_est_lat, lock_est_lng, lock_est_alt,
+			   sigma_est_lat, sigma_est_lng, sigma_est_alt,
+			   created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
 			        $9, $10,
-			        $11, $12, $13, $14, NOW())`,
+			        $11, $12, $13,
+			        $14, $15, $16,
+			        $17, NOW())`,
 			cp.ID, cp.Description, cp.Notes, cp.EstLat, cp.EstLng, cp.EstAlt, cp.StartedAt, cp.EndedAt,
 			cp.StartedAfter, cp.EndedBefore,
-			cp.LockEstLat, cp.LockEstLng, cp.LockEstAlt, cp.CreatedAt)
+			cp.LockEstLat, cp.LockEstLng, cp.LockEstAlt,
+			cp.SigmaEstLat, cp.SigmaEstLng, cp.SigmaEstAlt,
+			cp.CreatedAt)
 		return err
 	case entityCPConstraint:
 		var c CPConstraint
@@ -112,10 +128,12 @@ func updateEntityFromJSON(ctx context.Context, tx pgx.Tx, entityType, id string,
 			UPDATE stations SET
 			  lat=$2, lng=$3, alt=$4, name=$5,
 			  lock_lat=$6, lock_lng=$7, lock_alt=$8, captured_at=$9,
+			  sigma_lat=$10, sigma_lng=$11, sigma_alt=$12,
 			  updated_at=NOW()
 			WHERE id=$1`,
 			id, st.Lat, st.Lng, st.Alt, st.Name,
-			st.LockLat, st.LockLng, st.LockAlt, st.CapturedAt)
+			st.LockLat, st.LockLng, st.LockAlt, st.CapturedAt,
+			st.SigmaLat, st.SigmaLng, st.SigmaAlt)
 		return err
 	case entityPhoto:
 		var p Photo
@@ -128,12 +146,16 @@ func updateEntityFromJSON(ctx context.Context, tx pgx.Tx, entityType, id string,
 			  photo_az=$7, photo_tilt=$8, photo_roll=$9, size_rad=$10, opacity=$11,
 			  lock_photo_az=$12, lock_photo_tilt=$13, lock_photo_roll=$14, lock_size_rad=$15,
 			  dist_k1=$16, dist_k2=$17, lock_dist_k1=$18, lock_dist_k2=$19,
+			  sigma_photo_az=$20, sigma_photo_tilt=$21, sigma_photo_roll=$22,
+			  sigma_size_rad=$23, sigma_dist_k1=$24, sigma_dist_k2=$25,
 			  updated_at=NOW()
 			WHERE id=$1`,
 			id, p.StationID, p.BlobPath, p.MimeType, p.SizeBytes, p.Aspect,
 			p.PhotoAz, p.PhotoTilt, p.PhotoRoll, p.SizeRad, p.Opacity,
 			p.LockPhotoAz, p.LockPhotoTilt, p.LockPhotoRoll, p.LockSizeRad,
-			p.DistK1, p.DistK2, p.LockDistK1, p.LockDistK2)
+			p.DistK1, p.DistK2, p.LockDistK1, p.LockDistK2,
+			p.SigmaPhotoAz, p.SigmaPhotoTilt, p.SigmaPhotoRoll,
+			p.SigmaSizeRad, p.SigmaDistK1, p.SigmaDistK2)
 		return err
 	case entityImageMeasurement:
 		var im ImageMeasurement
@@ -157,12 +179,14 @@ func updateEntityFromJSON(ctx context.Context, tx pgx.Tx, entityType, id string,
 			  started_at=$7, ended_at=$8,
 			  started_after=$9, ended_before=$10,
 			  lock_est_lat=$11, lock_est_lng=$12, lock_est_alt=$13,
+			  sigma_est_lat=$14, sigma_est_lng=$15, sigma_est_alt=$16,
 			  updated_at=NOW()
 			WHERE id=$1`,
 			id, cp.Description, cp.Notes, cp.EstLat, cp.EstLng, cp.EstAlt,
 			cp.StartedAt, cp.EndedAt,
 			cp.StartedAfter, cp.EndedBefore,
-			cp.LockEstLat, cp.LockEstLng, cp.LockEstAlt)
+			cp.LockEstLat, cp.LockEstLng, cp.LockEstAlt,
+			cp.SigmaEstLat, cp.SigmaEstLng, cp.SigmaEstAlt)
 		return err
 	case entityCPConstraint:
 		var c CPConstraint

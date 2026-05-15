@@ -115,6 +115,42 @@ func (e EntityRefEntityType) Valid() bool {
 	}
 }
 
+// Defines values for RankDeficientAxisKind.
+const (
+	RankDeficientAxisKindControlPoint RankDeficientAxisKind = "control_point"
+	RankDeficientAxisKindPhoto        RankDeficientAxisKind = "photo"
+	RankDeficientAxisKindStation      RankDeficientAxisKind = "station"
+)
+
+// Valid indicates whether the value is a known member of the RankDeficientAxisKind enum.
+func (e RankDeficientAxisKind) Valid() bool {
+	switch e {
+	case RankDeficientAxisKindControlPoint:
+		return true
+	case RankDeficientAxisKindPhoto:
+		return true
+	case RankDeficientAxisKindStation:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RankDeficientErrorError.
+const (
+	RankDeficient RankDeficientErrorError = "rank_deficient"
+)
+
+// Valid indicates whether the value is a known member of the RankDeficientErrorError enum.
+func (e RankDeficientErrorError) Valid() bool {
+	switch e {
+	case RankDeficient:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SessionOpEntityType.
 const (
 	SessionOpEntityTypeControlPoint     SessionOpEntityType = "control_point"
@@ -331,6 +367,17 @@ type ControlPoint struct {
 	// Notes free-form prose describing the control point in detail
 	Notes string `json:"notes"`
 
+	// SigmaEstAlt σ of est_alt in meters. NULL semantics as sigma_est_lat.
+	SigmaEstAlt *float64 `json:"sigma_est_alt,omitempty"`
+
+	// SigmaEstLat σ of est_lat in meters (local-ENU north) at the last successful
+	// solve. NULL until this CP participates in a converged solve,
+	// or when the axis is locked / fully unobservable.
+	SigmaEstLat *float64 `json:"sigma_est_lat,omitempty"`
+
+	// SigmaEstLng σ of est_lng in meters (local-ENU east). NULL semantics as sigma_est_lat.
+	SigmaEstLng *float64 `json:"sigma_est_lng,omitempty"`
+
 	// StartedAfter when true
 	StartedAfter bool `json:"started_after"`
 
@@ -540,8 +587,12 @@ type ImageMeasurementUpdate struct {
 
 // MergeRequest defines model for MergeRequest.
 type MergeRequest struct {
-	Message *string `json:"message,omitempty"`
-	SignOff string  `json:"sign_off"`
+	// AllowUnderdetermined When false (default), merge refuses if any entity touched by the
+	// session has a free-axis σ above the configured threshold. Set
+	// true to override after the user reviews the flagged axes.
+	AllowUnderdetermined *bool   `json:"allow_underdetermined,omitempty"`
+	Message              *string `json:"message,omitempty"`
+	SignOff              string  `json:"sign_off"`
 }
 
 // Photo defines model for Photo.
@@ -583,7 +634,27 @@ type Photo struct {
 
 	// PhotoTilt viewer-altitude radians (above horizon)
 	PhotoTilt float64 `json:"photo_tilt"`
-	SizeBytes *int64  `json:"size_bytes"`
+
+	// SigmaDistK1 σ of dist_k1, dimensionless. NULL semantics as sigma_photo_az.
+	SigmaDistK1 *float64 `json:"sigma_dist_k1,omitempty"`
+
+	// SigmaDistK2 σ of dist_k2, dimensionless. NULL semantics as sigma_photo_az.
+	SigmaDistK2 *float64 `json:"sigma_dist_k2,omitempty"`
+
+	// SigmaPhotoAz Standard deviation of photo_az at the last successful solve,
+	// in radians. NULL until this photo participates in a converged
+	// solve, or when the axis is locked / fully unobservable.
+	SigmaPhotoAz *float64 `json:"sigma_photo_az,omitempty"`
+
+	// SigmaPhotoRoll σ of photo_roll in radians. NULL semantics as sigma_photo_az.
+	SigmaPhotoRoll *float64 `json:"sigma_photo_roll,omitempty"`
+
+	// SigmaPhotoTilt σ of photo_tilt in radians. NULL semantics as sigma_photo_az.
+	SigmaPhotoTilt *float64 `json:"sigma_photo_tilt,omitempty"`
+
+	// SigmaSizeRad σ of size_rad in radians. NULL semantics as sigma_photo_az.
+	SigmaSizeRad *float64 `json:"sigma_size_rad,omitempty"`
+	SizeBytes    *int64   `json:"size_bytes"`
 
 	// SizeRad horizontal angular subtense radians
 	SizeRad float64 `json:"size_rad"`
@@ -594,7 +665,8 @@ type Photo struct {
 }
 
 // PhotoListItem Listing-only wrapper around Photo that adds the count of image
-// measurements anchored on this photo.
+// measurements anchored on this photo. Per-axis σ values from the
+// last successful solve are exposed inline on the Photo itself.
 type PhotoListItem struct {
 	ObservationCount int   `json:"observation_count"`
 	Photo            Photo `json:"photo"`
@@ -643,6 +715,36 @@ type PhotoUpdate struct {
 	PhotoTilt     *float64 `json:"photo_tilt,omitempty"`
 	SizeRad       *float64 `json:"size_rad,omitempty"`
 }
+
+// RankDeficientAxis One entity whose free parameters are geometrically unobservable
+// under the requested solve mode. Returned in the 409 body when the
+// solve gate refuses.
+type RankDeficientAxis struct {
+	// Axes Field names per kind (e.g. ["lat","lng"] for station, ["photo_az"] for photo).
+	Axes []string `json:"axes"`
+
+	// ID 13-character base32 server-assigned id
+	ID   ID                    `json:"id"`
+	Kind RankDeficientAxisKind `json:"kind"`
+
+	// Reason Human-readable explanation.
+	Reason string `json:"reason"`
+}
+
+// RankDeficientAxisKind defines model for RankDeficientAxis.Kind.
+type RankDeficientAxisKind string
+
+// RankDeficientError Body of the 422 returned by /sessions/{id}/merge when any touched
+// entity's free-axis σ from the last solve exceeds the merge gate's
+// refuse threshold. Resubmit MergeRequest with
+// `allow_underdetermined: true` to bypass.
+type RankDeficientError struct {
+	DeficientAxes []RankDeficientAxis     `json:"deficient_axes"`
+	Error         RankDeficientErrorError `json:"error"`
+}
+
+// RankDeficientErrorError defines model for RankDeficientError.Error.
+type RankDeficientErrorError string
 
 // RevertRequest defines model for RevertRequest.
 type RevertRequest struct {
@@ -753,8 +855,19 @@ type Station struct {
 	LockLat bool `json:"lock_lat"`
 
 	// LockLng when true the solver leaves lng untouched
-	LockLng   bool      `json:"lock_lng"`
-	Name      *string   `json:"name"`
+	LockLng bool    `json:"lock_lng"`
+	Name    *string `json:"name"`
+
+	// SigmaAlt σ of alt in meters. NULL semantics as sigma_lat.
+	SigmaAlt *float64 `json:"sigma_alt,omitempty"`
+
+	// SigmaLat Standard deviation of lat at the last successful solve, in meters
+	// (local-ENU north). NULL until this station participates in a
+	// converged solve, or when the axis is fully unobservable.
+	SigmaLat *float64 `json:"sigma_lat,omitempty"`
+
+	// SigmaLng σ of lng in meters (local-ENU east). NULL semantics as sigma_lat.
+	SigmaLng  *float64  `json:"sigma_lng,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 

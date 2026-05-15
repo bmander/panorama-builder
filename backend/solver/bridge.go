@@ -231,7 +231,13 @@ func solveBridge(c *solveContext) (Result, error) {
 		outFinalCost float64
 		outConverged int32
 		outAborted   int32
+		outSigmaOK   int32
 	)
+	// Per-parameter σ output buffers; layout matches the input offset/pose
+	// arrays. C++ pre-fills with NaN, then overwrites observable axes.
+	stationSigma := make([]float64, nStations*3)
+	photoSigma := make([]float64, nPhotos*6)
+	cpSigma := make([]float64, nCPs*3)
 
 	// cgo's pointer rule forbids passing a Go pointer to C if the memory it
 	// points to contains other Go pointers. pc_problem is itself a value type
@@ -260,11 +266,15 @@ func solveBridge(c *solveContext) (Result, error) {
 	pinSlice(unsafe.Pointer(i32Ptr(obsPhotoIdx)))
 	pinSlice(unsafe.Pointer(i32Ptr(obsCPIdx)))
 	pinSlice(unsafe.Pointer(floatPtr(obsUV)))
+	pinSlice(unsafe.Pointer(floatPtr(stationSigma)))
+	pinSlice(unsafe.Pointer(floatPtr(photoSigma)))
+	pinSlice(unsafe.Pointer(floatPtr(cpSigma)))
 	pinner.Pin(&outIters)
 	pinner.Pin(&outInitCost)
 	pinner.Pin(&outFinalCost)
 	pinner.Pin(&outConverged)
 	pinner.Pin(&outAborted)
+	pinner.Pin(&outSigmaOK)
 
 	cprob := C.pc_problem{
 		n_stations:         C.int32_t(nStations),
@@ -294,6 +304,10 @@ func solveBridge(c *solveContext) (Result, error) {
 		out_final_cost:     (*C.double)(unsafe.Pointer(&outFinalCost)),
 		out_converged:      (*C.int32_t)(unsafe.Pointer(&outConverged)),
 		out_aborted:        (*C.int32_t)(unsafe.Pointer(&outAborted)),
+		out_station_sigma:  floatPtr(stationSigma),
+		out_photo_sigma:    floatPtr(photoSigma),
+		out_cp_sigma:       floatPtr(cpSigma),
+		out_sigma_ok:       (*C.int32_t)(unsafe.Pointer(&outSigmaOK)),
 		go_ctx_handle:      C.uint64_t(ctxID),
 	}
 
@@ -349,6 +363,12 @@ func solveBridge(c *solveContext) (Result, error) {
 		changes = c.composeChanges(initialState, finalState)
 	}
 
+	var sigma map[string]map[string]float64
+	if outSigmaOK != 0 && outConverged != 0 && !diverged {
+		sigma = c.buildSigmaMap(stationSigma, photoSigma, cpSigma, cpAxisRep)
+		changes = c.mergeSigmaIntoChanges(changes, sigma)
+	}
+
 	return Result{
 		Iterations:         int(outIters),
 		InitialResidualRMS: initialRMS,
@@ -356,7 +376,108 @@ func solveBridge(c *solveContext) (Result, error) {
 		Converged:          outConverged != 0 && !diverged,
 		Diverged:           diverged,
 		Changes:            changes,
+		PerEntitySigma:     sigma,
 	}, nil
+}
+
+// mergeSigmaIntoChanges folds per-entity σ values into the journal-bound
+// changes list, prefixing each axis key with "sigma_". Entities present in
+// sigma but absent from changes get a fresh change (with empty Before/After
+// for the parameter slot — just σ updates). This is how σ gets persisted
+// through the session journal alongside parameter writebacks: the backend's
+// applyChangeToX handlers recognize "sigma_*" keys and fold them into the
+// row's σ columns.
+func (c *solveContext) mergeSigmaIntoChanges(
+	changes []EntityChange, sigma map[string]map[string]float64,
+) []EntityChange {
+	byID := make(map[string]int, len(changes))
+	for i, ch := range changes {
+		byID[ch.Kind+":"+ch.ID] = i
+	}
+	kindFor := map[string]string{}
+	for _, st := range c.problem.Stations {
+		kindFor[st.ID] = "station"
+	}
+	for _, p := range c.problem.Photos {
+		kindFor[p.ID] = "photo"
+	}
+	for _, cp := range c.problem.ControlPoints {
+		kindFor[cp.ID] = "control_point"
+	}
+	for id, axes := range sigma {
+		kind, ok := kindFor[id]
+		if !ok {
+			continue
+		}
+		idx, present := byID[kind+":"+id]
+		if !present {
+			changes = append(changes, EntityChange{
+				Kind:   kind,
+				ID:     id,
+				Before: map[string]float64{},
+				After:  map[string]float64{},
+			})
+			idx = len(changes) - 1
+			byID[kind+":"+id] = idx
+		}
+		for axisName, v := range axes {
+			changes[idx].After["sigma_"+axisName] = v
+		}
+	}
+	return changes
+}
+
+// buildSigmaMap converts the flat σ arrays returned by the bridge into the
+// per-entity map exposed on Result. NaN entries are dropped (axis was locked
+// or fully unobservable). Station and CP σ stay in their ENU-meter units
+// since that's what the per-axis residual integrates over; callers that
+// want degrees can scale by 1/M_PER_DEG_LAT.
+func (c *solveContext) buildSigmaMap(
+	stationSigma, photoSigma, cpSigma []float64, cpAxisRep []int32,
+) map[string]map[string]float64 {
+	out := map[string]map[string]float64{}
+	put := func(id, key string, v float64) {
+		// Skip NaN (axis fully unobservable) and zero σ (locked axis — by
+		// definition exactly determined). Keeping the journal lean.
+		if math.IsNaN(v) || v == 0 {
+			return
+		}
+		m, ok := out[id]
+		if !ok {
+			m = map[string]float64{}
+			out[id] = m
+		}
+		m[key] = v
+	}
+	for i, st := range c.problem.Stations {
+		// Station σ is in local-ENU meters: east, north, up. Map back to
+		// (lng, lat, alt) by convention — east ≈ Δlng·cos(lat)·M_PER_DEG_LAT,
+		// north ≈ Δlat·M_PER_DEG_LAT. We surface meters directly so the
+		// caller doesn't have to round-trip.
+		put(st.ID, "lng", stationSigma[3*i+axisEast])
+		put(st.ID, "lat", stationSigma[3*i+axisNorth])
+		put(st.ID, "alt", stationSigma[3*i+axisUp])
+	}
+	for i, p := range c.problem.Photos {
+		put(p.ID, "photo_az", photoSigma[6*i+0])
+		put(p.ID, "photo_tilt", photoSigma[6*i+1])
+		put(p.ID, "photo_roll", photoSigma[6*i+2])
+		put(p.ID, "size_rad", photoSigma[6*i+3])
+		put(p.ID, "dist_k1", photoSigma[6*i+4])
+		put(p.ID, "dist_k2", photoSigma[6*i+5])
+	}
+	for i, cp := range c.problem.ControlPoints {
+		// CP σ also in local-ENU meters; same lng/lat/alt mapping as stations.
+		// Aliased members share their rep's σ, so we read via cp_axis_rep to
+		// avoid spurious NaN on dedup-skipped entries.
+		eRep := int(cpAxisRep[3*i+axisEast])
+		nRep := int(cpAxisRep[3*i+axisNorth])
+		uRep := int(cpAxisRep[3*i+axisUp])
+		put(cp.ID, "est_lng", cpSigma[3*eRep+axisEast])
+		put(cp.ID, "est_lat", cpSigma[3*nRep+axisNorth])
+		put(cp.ID, "est_alt", cpSigma[3*uRep+axisUp])
+	}
+	return out
 }
 
 // Typed C pointers to the first element of a Go slice. These slices hold

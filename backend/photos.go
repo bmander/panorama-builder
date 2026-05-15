@@ -15,7 +15,9 @@ const photoCols = `id, station_id, blob_path, mime_type, size_bytes, aspect,
 		photo_az, photo_tilt, photo_roll, size_rad, opacity,
 		lock_photo_az, lock_photo_tilt, lock_photo_roll, lock_size_rad,
 		dist_k1, dist_k2, lock_dist_k1, lock_dist_k2,
-		created_at, updated_at`
+		created_at, updated_at,
+		sigma_photo_az, sigma_photo_tilt, sigma_photo_roll, sigma_size_rad,
+		sigma_dist_k1, sigma_dist_k2`
 
 func scanPhoto(row pgx.Row) (Photo, error) {
 	var p Photo
@@ -23,7 +25,9 @@ func scanPhoto(row pgx.Row) (Photo, error) {
 		&p.Aspect, &p.PhotoAz, &p.PhotoTilt, &p.PhotoRoll, &p.SizeRad, &p.Opacity,
 		&p.LockPhotoAz, &p.LockPhotoTilt, &p.LockPhotoRoll, &p.LockSizeRad,
 		&p.DistK1, &p.DistK2, &p.LockDistK1, &p.LockDistK2,
-		&p.CreatedAt, &p.UpdatedAt)
+		&p.CreatedAt, &p.UpdatedAt,
+		&p.SigmaPhotoAz, &p.SigmaPhotoTilt, &p.SigmaPhotoRoll, &p.SigmaSizeRad,
+		&p.SigmaDistK1, &p.SigmaDistK2)
 	return p, err
 }
 

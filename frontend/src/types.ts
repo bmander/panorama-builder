@@ -336,6 +336,58 @@ export function makeListCell(
   return cell;
 }
 
+// Append a "±X" σ span to `cell` (typically a .col cell produced by
+// makeListCell). Caller pre-formats via fmtSigmaMeters / fmtSigmaRad and
+// picks the severity class via sigmaSeverityClass. tooltip is optional.
+export function appendSigma(cell: HTMLElement, text: string, severityClass: string, tooltip?: string): void {
+  const s = document.createElement('span');
+  s.className = `sigma ${severityClass}`;
+  s.textContent = `±${text}`;
+  if (tooltip) s.title = tooltip;
+  cell.append(s);
+}
+
+// Format a σ value (meters) for compact display. Chooses unit by magnitude
+// so cm-scale uncertainties don't render as "0.012 m" but "1.2 cm".
+//   null  →  "?"   (no solve has populated this axis yet)
+//   < 0.1 m  →  "X.Xcm"
+//   < 1000 m →  "X.XXm"
+//   else  →  "X.Xkm"
+export function fmtSigmaMeters(sigma: number | null | undefined): string {
+  if (sigma === null || sigma === undefined) return '?';
+  const abs = Math.abs(sigma);
+  if (abs < 0.1) return `${(sigma * 100).toFixed(1)}cm`;
+  if (abs < 1000) return `${sigma.toFixed(2)}m`;
+  return `${(sigma / 1000).toFixed(1)}km`;
+}
+
+// Format a σ value (radians) for compact display as degrees / arc-units.
+//   null  →  "?"
+//   < 1 arcmin (≈ 2.9e-4 rad) → "X.X″" (arcseconds)
+//   < 1° → "X.X′" (arcminutes)
+//   else  → "X.XX°"
+export function fmtSigmaRad(sigma: number | null | undefined): string {
+  if (sigma === null || sigma === undefined) return '?';
+  const deg = sigma * 180 / Math.PI;
+  if (deg < 1 / 60) return `${(deg * 3600).toFixed(1)}″`;
+  if (deg < 1) return `${(deg * 60).toFixed(2)}′`;
+  return `${deg.toFixed(2)}°`;
+}
+
+// CSS class to color a σ display by magnitude. Caller passes the σ in
+// meters or radians and the same per-axis threshold pair used by the merge
+// gate (defaults chosen to match backend/solve_merge_gate.go).
+export function sigmaSeverityClass(
+  sigma: number | null | undefined,
+  warnAt: number, refuseAt: number,
+): string {
+  if (sigma === null || sigma === undefined) return 'sigma-unknown';
+  const a = Math.abs(sigma);
+  if (a >= refuseAt) return 'sigma-bad';
+  if (a >= warnAt) return 'sigma-warn';
+  return 'sigma-good';
+}
+
 // 13-char base32 IDs from `crypto/rand` on the backend. Shared so the two
 // regex sites that validate them (URL params, popstate handler) and the
 // CP-page id parser stay in sync.

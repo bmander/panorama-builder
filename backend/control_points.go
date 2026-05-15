@@ -12,7 +12,8 @@ import (
 
 const controlPointCols = `id, description, notes, est_lat, est_lng, est_alt, started_at, ended_at,
 	started_after, ended_before,
-	lock_est_lat, lock_est_lng, lock_est_alt, created_at, updated_at`
+	lock_est_lat, lock_est_lng, lock_est_alt, created_at, updated_at,
+	sigma_est_lat, sigma_est_lng, sigma_est_alt`
 
 func scanControlPoint(row pgx.Row) (ControlPoint, error) {
 	var cp ControlPoint
@@ -20,7 +21,8 @@ func scanControlPoint(row pgx.Row) (ControlPoint, error) {
 		&cp.StartedAt, &cp.EndedAt,
 		&cp.StartedAfter, &cp.EndedBefore,
 		&cp.LockEstLat, &cp.LockEstLng, &cp.LockEstAlt,
-		&cp.CreatedAt, &cp.UpdatedAt)
+		&cp.CreatedAt, &cp.UpdatedAt,
+		&cp.SigmaEstLat, &cp.SigmaEstLng, &cp.SigmaEstAlt)
 	return cp, err
 }
 

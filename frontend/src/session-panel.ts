@@ -8,7 +8,8 @@
 // Save conflicts open the #session-conflict-modal block in index.html with a
 // single Abandon-session action.
 
-import type { ApiEntityRef } from './api.js';
+import type { ApiEntityRef, RankDeficientAxis } from './api.js';
+import * as api from './api.js';
 import { sessionManager } from './session.js';
 import { sessionPending } from './session-pending.js';
 import { openSignOffModal } from './signoff-modal.js';
@@ -37,6 +38,20 @@ export function createSessionPanel(
   counter.className = 'session-widget-counter';
   root.appendChild(counter);
 
+  // "N problems ▾" — toggles the dropdown listing the per-entity flagged
+  // axes the merge gate would block on. Populated by refreshProblems() after
+  // a solve, cleared on session change.
+  const problemsBtn = document.createElement('button');
+  problemsBtn.type = 'button';
+  problemsBtn.className = 'session-widget-problems';
+  problemsBtn.hidden = true;
+  root.appendChild(problemsBtn);
+
+  const dropdown = document.createElement('div');
+  dropdown.className = 'session-widget-dropdown';
+  dropdown.hidden = true;
+  root.appendChild(dropdown);
+
   const solveBtn = btn('Solve');
   solveBtn.addEventListener('click', () => { options.onSolve(); });
   root.appendChild(solveBtn);
@@ -50,12 +65,85 @@ export function createSessionPanel(
   abandonBtn.addEventListener('click', () => { void onAbandon(); });
   root.appendChild(abandonBtn);
 
+  let problems: readonly RankDeficientAxis[] = [];
+  let lastFetchKey = '';
+
+  problemsBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    dropdown.hidden = !dropdown.hidden;
+  });
+  document.addEventListener('click', e => {
+    if (dropdown.hidden) return;
+    if (e.target instanceof Node && root.contains(e.target)) return;
+    dropdown.hidden = true;
+  });
+
+  function renderDropdown(): void {
+    dropdown.replaceChildren();
+    if (problems.length === 0) {
+      dropdown.textContent = '(no problems)';
+      return;
+    }
+    const ul = document.createElement('ul');
+    for (const a of problems) {
+      const li = document.createElement('li');
+      const head = document.createElement('span');
+      head.textContent = `${a.kind} ${a.id} `;
+      const axes = document.createElement('span');
+      axes.className = 'axes';
+      axes.textContent = `[${a.axes.join(',')}]`;
+      const tail = document.createElement('span');
+      tail.textContent = ` — ${a.reason}`;
+      li.append(head, axes, tail);
+      ul.append(li);
+    }
+    dropdown.append(ul);
+  }
+
+  // refreshProblems hits /sessions/{id}/rank-deficient and caches the
+  // result. Keyed by (sessionId, solverChanges) so it doesn't refire on
+  // unrelated render() ticks.
+  async function refreshProblems(): Promise<void> {
+    const id = sessionManager.current();
+    const { solverChanges } = sessionPending.get();
+    const key = id === null ? '' : `${id}|${solverChanges ?? 'none'}`;
+    if (key === lastFetchKey) return;
+    lastFetchKey = key;
+    if (id === null || solverChanges === null) {
+      problems = [];
+      renderProblemsButton();
+      return;
+    }
+    try {
+      problems = await api.getSessionRankDeficient(id);
+    } catch (err) {
+      console.error('rank-deficient fetch failed:', err);
+      problems = [];
+    }
+    renderProblemsButton();
+    renderDropdown();
+  }
+
+  function renderProblemsButton(): void {
+    const n = problems.length;
+    if (n === 0) {
+      problemsBtn.hidden = true;
+      dropdown.hidden = true;
+      return;
+    }
+    problemsBtn.hidden = false;
+    problemsBtn.textContent = `⚠ ${n.toString()} problem${n === 1 ? '' : 's'} ▾`;
+  }
+
   function render(): void {
     const sessionActive = sessionManager.current() !== null;
     const { userPending, solverChanges } = sessionPending.get();
     const hasWork = userPending > 0 || solverChanges !== null;
     if (!sessionActive || !hasWork) {
       root.hidden = true;
+      problems = [];
+      lastFetchKey = '';
+      renderProblemsButton();
       return;
     }
     root.hidden = false;
@@ -64,6 +152,7 @@ export function createSessionPanel(
       : `${userPending.toString()} pending · ${solverChanges.toString()} solver`;
     solveBtn.disabled = userPending === 0;
     saveBtn.disabled = solverChanges === null || userPending !== 0;
+    void refreshProblems();
   }
 
   function onSave(): void {
@@ -76,6 +165,8 @@ export function createSessionPanel(
         cancel: 'session-save-cancel',
         close: 'session-save-close',
         error: 'session-save-error',
+        rankWarning: 'session-save-rank-warning',
+        allowUnderdetermined: 'session-save-allow-underdetermined',
       },
       // Reload takes over after success; keep the spinner visible until
       // the new document arrives so the modal can't be re-clicked.

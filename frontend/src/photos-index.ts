@@ -1,6 +1,14 @@
 import * as api from './api.js';
 import { radToDeg } from './mathx.js';
-import { getElement, makeListCell, stationHref, stationLabel } from './types.js';
+import {
+  appendSigma, fmtSigmaRad, getElement, makeListCell,
+  sigmaSeverityClass, stationHref, stationLabel,
+} from './types.js';
+
+// σ thresholds for the per-axis color stripe. Matches backend merge gate
+// defaults; tune both together if you change them.
+const SIGMA_ANGLE_WARN_RAD = 0.5 * Math.PI / 180;   // 0.5°
+const SIGMA_ANGLE_REFUSE_RAD = 2 * Math.PI / 180;   // 2°
 
 const HEADERS = ['Station', 'obs', 'az', 'tilt', 'roll', 'fov', 'k1', 'k2'] as const;
 
@@ -26,13 +34,26 @@ function renderRow(
   a.href = stationHref(p.station_id);
   a.className = 'desc';
   a.textContent = stationLabel(p.station_id, stationName);
+  // Helper: add σ to a free angle cell only — locked axes have no σ to show.
+  const angleCell = (
+    cls: string, val: number, locked: boolean, sigma: number | null,
+  ): HTMLElement => {
+    const cell = makeListCell(cls, fmtAng(val), locked);
+    if (!locked) {
+      appendSigma(cell,
+        fmtSigmaRad(sigma),
+        sigmaSeverityClass(sigma, SIGMA_ANGLE_WARN_RAD, SIGMA_ANGLE_REFUSE_RAD),
+        'σ from last solve');
+    }
+    return cell;
+  };
   li.append(
     a,
     makeListCell('col-obs', String(observationCount), false),
-    makeListCell('col-az', fmtAng(p.photo_az), p.lock_photo_az),
-    makeListCell('col-tilt', fmtAng(p.photo_tilt), p.lock_photo_tilt),
-    makeListCell('col-roll', fmtAng(p.photo_roll), p.lock_photo_roll),
-    makeListCell('col-fov', fmtAng(p.size_rad), p.lock_size_rad),
+    angleCell('col-az', p.photo_az, p.lock_photo_az, p.sigma_photo_az ?? null),
+    angleCell('col-tilt', p.photo_tilt, p.lock_photo_tilt, p.sigma_photo_tilt ?? null),
+    angleCell('col-roll', p.photo_roll, p.lock_photo_roll, p.sigma_photo_roll ?? null),
+    angleCell('col-fov', p.size_rad, p.lock_size_rad, p.sigma_size_rad ?? null),
     makeListCell('col-k1', fmtCoef(p.dist_k1), p.lock_dist_k1),
     makeListCell('col-k2', fmtCoef(p.dist_k2), p.lock_dist_k2),
   );

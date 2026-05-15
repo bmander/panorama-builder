@@ -53,6 +53,18 @@ export type ApiEntityRef = Schemas['EntityRef'];
 export type ApiMergeRequest = Schemas['MergeRequest'];
 export type ApiRevertRequest = Schemas['RevertRequest'];
 
+// SessionRankDeficientError: thrown by mergeSession on a 422 with the
+// per-entity σ list from backend/merge_gate.go. Caller decides whether to
+// surface the list and let the user resubmit with allow_underdetermined.
+export class SessionRankDeficientError extends Error {
+  constructor(
+    readonly deficientAxes: readonly components['schemas']['RankDeficientAxis'][],
+  ) {
+    super(`rank-deficient: ${deficientAxes.length.toString()} entit${deficientAxes.length === 1 ? 'y' : 'ies'} flagged`);
+    this.name = 'SessionRankDeficientError';
+  }
+}
+
 // SessionConflictError: thrown by mergeSession / revertCommit on a 409 with
 // a conflict list. Callers can branch on `instanceof` to render the conflict
 // UI rather than parsing the message.
@@ -292,6 +304,8 @@ export type SolveProgressEvent =
   | { readonly kind: 'cancelled' }
   | { readonly kind: 'error'; readonly message: string };
 
+export type RankDeficientAxis = components['schemas']['RankDeficientAxis'];
+
 async function solveStream(
   path: string,
   config: SolveConfig,
@@ -393,6 +407,16 @@ export function abandonSession(id: string): Promise<void> {
   return requestVoid('POST', `/sessions/${encodeURIComponent(id)}/abandon`);
 }
 
+// getSessionRankDeficient asks the backend to dry-run the merge σ gate and
+// return the per-entity flagged-axes list. Used by the session widget to
+// surface "X problems" between Solve and Save.
+export async function getSessionRankDeficient(id: string): Promise<readonly RankDeficientAxis[]> {
+  const body = await request<{ deficient_axes: readonly RankDeficientAxis[] }>(
+    'GET', `/sessions/${encodeURIComponent(id)}/rank-deficient`,
+  );
+  return body.deficient_axes;
+}
+
 // mergeSession: throws SessionConflictError on 409 so the caller can render
 // a conflict UI instead of a generic error banner.
 export async function mergeSession(id: string, body: ApiMergeRequest): Promise<ApiCommitRef> {
@@ -407,6 +431,12 @@ export async function mergeSession(id: string, body: ApiMergeRequest): Promise<A
       error: string; conflicts?: ApiEntityRef[];
     };
     throw new SessionConflictError(body.conflicts ?? [], body.error);
+  }
+  if (res.status === 422) {
+    const body = await res.json().catch(() => ({ deficient_axes: [] })) as {
+      deficient_axes?: components['schemas']['RankDeficientAxis'][];
+    };
+    throw new SessionRankDeficientError(body.deficient_axes ?? []);
   }
   if (!res.ok) {
     const text = await res.text().catch(() => '');

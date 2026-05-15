@@ -95,6 +95,11 @@ h2 { font-size: 14px; color: #aaa; margin: 32px 0 8px; font-weight: normal;
 main.wide { max-width: 960px; }
 .lock-mark { font-size: 11px; line-height: 1; color: #d0a060; }
 .lock-mark::before { content: "\1F512"; }
+.sigma { font-size: 10px; margin-left: 0.4em; opacity: 0.85; }
+.sigma-good    { color: #60c080; }
+.sigma-warn    { color: #d0a060; }
+.sigma-bad     { color: #d06060; }
+.sigma-unknown { color: #707070; font-style: italic; }
 .actions { margin-top: 32px; }
 button.btn { font: inherit; color: #5080ff; background: transparent;
              border: 1px solid #5080ff; border-radius: 3px;

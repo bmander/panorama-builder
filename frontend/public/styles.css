@@ -26,9 +26,24 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .session-widget { display: inline-flex; gap: 6px; align-items: center;
                   padding: 4px 8px; background: rgba(0,0,0,0.7);
                   border: 1px solid rgba(255,255,255,0.4); color: #fff;
-                  font: 12px monospace; }
+                  font: 12px monospace; position: relative; }
 .session-widget[hidden] { display: none; }
 .session-widget-counter { white-space: nowrap; }
+.session-widget-problems { white-space: nowrap; color: #d06060; cursor: pointer;
+                           border: 0; background: transparent; font: inherit;
+                           padding: 0 4px; }
+.session-widget-problems[hidden] { display: none; }
+.session-widget-problems:hover { color: #ff8080; }
+.session-widget-dropdown { position: absolute; top: 100%; right: 0;
+                           margin-top: 4px; min-width: 320px; max-width: 480px;
+                           max-height: 320px; overflow-y: auto;
+                           background: rgba(0,0,0,0.92); color: #fff;
+                           border: 1px solid rgba(255,255,255,0.4);
+                           padding: 6px 8px; font: 11px monospace; z-index: 1100; }
+.session-widget-dropdown[hidden] { display: none; }
+.session-widget-dropdown ul { list-style: none; margin: 0; padding: 0; }
+.session-widget-dropdown li { padding: 2px 0; }
+.session-widget-dropdown .axes { color: #d0a060; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn:disabled:hover { background: rgba(0,0,0,0.5); }
 #settings-panel { position: fixed; top: 36px; right: 8px; padding: 8px 10px;

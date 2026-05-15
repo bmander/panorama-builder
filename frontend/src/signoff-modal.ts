@@ -2,13 +2,23 @@
 // call site supplies its own DOM ids and a `submit` handler; the factory
 // owns the sign-off-required gate, loading state, conflict handling, and
 // error display.
+//
+// Optional rank-deficiency gate (callers that opt in via the rankWarning
+// and allowUnderdetermined ids): when submit throws a
+// SessionRankDeficientError, the modal renders the per-entity flagged-axes
+// list inline + shows the override checkbox. The next submit forwards
+// allow_underdetermined=true on the request.
 
-import { SessionConflictError } from './api.js';
+import type { RankDeficientAxis } from './api.js';
+import { SessionConflictError, SessionRankDeficientError } from './api.js';
 import { getElement } from './types.js';
 
 export interface SignOffRequest {
   sign_off: string;
   message?: string;
+  // When the optional rank-deficiency checkbox is opted in via the modal
+  // ids and the user has checked it, this carries the override forward.
+  allow_underdetermined?: boolean;
 }
 
 export interface SignOffModalIds {
@@ -20,6 +30,10 @@ export interface SignOffModalIds {
   close: string;
   error: string;
   title?: string;
+  // Optional rank-deficiency UI. Both must be supplied together: a div to
+  // host the flagged-axes list, and a checkbox the user toggles to override.
+  rankWarning?: string;
+  allowUnderdetermined?: string;
 }
 
 export interface SignOffModalOptions {
@@ -48,6 +62,8 @@ export function openSignOffModal(opts: SignOffModalOptions): void {
   const cancelBtn = getElement<HTMLButtonElement>(ids.cancel);
   const closeBtn = getElement<HTMLButtonElement>(ids.close);
   const errorEl = getElement(ids.error);
+  const rankWarningEl = ids.rankWarning ? getElement(ids.rankWarning) : null;
+  const allowEl = ids.allowUnderdetermined ? getElement<HTMLInputElement>(ids.allowUnderdetermined) : null;
 
   const setLoading = (loading: boolean): void => {
     confirmBtn.classList.toggle('loading', loading);
@@ -56,6 +72,33 @@ export function openSignOffModal(opts: SignOffModalOptions): void {
     closeBtn.disabled = loading;
     signoff.disabled = loading;
     description.disabled = loading;
+    if (allowEl) allowEl.disabled = loading;
+  };
+
+  // Renders the deficient-axes list inline. Pre-checks the override so the
+  // next click sails through without hunting for the checkbox.
+  const renderRankWarning = (axes: readonly RankDeficientAxis[]): void => {
+    if (!rankWarningEl || !allowEl) return;
+    rankWarningEl.replaceChildren();
+    const header = document.createElement('div');
+    header.textContent = `${axes.length.toString()} entit${axes.length === 1 ? 'y has' : 'ies have'} poorly-determined axes:`;
+    rankWarningEl.append(header);
+    const ul = document.createElement('ul');
+    ul.style.margin = '4px 0 0 16px';
+    ul.style.padding = '0';
+    for (const a of axes.slice(0, 12)) {
+      const li = document.createElement('li');
+      li.textContent = `${a.kind} ${a.id} [${a.axes.join(',')}] — ${a.reason}`;
+      ul.append(li);
+    }
+    if (axes.length > 12) {
+      const li = document.createElement('li');
+      li.textContent = `…and ${(axes.length - 12).toString()} more`;
+      ul.append(li);
+    }
+    rankWarningEl.append(ul);
+    rankWarningEl.hidden = false;
+    allowEl.checked = true;
   };
 
   if (ids.title && opts.title !== undefined) {
@@ -65,6 +108,11 @@ export function openSignOffModal(opts: SignOffModalOptions): void {
   description.value = '';
   errorEl.textContent = '';
   errorEl.hidden = true;
+  if (rankWarningEl) {
+    rankWarningEl.replaceChildren();
+    rankWarningEl.hidden = true;
+  }
+  if (allowEl) allowEl.checked = false;
   setLoading(false);
 
   if (wired.has(ids.modal)) {
@@ -90,9 +138,9 @@ export function openSignOffModal(opts: SignOffModalOptions): void {
     const text = signoff.value.trim();
     if (text === '') return;
     const desc = description.value.trim();
-    const req: SignOffRequest = desc === ''
-      ? { sign_off: text }
-      : { sign_off: text, message: desc };
+    const req: SignOffRequest = { sign_off: text };
+    if (desc !== '') req.message = desc;
+    if (allowEl?.checked) req.allow_underdetermined = true;
     errorEl.hidden = true;
     errorEl.textContent = '';
     setLoading(true);
@@ -108,6 +156,14 @@ export function openSignOffModal(opts: SignOffModalOptions): void {
         modal.hidden = true;
         active = null;
         opt.onConflict(err);
+        return;
+      }
+      if (err instanceof SessionRankDeficientError) {
+        // Stay in the modal; render the list + show the override checkbox.
+        // User reviews, the checkbox is auto-checked, a second click commits.
+        renderRankWarning(err.deficientAxes);
+        errorEl.textContent = 'σ above refuse threshold on the listed axes — review and resubmit to override.';
+        errorEl.hidden = false;
         return;
       }
       console.error('signoff submit failed:', err);
