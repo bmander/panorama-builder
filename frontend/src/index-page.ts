@@ -91,6 +91,10 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
         id: cp.id,
         latlng: { lat: cp.est_lat, lng: cp.est_lng },
         description: cp.description,
+        alt: cp.est_alt,
+        lockLat: cp.lock_est_lat,
+        lockLng: cp.lock_est_lng,
+        lockAlt: cp.lock_est_alt,
       });
     }
     view.setIndexControlPoints(dots);
@@ -137,6 +141,10 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
         id: st.id,
         latlng: { lat: st.lat, lng: st.lng },
         label: st.name ?? `Untitled ${st.id.slice(0, 6)}`,
+        alt: st.alt,
+        lockLat: st.lock_lat,
+        lockLng: st.lock_lng,
+        lockAlt: st.lock_alt,
         cones,
       };
     }));
@@ -167,6 +175,34 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     // Always re-render: success snaps to the canonical server lat/lng (in case
     // of rounding); failure reverts the marker to the unchanged server value.
     await showStationMarkers();
+  }
+
+  async function updateStationLocks(id: string, patch: { lockPos?: boolean; lockAlt?: boolean }): Promise<void> {
+    const body: api.StationUpdate = {};
+    if (patch.lockPos !== undefined) { body.lock_lat = patch.lockPos; body.lock_lng = patch.lockPos; }
+    if (patch.lockAlt !== undefined) body.lock_alt = patch.lockAlt;
+    try {
+      await api.updateStation(id, body);
+    } catch (err) {
+      console.error('update station locks failed:', err);
+      alert('Update locks failed.');
+    }
+    // Re-render so the next popup open reads the canonical server value.
+    await showStationMarkers();
+  }
+
+  async function updateControlPointLocks(id: string, patch: { lockPos?: boolean; lockAlt?: boolean }): Promise<void> {
+    const body: api.ControlPointPatch = {};
+    if (patch.lockPos !== undefined) { body.lock_est_lat = patch.lockPos; body.lock_est_lng = patch.lockPos; }
+    if (patch.lockAlt !== undefined) body.lock_est_alt = patch.lockAlt;
+    try {
+      const updated = await api.updateControlPoint(id, body);
+      cpsById.set(updated.id, updated);
+    } catch (err) {
+      console.error('update control point locks failed:', err);
+      alert('Update locks failed.');
+    }
+    refreshIndexControlPoints();
   }
 
   async function showStationPreview(id: string): Promise<void> {
@@ -325,6 +361,8 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     onAddControlPointHere: loc => { observationModal.openForMap(loc); },
     onStationMarkerMove: (id, latlng) => { void moveStationTo(id, latlng); },
     onControlPointMove: (id, latlng) => { void moveControlPointTo(id, latlng); },
+    onStationLockChange: (id, patch) => { void updateStationLocks(id, patch); },
+    onControlPointLockChange: (id, patch) => { void updateControlPointLocks(id, patch); },
     onPhotoDroppedOnMap: (latlng, files) => { startStationModal.open(latlng, files); },
     initialView: urlState.view ?? undefined,
     onViewChange: (v) => { writeUrlState({ view: v }); },

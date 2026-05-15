@@ -84,6 +84,10 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
                      border: none; font: 12px monospace; text-align: left; }
 .station-popup .go + .go { margin-top: 4px; }
 .station-popup .go:hover { background: #155bbd; }
+.popup-alt { color: #000; margin-bottom: 4px; }
+.popup-lock-row { display: block; color: #000; margin-bottom: 2px; cursor: pointer; }
+.popup-lock-row input { margin-right: 4px; vertical-align: middle; }
+.popup-lock-row + .go, .popup-lock-row + a.go { margin-top: 6px; }
 .poi-anchor-marker { color: #5080ff; filter: drop-shadow(0 0 2px rgba(0,0,0,0.85)); }
 .cp-dot { background: #ff5050; border: 1px solid rgba(0,0,0,0.6); border-radius: 50%;
           box-sizing: border-box; cursor: pointer; }

@@ -9,7 +9,7 @@ import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
 L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl, shadowUrl });
 import { R_EARTH, viewerAzToBearing } from './geo.js';
 import { degToRad, dot3, norm2, norm3, radToDeg } from './mathx.js';
-import { cpHref } from './types.js';
+import { cpHref, fmtAlt } from './types.js';
 import type { Cone, LatLng } from './types.js';
 import { TILE_PX, fetchTileElevations, tileYToLat } from './dem.js';
 import { NULL_CP_RAY_CSS, NULL_CP_RAY_LENGTH_M } from './null-cp-rays.js';
@@ -18,6 +18,14 @@ export interface StationMarker {
   id: string;
   latlng: LatLng;
   label: string;
+  // Metres above mean sea level; surfaced in the marker popup as a
+  // read-only callout.
+  alt: number;
+  // Per-axis solver locks for the popup's lock checkboxes. lat+lng are
+  // toggled together (matches the station params panel).
+  lockLat: boolean;
+  lockLng: boolean;
+  lockAlt: boolean;
   // Viewer-azimuth bounds of each photo's horizontal frustum. The marker
   // renders these as small SVG wedges fanning out from the station origin,
   // so the index map shows where each station is looking at a glance.
@@ -42,6 +50,19 @@ export interface IndexControlPoint {
   id: string;
   latlng: LatLng;
   description: string;
+  // Estimated altitude in metres above mean sea level. Nullable because a
+  // CP may have only a lat/lng estimate yet.
+  alt: number | null;
+  lockLat: boolean;
+  lockLng: boolean;
+  lockAlt: boolean;
+}
+
+// Patch shape for the lock callbacks. Either field present means the user
+// just toggled that pair; absent means leave it alone.
+export interface MarkerLockPatch {
+  lockPos?: boolean;
+  lockAlt?: boolean;
 }
 
 export interface MapViewState {
@@ -76,6 +97,9 @@ export interface CreateMapViewOptions {
   onStationMarkerMove?: (id: string, latlng: LatLng) => void;
   // Same idea for index-CP dots: drag-end commits the new lat/lng.
   onControlPointMove?: (id: string, latlng: LatLng) => void;
+  // Fired when a popup checkbox toggles a position or altitude lock.
+  onStationLockChange?: (id: string, patch: MarkerLockPatch) => void;
+  onControlPointLockChange?: (id: string, patch: MarkerLockPatch) => void;
   // Image file(s) dropped on the map — typically opens the start-station
   // modal pre-populated with this location and these files.
   onPhotoDroppedOnMap?: (latlng: LatLng, files: readonly File[]) => void;
@@ -198,6 +222,8 @@ export function createMapView({
   onAddControlPointHere,
   onStationMarkerMove,
   onControlPointMove,
+  onStationLockChange,
+  onControlPointLockChange,
   onPhotoDroppedOnMap,
   initialView = DEFAULT_INDEX_VIEW,
   onViewChange,
@@ -344,6 +370,28 @@ export function createMapView({
     }, { once: true });
   }
 
+  // Markup for the popup's alt callout + lock checkboxes. The two lock
+  // checkboxes use a shared `popup-lock` class so they can be wired
+  // generically by wirePopupLock(); the `data-lock` attribute names which
+  // patch field to populate.
+  function paramRowsHtml(alt: number | null, lockPos: boolean, lockAlt: boolean): string {
+    const ck = (checked: boolean): string => checked ? ' checked' : '';
+    return `<div class="popup-alt">alt ${escapeHtml(fmtAlt(alt))}</div>`
+      + `<label class="popup-lock-row"><input type="checkbox" class="popup-lock" data-lock="pos"${ck(lockPos)}> lock location</label>`
+      + `<label class="popup-lock-row"><input type="checkbox" class="popup-lock" data-lock="alt"${ck(lockAlt)}> lock elevation</label>`;
+  }
+  function wirePopupLocks(popup: L.Popup, onChange: (patch: MarkerLockPatch) => void): void {
+    const root = popup.getElement();
+    if (!root) return;
+    for (const cb of root.querySelectorAll<HTMLInputElement>('.popup-lock')) {
+      cb.addEventListener('change', () => {
+        const which = cb.dataset.lock;
+        if (which === 'pos') onChange({ lockPos: cb.checked });
+        else if (which === 'alt') onChange({ lockAlt: cb.checked });
+      });
+    }
+  }
+
   function screenDiagonalMeters(): number {
     const s = map.getSize();
     return pixelsToMeters(map, norm2(s.x, s.y));
@@ -378,6 +426,7 @@ export function createMapView({
   function openIndexCpPopup(cp: IndexControlPoint): void {
     const label = cp.description || `cp ${cp.id.slice(0, 6)}`;
     const popupHtml = `<span class="name">${escapeHtml(label)}</span>`
+      + paramRowsHtml(cp.alt, cp.lockLat && cp.lockLng, cp.lockAlt)
       + `<a class="go" href="${cpHref(cp.id)}">View details →</a>`
       + goButtonHtml('Move', 'move');
     const popup = L.popup(INDEX_CP_POPUP_OPTS)
@@ -389,6 +438,7 @@ export function createMapView({
       if (!dot) return;
       enterMoveMode({ kind: 'cp', id: cp.id, marker: dot, origin: dot.getLatLng() });
     });
+    wirePopupLocks(popup, patch => onControlPointLockChange?.(cp.id, patch));
   }
 
   // Rebuild the entire index-CP layer from `indexControlPoints`. Use only
@@ -519,6 +569,7 @@ export function createMapView({
 
   function openStationPopup(p: StationMarker): void {
     const popupHtml = `<span class="name">${escapeHtml(p.label)}</span>`
+      + paramRowsHtml(p.alt, p.lockLat && p.lockLng, p.lockAlt)
       + goButtonHtml('Go to station →')
       + goButtonHtml('Move', 'move');
     // openOn auto-closes any prior popup; its 'remove' event clears the
@@ -540,5 +591,6 @@ export function createMapView({
       if (!cur) return;
       enterMoveMode({ kind: 'station', id: p.id, marker: cur.marker, origin: cur.marker.getLatLng() });
     });
+    wirePopupLocks(popup, patch => onStationLockChange?.(p.id, patch));
   }
 }
