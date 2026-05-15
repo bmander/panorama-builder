@@ -41,9 +41,9 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
                            border: 1px solid rgba(255,255,255,0.4);
                            padding: 6px 8px; font: 11px monospace; z-index: 1100; }
 .session-widget-dropdown[hidden] { display: none; }
-.session-widget-dropdown ul { list-style: none; margin: 0; padding: 0; }
-.session-widget-dropdown li { padding: 2px 0; }
-.session-widget-dropdown .axes { color: #d0a060; }
+.deficient-axes-list { list-style: none; margin: 0; padding: 0; }
+.deficient-axes-list li { padding: 2px 0; }
+.deficient-axes-list .axes { color: #d0a060; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn:disabled:hover { background: rgba(0,0,0,0.5); }
 #settings-panel { position: fixed; top: 36px; right: 8px; padding: 8px 10px;

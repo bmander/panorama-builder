@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 
@@ -316,9 +317,11 @@ func (s *Server) getSessionRankDeficient(w http.ResponseWriter, r *http.Request)
 		plan := orderOpsForApply(ops)
 		// Best-effort apply: a session with conflicts can't merge anyway, so
 		// return whatever the gate sees on the pre-apply state in that case.
+		// We don't want a 500 here either — the widget polls this often, so
+		// degrading to the pre-apply view is preferable to surfacing the
+		// transient error. The real merge will catch the same issue.
 		if err := applyPlanToMain(ctx, tx, plan); err != nil {
-			// Fall through to mergeGateCheck on pre-apply state — main may
-			// already have σ values from previous commits.
+			log.Printf("rank-deficient dry-run apply failed (session %s): %v", id, err)
 		}
 	}
 

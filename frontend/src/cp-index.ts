@@ -1,14 +1,13 @@
 import * as api from './api.js';
 import { radToDeg } from './mathx.js';
 import {
-  appendSigma, cpHref, cpLabel, fmtAlt, fmtCpLatLng, fmtSigmaMeters,
-  getElement, makeListCell, sigmaSeverityClass,
+  appendSigma, appendSigmaMeters, cpHref, cpLabel, fmtAlt, fmtCpLatLng,
+  fmtSigmaMeters, getElement, makeListCell, sigmaSeverityClass,
 } from './types.js';
-
-const SIGMA_POS_WARN_M = 0.5;
-const SIGMA_POS_REFUSE_M = 1.0;
-const SIGMA_ALT_WARN_M = 0.3;
-const SIGMA_ALT_REFUSE_M = 0.5;
+import {
+  SIGMA_ALT_REFUSE_M, SIGMA_ALT_WARN_M,
+  SIGMA_POS_REFUSE_M, SIGMA_POS_WARN_M,
+} from './sigma-thresholds.js';
 
 type SortKey = 'name' | 'loc' | 'elev' | 'fit' | 'obs';
 type SortDir = 'asc' | 'desc';
@@ -86,10 +85,8 @@ function renderRow(cp: api.ApiControlPoint, fit: api.ApiControlPointFit | undefi
   const loc = makeListCell('col-loc', fmtCpLatLng(cp.est_lat, cp.est_lng),
     cp.lock_est_lat && cp.lock_est_lng, unlocated);
   if (!cp.lock_est_lat || !cp.lock_est_lng) {
-    const sigmaH = Math.max(cp.sigma_est_lat ?? 0, cp.sigma_est_lng ?? 0) || null;
-    appendSigma(loc,
-      fmtSigmaMeters(sigmaH),
-      sigmaSeverityClass(sigmaH, SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M),
+    appendSigmaMeters(loc, cp.sigma_est_lat, cp.sigma_est_lng,
+      SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M,
       'σ from last solve (max of est_lat/est_lng, in meters)');
   }
   const elev = makeListCell('col-elev', fmtAlt(cp.est_alt),

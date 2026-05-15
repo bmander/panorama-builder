@@ -437,9 +437,12 @@ func (c *solveContext) buildSigmaMap(
 ) map[string]map[string]float64 {
 	out := map[string]map[string]float64{}
 	put := func(id, key string, v float64) {
-		// Skip NaN (axis fully unobservable) and zero σ (locked axis — by
-		// definition exactly determined). Keeping the journal lean.
-		if math.IsNaN(v) || v == 0 {
+		// NaN: axis fully unobservable. σ below ε: either locked (Ceres
+		// reports zero for SetParameterBlockConstant blocks) or determined
+		// to below double-precision noise — neither is interesting to
+		// surface as a stored uncertainty, so drop both to keep the
+		// journal lean.
+		if math.IsNaN(v) || v < 1e-12 {
 			return
 		}
 		m, ok := out[id]

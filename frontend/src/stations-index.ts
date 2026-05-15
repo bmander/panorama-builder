@@ -1,15 +1,12 @@
 import * as api from './api.js';
 import {
-  appendSigma, fmtAlt, fmtCpLatLng, fmtSigmaMeters, getElement, makeListCell,
-  sigmaSeverityClass, stationHref, stationLabel,
+  appendSigma, appendSigmaMeters, fmtAlt, fmtCpLatLng, fmtSigmaMeters,
+  getElement, makeListCell, sigmaSeverityClass, stationHref, stationLabel,
 } from './types.js';
-
-// Per-axis σ thresholds for the "good/warn/bad" color stripe on the listing.
-// Same defaults the merge gate enforces — see backend/solve_merge_gate.go.
-const SIGMA_POS_WARN_M = 0.5;
-const SIGMA_POS_REFUSE_M = 1.0;
-const SIGMA_ALT_WARN_M = 0.3;
-const SIGMA_ALT_REFUSE_M = 0.5;
+import {
+  SIGMA_ALT_REFUSE_M, SIGMA_ALT_WARN_M,
+  SIGMA_POS_REFUSE_M, SIGMA_POS_WARN_M,
+} from './sigma-thresholds.js';
 
 function renderRow(st: api.ApiStation): HTMLElement {
   const li = document.createElement('li');
@@ -20,10 +17,8 @@ function renderRow(st: api.ApiStation): HTMLElement {
   const loc = makeListCell('col-loc', fmtCpLatLng(st.lat, st.lng),
     st.lock_lat && st.lock_lng);
   if (!st.lock_lat || !st.lock_lng) {
-    const sigmaH = Math.max(st.sigma_lat ?? 0, st.sigma_lng ?? 0) || null;
-    appendSigma(loc,
-      fmtSigmaMeters(sigmaH),
-      sigmaSeverityClass(sigmaH, SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M),
+    appendSigmaMeters(loc, st.sigma_lat, st.sigma_lng,
+      SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M,
       'σ from last solve (max of lat/lng, in meters)');
   }
   const elev = makeListCell('col-elev', fmtAlt(st.alt), st.lock_alt);

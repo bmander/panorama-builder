@@ -65,6 +65,17 @@ func mergeGateCheck(ctx context.Context, tx pgx.Tx, sessionID string) ([]RankDef
 	return out, nil
 }
 
+// checkAxis appends name to axes when the axis is free and its σ exceeds
+// threshold. The mutation pattern is hidden inside flaggedAxesFor; callers
+// stay readable as a flat sequence of axis checks.
+func checkAxis(axes *[]string, locked bool, sig *float64, threshold float64, name string) {
+	if !locked && sig != nil && *sig > threshold {
+		*axes = append(*axes, name)
+	}
+}
+
+const flaggedReason = "σ exceeds refuse threshold on free axes"
+
 func flaggedAxesFor(ctx context.Context, tx pgx.Tx, kind, id string) (*RankDeficientAxis, error) {
 	switch kind {
 	case entityStation:
@@ -81,23 +92,14 @@ func flaggedAxesFor(ctx context.Context, tx pgx.Tx, kind, id string) (*RankDefic
 			return nil, err
 		}
 		var axes []string
-		if !lockLat && sigLat != nil && *sigLat > mergeSigmaPosRefuseM {
-			axes = append(axes, "lat")
-		}
-		if !lockLng && sigLng != nil && *sigLng > mergeSigmaPosRefuseM {
-			axes = append(axes, "lng")
-		}
-		if !lockAlt && sigAlt != nil && *sigAlt > mergeSigmaAltRefuseM {
-			axes = append(axes, "alt")
-		}
+		checkAxis(&axes, lockLat, sigLat, mergeSigmaPosRefuseM, "lat")
+		checkAxis(&axes, lockLng, sigLng, mergeSigmaPosRefuseM, "lng")
+		checkAxis(&axes, lockAlt, sigAlt, mergeSigmaAltRefuseM, "alt")
 		if len(axes) == 0 {
 			return nil, nil
 		}
 		return &RankDeficientAxis{
-			Kind:   RankDeficientAxisKindStation,
-			ID:     id,
-			Axes:   axes,
-			Reason: "σ exceeds refuse threshold on free axes",
+			Kind: RankDeficientAxisKindStation, ID: id, Axes: axes, Reason: flaggedReason,
 		}, nil
 
 	case entityPhoto:
@@ -118,27 +120,19 @@ func flaggedAxesFor(ctx context.Context, tx pgx.Tx, kind, id string) (*RankDefic
 			return nil, err
 		}
 		var axes []string
-		over := func(lock bool, sig *float64, name string, threshold float64) {
-			if !lock && sig != nil && *sig > threshold {
-				axes = append(axes, name)
-			}
-		}
-		over(lockAz, sAz, "photo_az", mergeSigmaAngleRefuseRad)
-		over(lockTilt, sTilt, "photo_tilt", mergeSigmaAngleRefuseRad)
-		over(lockRoll, sRoll, "photo_roll", mergeSigmaAngleRefuseRad)
-		over(lockSize, sSize, "size_rad", mergeSigmaAngleRefuseRad)
-		// K1/K2 σ is dimensionless; use the angle threshold's natural scale
-		// (radians per unit-radius residual ~ angle threshold).
-		over(lockK1, sK1, "dist_k1", mergeSigmaAngleRefuseRad)
-		over(lockK2, sK2, "dist_k2", mergeSigmaAngleRefuseRad)
+		checkAxis(&axes, lockAz, sAz, mergeSigmaAngleRefuseRad, "photo_az")
+		checkAxis(&axes, lockTilt, sTilt, mergeSigmaAngleRefuseRad, "photo_tilt")
+		checkAxis(&axes, lockRoll, sRoll, mergeSigmaAngleRefuseRad, "photo_roll")
+		checkAxis(&axes, lockSize, sSize, mergeSigmaAngleRefuseRad, "size_rad")
+		// K1/K2 σ is dimensionless; the angle threshold is the natural
+		// scale (radians per unit-radius residual ≈ angle threshold).
+		checkAxis(&axes, lockK1, sK1, mergeSigmaAngleRefuseRad, "dist_k1")
+		checkAxis(&axes, lockK2, sK2, mergeSigmaAngleRefuseRad, "dist_k2")
 		if len(axes) == 0 {
 			return nil, nil
 		}
 		return &RankDeficientAxis{
-			Kind:   RankDeficientAxisKindPhoto,
-			ID:     id,
-			Axes:   axes,
-			Reason: "σ exceeds refuse threshold on free axes",
+			Kind: RankDeficientAxisKindPhoto, ID: id, Axes: axes, Reason: flaggedReason,
 		}, nil
 
 	case entityControlPoint:
@@ -156,23 +150,14 @@ func flaggedAxesFor(ctx context.Context, tx pgx.Tx, kind, id string) (*RankDefic
 			return nil, err
 		}
 		var axes []string
-		if !lockLat && sigLat != nil && *sigLat > mergeSigmaPosRefuseM {
-			axes = append(axes, "est_lat")
-		}
-		if !lockLng && sigLng != nil && *sigLng > mergeSigmaPosRefuseM {
-			axes = append(axes, "est_lng")
-		}
-		if !lockAlt && sigAlt != nil && *sigAlt > mergeSigmaAltRefuseM {
-			axes = append(axes, "est_alt")
-		}
+		checkAxis(&axes, lockLat, sigLat, mergeSigmaPosRefuseM, "est_lat")
+		checkAxis(&axes, lockLng, sigLng, mergeSigmaPosRefuseM, "est_lng")
+		checkAxis(&axes, lockAlt, sigAlt, mergeSigmaAltRefuseM, "est_alt")
 		if len(axes) == 0 {
 			return nil, nil
 		}
 		return &RankDeficientAxis{
-			Kind:   RankDeficientAxisKindControlPoint,
-			ID:     id,
-			Axes:   axes,
-			Reason: "σ exceeds refuse threshold on free axes",
+			Kind: RankDeficientAxisKindControlPoint, ID: id, Axes: axes, Reason: flaggedReason,
 		}, nil
 	}
 	return nil, nil

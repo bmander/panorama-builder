@@ -11,7 +11,7 @@
 
 import type { RankDeficientAxis } from './api.js';
 import { SessionConflictError, SessionRankDeficientError } from './api.js';
-import { getElement } from './types.js';
+import { getElement, renderDeficientAxesList } from './types.js';
 
 export interface SignOffRequest {
   sign_off: string;
@@ -82,21 +82,7 @@ export function openSignOffModal(opts: SignOffModalOptions): void {
     rankWarningEl.replaceChildren();
     const header = document.createElement('div');
     header.textContent = `${axes.length.toString()} entit${axes.length === 1 ? 'y has' : 'ies have'} poorly-determined axes:`;
-    rankWarningEl.append(header);
-    const ul = document.createElement('ul');
-    ul.style.margin = '4px 0 0 16px';
-    ul.style.padding = '0';
-    for (const a of axes.slice(0, 12)) {
-      const li = document.createElement('li');
-      li.textContent = `${a.kind} ${a.id} [${a.axes.join(',')}] — ${a.reason}`;
-      ul.append(li);
-    }
-    if (axes.length > 12) {
-      const li = document.createElement('li');
-      li.textContent = `…and ${(axes.length - 12).toString()} more`;
-      ul.append(li);
-    }
-    rankWarningEl.append(ul);
+    rankWarningEl.append(header, renderDeficientAxesList(axes, 12));
     rankWarningEl.hidden = false;
     allowEl.checked = true;
   };

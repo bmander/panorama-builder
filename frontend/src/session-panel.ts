@@ -13,7 +13,7 @@ import * as api from './api.js';
 import { sessionManager } from './session.js';
 import { sessionPending } from './session-pending.js';
 import { openSignOffModal } from './signoff-modal.js';
-import { fmtRef, getElement } from './types.js';
+import { fmtRef, getElement, renderDeficientAxesList } from './types.js';
 
 export interface SessionPanel {
   destroy(): void;
@@ -72,11 +72,12 @@ export function createSessionPanel(
     e.stopPropagation();
     dropdown.hidden = !dropdown.hidden;
   });
-  document.addEventListener('click', e => {
+  const outsideClickHandler = (e: MouseEvent): void => {
     if (dropdown.hidden) return;
     if (e.target instanceof Node && root.contains(e.target)) return;
     dropdown.hidden = true;
-  });
+  };
+  document.addEventListener('click', outsideClickHandler);
 
   function renderDropdown(): void {
     dropdown.replaceChildren();
@@ -84,20 +85,7 @@ export function createSessionPanel(
       dropdown.textContent = '(no problems)';
       return;
     }
-    const ul = document.createElement('ul');
-    for (const a of problems) {
-      const li = document.createElement('li');
-      const head = document.createElement('span');
-      head.textContent = `${a.kind} ${a.id} `;
-      const axes = document.createElement('span');
-      axes.className = 'axes';
-      axes.textContent = `[${a.axes.join(',')}]`;
-      const tail = document.createElement('span');
-      tail.textContent = ` — ${a.reason}`;
-      li.append(head, axes, tail);
-      ul.append(li);
-    }
-    dropdown.append(ul);
+    dropdown.append(renderDeficientAxesList(problems));
   }
 
   // refreshProblems hits /sessions/{id}/rank-deficient and caches the
@@ -196,6 +184,7 @@ export function createSessionPanel(
     destroy() {
       offSession();
       offPending();
+      document.removeEventListener('click', outsideClickHandler);
       root.remove();
     },
   };

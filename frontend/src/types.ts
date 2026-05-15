@@ -347,6 +347,52 @@ export function appendSigma(cell: HTMLElement, text: string, severityClass: stri
   cell.append(s);
 }
 
+// Convenience for the common "horizontal position σ" pattern shared by
+// the stations and CPs index pages: pick max(σ_lat, σ_lng) so the worst
+// axis sets the color, format as meters, append.
+export function appendSigmaMeters(
+  cell: HTMLElement,
+  sigLat: number | null | undefined,
+  sigLng: number | null | undefined,
+  warnAt: number, refuseAt: number,
+  tooltip?: string,
+): void {
+  const sigma = Math.max(sigLat ?? 0, sigLng ?? 0) || null;
+  appendSigma(cell, fmtSigmaMeters(sigma),
+    sigmaSeverityClass(sigma, warnAt, refuseAt), tooltip);
+}
+
+// Renders the "{kind} {id} [{axes}] — {reason}" list shared by the session
+// widget's problems dropdown and the save modal's inline warning panel.
+// Truncates after maxItems with a "…and N more" tail. Returns a <ul> the
+// caller appends into its container.
+export function renderDeficientAxesList(
+  axes: readonly { kind: string; id: string; axes: readonly string[]; reason: string }[],
+  maxItems = Infinity,
+): HTMLUListElement {
+  const ul = document.createElement('ul');
+  ul.className = 'deficient-axes-list';
+  const shown = axes.slice(0, maxItems);
+  for (const a of shown) {
+    const li = document.createElement('li');
+    const head = document.createElement('span');
+    head.textContent = `${a.kind} ${a.id} `;
+    const axesEl = document.createElement('span');
+    axesEl.className = 'axes';
+    axesEl.textContent = `[${a.axes.join(',')}]`;
+    const tail = document.createElement('span');
+    tail.textContent = ` — ${a.reason}`;
+    li.append(head, axesEl, tail);
+    ul.append(li);
+  }
+  if (axes.length > shown.length) {
+    const li = document.createElement('li');
+    li.textContent = `…and ${(axes.length - shown.length).toString()} more`;
+    ul.append(li);
+  }
+  return ul;
+}
+
 // Format a σ value (meters) for compact display. Chooses unit by magnitude
 // so cm-scale uncertainties don't render as "0.012 m" but "1.2 cm".
 //   null  →  "?"   (no solve has populated this axis yet)

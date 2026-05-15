@@ -4,11 +4,9 @@ import {
   appendSigma, fmtSigmaRad, getElement, makeListCell,
   sigmaSeverityClass, stationHref, stationLabel,
 } from './types.js';
-
-// σ thresholds for the per-axis color stripe. Matches backend merge gate
-// defaults; tune both together if you change them.
-const SIGMA_ANGLE_WARN_RAD = 0.5 * Math.PI / 180;   // 0.5°
-const SIGMA_ANGLE_REFUSE_RAD = 2 * Math.PI / 180;   // 2°
+import {
+  SIGMA_ANGLE_REFUSE_RAD, SIGMA_ANGLE_WARN_RAD,
+} from './sigma-thresholds.js';
 
 const HEADERS = ['Station', 'obs', 'az', 'tilt', 'roll', 'fov', 'k1', 'k2'] as const;
 
