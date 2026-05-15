@@ -1,0 +1,391 @@
+//go:build !go_solver_gn
+
+package solver
+
+// #cgo CXXFLAGS: -std=c++17 -O2 -DGLOG_USE_GLOG_EXPORT -I/usr/local/include -I/usr/local/include/eigen3 -I/opt/homebrew/include -I/opt/homebrew/include/eigen3
+// #cgo darwin LDFLAGS: -L/usr/local/lib -L/opt/homebrew/lib -lceres -lglog
+// #cgo linux  LDFLAGS: -lceres -lglog
+// #include "bridge.h"
+import "C"
+
+import (
+	"fmt"
+	"math"
+	"runtime"
+	"sync"
+	"sync/atomic"
+	"unsafe"
+)
+
+// bridgeCtx is the Go side of the iteration-callback handle. The C++ bridge
+// stores only a uint64 handle in pc_problem.go_ctx_handle and passes it back
+// through pc_iter_callback; we resolve it to this struct here. This keeps
+// Go pointers out of the cgo boundary (passing Go pointers that contain
+// other Go pointers is forbidden by cgo's pointer rules).
+type bridgeCtx struct {
+	cfg          Config
+	residualSize int
+}
+
+var (
+	ctxMu       sync.Mutex
+	ctxNextID   atomic.Uint64
+	ctxRegistry = map[uint64]*bridgeCtx{}
+)
+
+func registerCtx(c *bridgeCtx) uint64 {
+	id := ctxNextID.Add(1)
+	ctxMu.Lock()
+	ctxRegistry[id] = c
+	ctxMu.Unlock()
+	return id
+}
+
+func releaseCtx(id uint64) {
+	ctxMu.Lock()
+	delete(ctxRegistry, id)
+	ctxMu.Unlock()
+}
+
+func lookupCtx(id uint64) *bridgeCtx {
+	ctxMu.Lock()
+	c := ctxRegistry[id]
+	ctxMu.Unlock()
+	return c
+}
+
+//export pc_iter_callback
+func pc_iter_callback(handle C.uint64_t, iter C.int32_t, cost C.double, accepted C.int32_t) C.int {
+	ctx := lookupCtx(uint64(handle))
+	if ctx == nil {
+		return 0
+	}
+	if ctx.cfg.OnIteration != nil && ctx.residualSize > 0 {
+		// Ceres reports summary.cost = 0.5·||r||². Convert to RMS over all
+		// residual rows so the SSE stream emits comparable numbers to the
+		// legacy Gauss-Newton path.
+		rms := math.Sqrt(2 * float64(cost) / float64(ctx.residualSize))
+		ctx.cfg.OnIteration(int(iter), rms, accepted != 0)
+	}
+	if ctx.cfg.ShouldStop != nil && ctx.cfg.ShouldStop() {
+		return 1
+	}
+	return 0
+}
+
+// solveBridge runs the Ceres solver on the prepared solveContext and returns
+// a populated Result. Mutates c.stationOffset / c.photoPose / c.cpOffset in
+// place with the final optimized values.
+//
+// Marshaling is straightforward because solveContext already holds everything
+// in the right shape — we just point cgo at the underlying memory. Anchors
+// are passed as the post-reconciliation cpOriginLLA / stationOriginLLA so the
+// C++ side recomputes ECEF + ENU basis (matching solveContext.cpOriginECEF /
+// stationOriginECEF bit-exactly).
+func solveBridge(c *solveContext) (Result, error) {
+	nStations := len(c.problem.Stations)
+	nPhotos := len(c.problem.Photos)
+	nCPs := len(c.problem.ControlPoints)
+	nObs := len(c.obs)
+
+	if nObs == 0 {
+		state := c.readState()
+		return Result{
+			Converged:         true,
+			AutoLockedColumns: c.autoLocked,
+			Changes:           c.composeChanges(state, state),
+		}, nil
+	}
+
+	// Anchors as LLA. C++ recomputes ECEF/basis to exactly match the Go
+	// side's currentECEF math when offsets are nonzero on return.
+	stationAnchorLLA := make([]float64, nStations*3)
+	for i := range c.problem.Stations {
+		stationAnchorLLA[3*i+0] = c.stationOriginLLA[i][0]
+		stationAnchorLLA[3*i+1] = c.stationOriginLLA[i][1]
+		stationAnchorLLA[3*i+2] = c.stationOriginLLA[i][2]
+	}
+	cpAnchorLLA := make([]float64, nCPs*3)
+	for i := range c.problem.ControlPoints {
+		cpAnchorLLA[3*i+0] = c.cpOriginLLA[i][0]
+		cpAnchorLLA[3*i+1] = c.cpOriginLLA[i][1]
+		cpAnchorLLA[3*i+2] = c.cpOriginLLA[i][2]
+	}
+
+	// Offsets — the actual optimized variables. C-layout: [E, N, U] per
+	// entity. solveContext stores them as [3]float64 with indices
+	// {axisEast=0, axisNorth=1, axisUp=2} — already matches our layout.
+	stationOffset := make([]float64, nStations*3)
+	for i := range c.stationOffset {
+		stationOffset[3*i+0] = c.stationOffset[i][axisEast]
+		stationOffset[3*i+1] = c.stationOffset[i][axisNorth]
+		stationOffset[3*i+2] = c.stationOffset[i][axisUp]
+	}
+	cpOffset := make([]float64, nCPs*3)
+	for i := range c.cpOffset {
+		cpOffset[3*i+0] = c.cpOffset[i][axisEast]
+		cpOffset[3*i+1] = c.cpOffset[i][axisNorth]
+		cpOffset[3*i+2] = c.cpOffset[i][axisUp]
+	}
+
+	// Photo pose: (az, tilt, roll, sizeRad, K1, K2).
+	photoPose := make([]float64, nPhotos*6)
+	photoAspect := make([]float64, nPhotos)
+	photoStationIdx := make([]int32, nPhotos)
+	photoLock := make([]uint8, nPhotos*6)
+	for i, p := range c.problem.Photos {
+		photoPose[6*i+0] = c.photoPose[i].PhotoAz
+		photoPose[6*i+1] = c.photoPose[i].PhotoTilt
+		photoPose[6*i+2] = c.photoPose[i].PhotoRoll
+		photoPose[6*i+3] = c.photoPose[i].SizeRad
+		photoPose[6*i+4] = c.photoPose[i].K1
+		photoPose[6*i+5] = c.photoPose[i].K2
+		photoAspect[i] = c.photoPose[i].Aspect
+		photoStationIdx[i] = int32(c.stationIdx[p.StationID])
+		// In scoped modes (single-station / single-cp), photos outside the
+		// focus group must be fully locked so Ceres treats them as constant.
+		locks := c.scopedPhotoLocks(p)
+		if locks.PhotoAz {
+			photoLock[6*i+0] = 1
+		}
+		if locks.PhotoTilt {
+			photoLock[6*i+1] = 1
+		}
+		if locks.PhotoRoll {
+			photoLock[6*i+2] = 1
+		}
+		if locks.SizeRad {
+			photoLock[6*i+3] = 1
+		}
+		if locks.K1 {
+			photoLock[6*i+4] = 1
+		}
+		if locks.K2 {
+			photoLock[6*i+5] = 1
+		}
+	}
+
+	// Locks for stations: the FFI sees the *per-axis* lock state. In the
+	// scoped modes (single-station / single-cp) every entity outside the
+	// focus group must be locked on every axis so Ceres treats it as
+	// constant. scopedAxisLock encapsulates that.
+	stationLock := make([]uint8, nStations*3)
+	for i, s := range c.problem.Stations {
+		eL, nL, uL := c.scopedStationLocks(s)
+		if eL {
+			stationLock[3*i+0] = 1
+		}
+		if nL {
+			stationLock[3*i+1] = 1
+		}
+		if uL {
+			stationLock[3*i+2] = 1
+		}
+	}
+
+	// CP locks: per-axis. A class is locked when any member has the axis
+	// lock; reuse classAxisLock via the rep. Out-of-scope CPs (single-cp
+	// mode) are fully locked.
+	cpLock := make([]uint8, nCPs*3)
+	cpAxisRep := make([]int32, nCPs*3)
+	for i, cp := range c.problem.ControlPoints {
+		for axis := 0; axis < 3; axis++ {
+			repID := c.cpAxisRep[axis][cp.ID]
+			cpAxisRep[3*i+axis] = int32(c.cpIdx[repID])
+			locked, _ := c.classAxisLock(axis, repID)
+			if locked || c.scopedCPFullyLocked(cp) {
+				cpLock[3*i+axis] = 1
+			}
+		}
+	}
+
+	// Observations: scoped (c.obs). Indices are into the FULL problem arrays
+	// — solveContext.obsPhotoIdx and obsCPIdx were built that way already.
+	obsPhotoIdx := make([]int32, nObs)
+	obsCPIdx := make([]int32, nObs)
+	obsUV := make([]float64, nObs*2)
+	for k := range c.obs {
+		obsPhotoIdx[k] = int32(c.obsPhotoIdx[k])
+		obsCPIdx[k] = int32(c.obsCPIdx[k])
+		obsUV[2*k+0] = c.obs[k].U
+		obsUV[2*k+1] = c.obs[k].V
+	}
+
+	// Set up callback context. residualSize matches solveContext.residualSize()
+	// — 2·n_obs + reg rows. (Ceres includes the reg rows in summary.cost too.)
+	regRows := 0
+	if c.cfg.KRegLambda > 0 {
+		for i, p := range c.problem.Photos {
+			_ = i
+			if !p.Locks.K1 {
+				regRows++
+			}
+			if !p.Locks.K2 {
+				regRows++
+			}
+		}
+	}
+	ctxID := registerCtx(&bridgeCtx{cfg: c.cfg, residualSize: 2*nObs + regRows})
+	defer releaseCtx(ctxID)
+
+	// Diagnostics outputs.
+	var (
+		outIters     int32
+		outInitCost  float64
+		outFinalCost float64
+		outConverged int32
+		outAborted   int32
+	)
+
+	// cgo's pointer rule forbids passing a Go pointer to C if the memory it
+	// points to contains other Go pointers. pc_problem is itself a value type
+	// allocated below (cgo allows passing &local), but every field is a
+	// pointer into a Go slice — so we pin them all so the cgo runtime check
+	// (cgocheck) doesn't fault. Pinned memory stays at a fixed address until
+	// the pinner is unpinned at function exit.
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+	pinSlice := func(b unsafe.Pointer) {
+		if b != nil {
+			pinner.Pin(b)
+		}
+	}
+	pinSlice(unsafe.Pointer(floatPtr(stationAnchorLLA)))
+	pinSlice(unsafe.Pointer(floatPtr(cpAnchorLLA)))
+	pinSlice(unsafe.Pointer(floatPtr(stationOffset)))
+	pinSlice(unsafe.Pointer(floatPtr(cpOffset)))
+	pinSlice(unsafe.Pointer(u8Ptr(stationLock)))
+	pinSlice(unsafe.Pointer(u8Ptr(cpLock)))
+	pinSlice(unsafe.Pointer(floatPtr(photoPose)))
+	pinSlice(unsafe.Pointer(floatPtr(photoAspect)))
+	pinSlice(unsafe.Pointer(u8Ptr(photoLock)))
+	pinSlice(unsafe.Pointer(i32Ptr(photoStationIdx)))
+	pinSlice(unsafe.Pointer(i32Ptr(cpAxisRep)))
+	pinSlice(unsafe.Pointer(i32Ptr(obsPhotoIdx)))
+	pinSlice(unsafe.Pointer(i32Ptr(obsCPIdx)))
+	pinSlice(unsafe.Pointer(floatPtr(obsUV)))
+	pinner.Pin(&outIters)
+	pinner.Pin(&outInitCost)
+	pinner.Pin(&outFinalCost)
+	pinner.Pin(&outConverged)
+	pinner.Pin(&outAborted)
+
+	cprob := C.pc_problem{
+		n_stations:         C.int32_t(nStations),
+		n_photos:           C.int32_t(nPhotos),
+		n_cps:              C.int32_t(nCPs),
+		n_obs:              C.int32_t(nObs),
+		station_anchor_lla: floatPtr(stationAnchorLLA),
+		cp_anchor_lla:      floatPtr(cpAnchorLLA),
+		station_offset:     floatPtr(stationOffset),
+		cp_offset:          floatPtr(cpOffset),
+		station_lock:       u8Ptr(stationLock),
+		cp_lock:            u8Ptr(cpLock),
+		photo_pose:         floatPtr(photoPose),
+		photo_aspect:       floatPtr(photoAspect),
+		photo_lock:         u8Ptr(photoLock),
+		photo_station_idx:  i32Ptr(photoStationIdx),
+		cp_axis_rep:        i32Ptr(cpAxisRep),
+		obs_photo_idx:      i32Ptr(obsPhotoIdx),
+		obs_cp_idx:         i32Ptr(obsCPIdx),
+		obs_uv:             floatPtr(obsUV),
+		k_reg_lambda:       C.double(c.cfg.KRegLambda),
+		max_iters:          C.int32_t(c.cfg.MaxIters),
+		function_tol:       C.double(c.cfg.ResidualTolRad),
+		parameter_tol:      C.double(c.cfg.StepTol),
+		out_iterations:     (*C.int32_t)(unsafe.Pointer(&outIters)),
+		out_initial_cost:   (*C.double)(unsafe.Pointer(&outInitCost)),
+		out_final_cost:     (*C.double)(unsafe.Pointer(&outFinalCost)),
+		out_converged:      (*C.int32_t)(unsafe.Pointer(&outConverged)),
+		out_aborted:        (*C.int32_t)(unsafe.Pointer(&outAborted)),
+		go_ctx_handle:      C.uint64_t(ctxID),
+	}
+
+	// Snapshot the initial state for composeChanges + initial-RMS.
+	initialState := c.readState()
+	initialRMS := c.residualRMS()
+
+	rc := C.pc_solve(&cprob)
+	if rc != 0 {
+		return Result{}, fmt.Errorf("solver: ceres bridge failed (code %d)", int(rc))
+	}
+
+	// Write the final offsets / poses back into solveContext so composeChanges
+	// can use the same scaffolding as the legacy path.
+	for i := range c.stationOffset {
+		c.stationOffset[i][axisEast] = stationOffset[3*i+0]
+		c.stationOffset[i][axisNorth] = stationOffset[3*i+1]
+		c.stationOffset[i][axisUp] = stationOffset[3*i+2]
+	}
+	for i := range c.cpOffset {
+		// Re-broadcast aliased axes from rep to members so composeChanges'
+		// per-CP afterLLA comes out consistent regardless of which entry it
+		// reads. The shared block already holds the rep's value; just copy.
+		for axis := 0; axis < 3; axis++ {
+			rep := int(cpAxisRep[3*i+axis])
+			c.cpOffset[i][axis] = cpOffset[3*rep+axis]
+		}
+	}
+	for i := range c.photoPose {
+		c.photoPose[i].PhotoAz = photoPose[6*i+0]
+		c.photoPose[i].PhotoTilt = photoPose[6*i+1]
+		c.photoPose[i].PhotoRoll = photoPose[6*i+2]
+		c.photoPose[i].SizeRad = clampSize(photoPose[6*i+3])
+		c.photoPose[i].K1 = photoPose[6*i+4]
+		c.photoPose[i].K2 = photoPose[6*i+5]
+	}
+
+	finalState := c.readState()
+
+	// Final RMS computed against the in-Go ProjectPOI / BearingENU so the
+	// emitted number matches what the SSE stream's final iteration carried
+	// and what tests assert on. (summary.final_cost would differ by tiny
+	// round-off and skip the regularization rows we don't surface here.)
+	finalRMS := c.residualRMS()
+
+	// Tolerate floating-point noise: the legacy path declares Diverged only
+	// when bestNorm >= initialNorm; here we add a small epsilon so a no-op
+	// converged solve doesn't get flagged when round-trip arithmetic gives
+	// finalRMS one ULP above initialRMS.
+	diverged := finalRMS > initialRMS+1e-12
+
+	var changes []EntityChange
+	if !diverged {
+		changes = c.composeChanges(initialState, finalState)
+	}
+
+	return Result{
+		Iterations:         int(outIters),
+		InitialResidualRMS: initialRMS,
+		FinalResidualRMS:   finalRMS,
+		Converged:          outConverged != 0 && !diverged,
+		Diverged:           diverged,
+		AutoLockedColumns:  c.autoLocked,
+		Changes:            changes,
+	}, nil
+}
+
+// Typed C pointers to the first element of a Go slice. These slices hold
+// only POD (float64 / int32 / uint8), so they contain no Go pointers — but
+// the *slice header* lives in Go memory, so cgo still needs them pinned
+// before crossing the FFI boundary. See the runtime.Pinner usage above.
+func floatPtr(s []float64) *C.double {
+	if len(s) == 0 {
+		return nil
+	}
+	return (*C.double)(unsafe.Pointer(&s[0]))
+}
+
+func i32Ptr(s []int32) *C.int32_t {
+	if len(s) == 0 {
+		return nil
+	}
+	return (*C.int32_t)(unsafe.Pointer(&s[0]))
+}
+
+func u8Ptr(s []uint8) *C.uint8_t {
+	if len(s) == 0 {
+		return nil
+	}
+	return (*C.uint8_t)(unsafe.Pointer(&s[0]))
+}

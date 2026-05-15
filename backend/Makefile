@@ -1,13 +1,25 @@
-.PHONY: run build fmt vet tidy generate dump restore
+.PHONY: run build build-legacy fmt vet tidy generate dump restore
 
 DATABASE_URL ?= postgres://panorama:panorama@localhost:5432/panorama?sslmode=disable
 DUMP_FILE    ?= panorama_$(shell date -u +%Y%m%dT%H%M%SZ).sql
 
+# The default build links Ceres-Solver via cgo (see backend/solver/bridge.cc).
+# Prereqs:
+#   macOS:  brew install ceres-solver eigen suite-sparse glog gflags
+#   Linux:  apt install libceres-dev libeigen3-dev libsuitesparse-dev \
+#                       libgoogle-glog-dev libgflags-dev
+# To opt out and build the pure-Go Gauss-Newton fallback (no system deps):
+#   make build-legacy
 run:
 	DATABASE_URL='$(DATABASE_URL)' go run .
 
 build:
 	go build -o bin/panorama-api .
+
+# Pure-Go fallback solver (legacy Gauss-Newton). No Ceres-Solver required;
+# kept for A/B benchmarks via `go test -tags go_solver_gn ./solver/...`.
+build-legacy:
+	go build -tags go_solver_gn -o bin/panorama-api .
 
 fmt:
 	go fmt ./...
