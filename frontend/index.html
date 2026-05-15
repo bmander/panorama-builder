@@ -136,6 +136,11 @@
     </div>
   </div>
   <div id="params-panel" hidden>
+    <div class="params-panel-header">
+      <span class="params-panel-title">Parameters</span>
+      <button type="button" id="params-toggle" class="btn params-toggle" aria-expanded="true" aria-controls="params-panel-body" aria-label="Toggle parameters">▾</button>
+    </div>
+    <div id="params-panel-body">
     <div class="params-section">
       <div class="params-section-header">Station</div>
       <div class="settings-row station-pos">
@@ -190,6 +195,7 @@
         <input type="number" id="photo-hud-k2" step="0.001">
         <label class="lock-check"><input type="checkbox" id="photo-hud-k2-lock"> lock</label>
       </div>
+    </div>
     </div>
   </div>
   <div id="solve-modal" class="modal" hidden>

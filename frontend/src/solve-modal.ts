@@ -77,10 +77,11 @@ export function createSolveModal(
   }
 
   function close(): void {
-    // Closing while a run is active aborts it (same as Cancel), preserving
-    // the "no writeback" contract.
-    activeAbort?.abort();
-    activeAbort = null;
+    if (activeAbort) {
+      if (!confirm('Cancel the running solve?')) return;
+      activeAbort.abort();
+      activeAbort = null;
+    }
     modalEl.hidden = true;
     setRunning(false);
     progressEl.hidden = true;
@@ -104,9 +105,6 @@ export function createSolveModal(
     tolEl.focus();
   }
 
-  modalEl.addEventListener('click', e => {
-    if (e.target === modalEl) close();
-  });
   closeXBtn.addEventListener('click', close);
   closeBtn.addEventListener('click', close);
 

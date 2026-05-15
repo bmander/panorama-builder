@@ -609,6 +609,21 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     });
   }
 
+  // Coarse-pointer viewports start collapsed to reclaim vertical space.
+  {
+    const panel = getElement('params-panel');
+    const toggle = getElement<HTMLButtonElement>('params-toggle');
+    function setCollapsed(collapsed: boolean): void {
+      panel.classList.toggle('collapsed', collapsed);
+      toggle.setAttribute('aria-expanded', String(!collapsed));
+      toggle.textContent = collapsed ? '▸' : '▾';
+    }
+    setCollapsed(matchMedia('(pointer: coarse)').matches);
+    toggle.addEventListener('click', () => {
+      setCollapsed(!panel.classList.contains('collapsed'));
+    });
+  }
+
   function setMultiSelectedConstraintIds(next: ReadonlySet<string>): void {
     multiSelectedConstraintIds = next;
     const n = next.size;

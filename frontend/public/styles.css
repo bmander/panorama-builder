@@ -134,6 +134,12 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
                 border: 1px solid #fff; min-width: 260px; max-width: 320px;
                 padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
 #params-panel[hidden] { display: none; }
+.params-panel-header { display: flex; align-items: center; justify-content: space-between;
+                       gap: 8px; }
+.params-panel-title { font-weight: bold; }
+.params-toggle { padding: 0 6px; line-height: 1; }
+#params-panel-body { display: flex; flex-direction: column; gap: 8px; }
+#params-panel.collapsed > #params-panel-body { display: none; }
 .params-section { display: flex; flex-direction: column; gap: 6px; }
 .params-section + .params-section { border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px; }
 .params-section[hidden] { display: none; }
