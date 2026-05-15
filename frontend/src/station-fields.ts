@@ -11,8 +11,8 @@
 
 import * as api from './api.js';
 import {
-  fmtSigmaMeters, formatLocalDateTime, getElement, sigmaSeverityClass,
-  syncInputChecked, syncInputValue,
+  createSigmaSpan, fmtSigmaMeters, formatLocalDateTime, getElement,
+  sigmaSeverityClass, syncInputChecked, syncInputValue, updateSigma,
 } from './types.js';
 import type { LatLng } from './types.js';
 import {
@@ -24,7 +24,6 @@ export interface StationFields {
   name: string | null;
   lat: number; lng: number; alt: number;
   lockLat: boolean; lockLng: boolean; lockAlt: boolean;
-  sigmaLat: number | null; sigmaLng: number | null; sigmaAlt: number | null;
   // ISO timestamp for when the photographer set up the camera at this
   // station. The backend stores TIMESTAMPTZ; the UI converts to/from
   // datetime-local.
@@ -64,31 +63,23 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
   const lockAltEl = getElement<HTMLInputElement>('station-lock-alt');
   const capturedAtEl = getElement<HTMLInputElement>('station-captured-at');
 
-  // σ spans live in the lat/lng row (max-of-two pattern, matches
-  // stations-index.ts) and the alt row. They're created once and updated
-  // in place by render(); hidden when the corresponding axis is locked.
-  const sigmaPosEl = document.createElement('span');
-  sigmaPosEl.className = 'sigma sigma-unknown';
-  lngEl.parentElement?.after(sigmaPosEl);
-  const sigmaAltEl = document.createElement('span');
-  sigmaAltEl.className = 'sigma sigma-unknown';
-  altEl.parentElement?.after(sigmaAltEl);
+  const sigmaPosEl = createSigmaSpan(lngEl.parentElement!);
+  const sigmaAltEl = createSigmaSpan(altEl.parentElement!);
 
-  function renderSigma(): void {
-    if (!cache) return;
-    const posLocked = cache.lockLat && cache.lockLng;
+  function renderSigma(s: api.ApiStation): void {
+    const posLocked = s.lock_lat && s.lock_lng;
     sigmaPosEl.hidden = posLocked;
     if (!posLocked) {
-      const worst = Math.max(cache.sigmaLat ?? 0, cache.sigmaLng ?? 0) || null;
-      sigmaPosEl.textContent = `±${fmtSigmaMeters(worst)}`;
-      sigmaPosEl.className = `sigma ${sigmaSeverityClass(worst, SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M)}`;
-      sigmaPosEl.title = 'σ from last solve (max of lat/lng, in meters)';
+      const worst = Math.max(s.sigma_lat ?? 0, s.sigma_lng ?? 0) || null;
+      updateSigma(sigmaPosEl, fmtSigmaMeters(worst),
+        sigmaSeverityClass(worst, SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M),
+        'σ from last solve (max of lat/lng, in meters)');
     }
-    sigmaAltEl.hidden = cache.lockAlt;
-    if (!cache.lockAlt) {
-      sigmaAltEl.textContent = `±${fmtSigmaMeters(cache.sigmaAlt)}`;
-      sigmaAltEl.className = `sigma ${sigmaSeverityClass(cache.sigmaAlt, SIGMA_ALT_WARN_M, SIGMA_ALT_REFUSE_M)}`;
-      sigmaAltEl.title = 'σ of alt from last solve';
+    sigmaAltEl.hidden = s.lock_alt;
+    if (!s.lock_alt) {
+      updateSigma(sigmaAltEl, fmtSigmaMeters(s.sigma_alt ?? null),
+        sigmaSeverityClass(s.sigma_alt ?? null, SIGMA_ALT_WARN_M, SIGMA_ALT_REFUSE_M),
+        'σ of alt from last solve');
     }
   }
 
@@ -111,7 +102,6 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
     if (document.activeElement !== capturedAtEl) renderCapturedAt();
     syncInputChecked(lockPosEl, cache.lockLat && cache.lockLng);
     syncInputChecked(lockAltEl, cache.lockAlt);
-    renderSigma();
   }
 
   function hydrate(s: api.ApiStation): void {
@@ -119,13 +109,11 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
       name: s.name,
       lat: s.lat, lng: s.lng, alt: s.alt,
       lockLat: s.lock_lat, lockLng: s.lock_lng, lockAlt: s.lock_alt,
-      sigmaLat: s.sigma_lat ?? null,
-      sigmaLng: s.sigma_lng ?? null,
-      sigmaAlt: s.sigma_alt ?? null,
       capturedAt: s.captured_at,
     };
     onAltitudeChanged(s.alt);
     render();
+    renderSigma(s);
   }
 
   async function putPatch(patch: Partial<StationFields>): Promise<void> {

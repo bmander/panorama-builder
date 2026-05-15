@@ -1,8 +1,8 @@
 import * as api from './api.js';
 import { degToRad } from './mathx.js';
 import {
-  appendSigma, appendSigmaMeters, cpLabel, fmtAlt, fmtSigmaMeters, formatLocalDateTime,
-  getElement, indexCpHref, sigmaSeverityClass, stationHref, stationLabel,
+  appendSigmaMeters, appendSigmaScalar, cpLabel, fmtAlt, formatLocalDateTime,
+  getElement, indexCpHref, stationHref, stationLabel,
 } from './types.js';
 import {
   SIGMA_ALT_REFUSE_M, SIGMA_ALT_WARN_M,
@@ -538,22 +538,16 @@ async function main(): Promise<void> {
   attachLatLngEditor(cp, lngEl, 'est_lng', onLocationChanged);
   attachAltEditor(cp, altEl);
 
-  // σ from last solve, alongside the lat/lng row (max of two, matches
-  // cp-index.ts) and the alt row. Inserted into the row's <dd> after the
-  // value spans so click-to-edit on the inputs doesn't replace them.
-  const locDd = latEl.parentElement;
-  if (locDd) {
-    appendSigmaMeters(locDd, cp.sigma_est_lat ?? null, cp.sigma_est_lng ?? null,
-      SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M,
-      'σ from last solve (max of lat/lng, in meters)');
-  }
-  const altDd = altEl.parentElement;
-  if (altDd) {
-    appendSigma(altDd,
-      fmtSigmaMeters(cp.sigma_est_alt ?? null),
-      sigmaSeverityClass(cp.sigma_est_alt ?? null, SIGMA_ALT_WARN_M, SIGMA_ALT_REFUSE_M),
-      'σ of alt from last solve');
-  }
+  // σ is appended to the enclosing <dd> rather than the value span so
+  // click-to-edit on the inputs doesn't replace it.
+  appendSigmaMeters(latEl.parentElement!,
+    cp.sigma_est_lat ?? null, cp.sigma_est_lng ?? null,
+    SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M,
+    'σ from last solve (max of lat/lng, in meters)');
+  appendSigmaScalar(altEl.parentElement!,
+    cp.sigma_est_alt ?? null,
+    SIGMA_ALT_WARN_M, SIGMA_ALT_REFUSE_M,
+    'σ of alt from last solve');
   const refreshStartedLabel = attachLifespanLabel(
     cp, getElement('started_at_label'), 'started_at', 'started_after',
     refreshVisiblePhotos);

@@ -360,16 +360,44 @@ export function makeListCell(
 // makeListCell). Caller pre-formats via fmtSigmaMeters / fmtSigmaRad and
 // picks the severity class via sigmaSeverityClass. tooltip is optional.
 export function appendSigma(cell: HTMLElement, text: string, severityClass: string, tooltip?: string): void {
+  cell.append(makeSigmaSpan(text, severityClass, tooltip));
+}
+
+// Create a detached σ span; useful when the caller wants to insert it
+// somewhere other than append-to-cell (e.g. as a persistent slot updated
+// in place by updateSigma).
+export function createSigmaSpan(after: HTMLElement): HTMLSpanElement {
+  const s = makeSigmaSpan('', 'sigma-unknown');
+  after.after(s);
+  return s;
+}
+
+// Mutate an existing σ span (created by createSigmaSpan) in place.
+export function updateSigma(el: HTMLSpanElement, text: string, severityClass: string, tooltip?: string): void {
+  el.className = `sigma ${severityClass}`;
+  el.textContent = `±${text}`;
+  if (tooltip) el.title = tooltip;
+}
+
+function makeSigmaSpan(text: string, severityClass: string, tooltip?: string): HTMLSpanElement {
   const s = document.createElement('span');
   s.className = `sigma ${severityClass}`;
   s.textContent = `±${text}`;
   if (tooltip) s.title = tooltip;
-  cell.append(s);
+  return s;
 }
 
-// Convenience for the common "horizontal position σ" pattern shared by
-// the stations and CPs index pages: pick max(σ_lat, σ_lng) so the worst
-// axis sets the color, format as meters, append.
+// Convenience for a single-σ value: format as meters, pick severity, append.
+export function appendSigmaScalar(
+  cell: HTMLElement, sigma: number | null | undefined,
+  warnAt: number, refuseAt: number, tooltip?: string,
+): void {
+  appendSigma(cell, fmtSigmaMeters(sigma),
+    sigmaSeverityClass(sigma, warnAt, refuseAt), tooltip);
+}
+
+// Max-of-two pattern shared by the stations / CPs index pages: pick
+// max(σ_lat, σ_lng) so the worst axis drives the color.
 export function appendSigmaMeters(
   cell: HTMLElement,
   sigLat: number | null | undefined,
@@ -378,21 +406,27 @@ export function appendSigmaMeters(
   tooltip?: string,
 ): void {
   const sigma = Math.max(sigLat ?? 0, sigLng ?? 0) || null;
-  appendSigma(cell, fmtSigmaMeters(sigma),
-    sigmaSeverityClass(sigma, warnAt, refuseAt), tooltip);
+  appendSigmaScalar(cell, sigma, warnAt, refuseAt, tooltip);
+}
+
+// Mirror of the RankDeficientAxis schema's `kind` literal union. Kept
+// inline here (vs. importing from api-types.gen) to keep types.ts free
+// of generated-file deps.
+type DeficientAxisKind = 'station' | 'photo' | 'control_point';
+
+interface DeficientAxisItem {
+  kind: DeficientAxisKind;
+  id: string;
+  axes: readonly string[];
+  reason: string;
+  station_id?: string | null;
 }
 
 // Renders the "{kind} {id} [{axes}] — {reason}" list shared by the session
 // widget's problems dropdown and the save modal's inline warning panel.
-// Each entry's entity-identifier is an <a> that jumps to the affected
-// entity (station view / focused photo in station view / CP detail page).
-// Truncates after maxItems with a "…and N more" tail. Returns a <ul> the
-// caller appends into its container.
+// Truncates after maxItems with a "…and N more" tail.
 export function renderDeficientAxesList(
-  axes: readonly {
-    kind: string; id: string; axes: readonly string[]; reason: string;
-    station_id?: string | null;
-  }[],
+  axes: readonly DeficientAxisItem[],
   maxItems = Infinity,
 ): HTMLUListElement {
   const ul = document.createElement('ul');
@@ -417,18 +451,15 @@ export function renderDeficientAxesList(
   return ul;
 }
 
-// deficientAxisLink builds the "{kind} {id}" prefix as an <a> when the
-// destination is known. A photo without station_id falls back to plain
-// text (defensive — backend should always populate it for kind=photo).
-function deficientAxisLink(a: {
-  kind: string; id: string; station_id?: string | null;
-}): HTMLElement {
+function deficientAxisLink(a: DeficientAxisItem): HTMLElement {
   let href: string | null = null;
   switch (a.kind) {
     case 'station':
       href = stationHref(a.id);
       break;
     case 'photo':
+      // station_id is nullable in the schema; fall through to plain text
+      // if absent (defensive — backend should always populate for photos).
       if (a.station_id) href = stationHref(a.station_id, { focusImageId: a.id });
       break;
     case 'control_point':

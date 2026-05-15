@@ -3,8 +3,8 @@
 // entry.
 
 import {
-  fmtSigmaRad, getElement, overlayData, sigmaSeverityClass,
-  syncInputChecked, syncInputValue,
+  createSigmaSpan, fmtSigmaRad, getElement, overlayData, sigmaSeverityClass,
+  syncInputChecked, syncInputValue, updateSigma,
 } from './types.js';
 import { SIZE_MAX, SIZE_MIN } from './overlay.js';
 import type { OverlayManager } from './overlay.js';
@@ -45,29 +45,21 @@ export function createPhotoHud(
   const k1LockEl = getElement<HTMLInputElement>('photo-hud-k1-lock');
   const k2LockEl = getElement<HTMLInputElement>('photo-hud-k2-lock');
 
-  // One σ span per free-axis input. Created once, inserted after each
-  // input element, updated in place on every populate(). Hidden when the
-  // axis is locked. K1/K2 σ is dimensionless but uses the angle threshold
-  // as its natural scale (same convention as merge_gate.go).
-  function makeSigma(after: HTMLElement): HTMLSpanElement {
-    const s = document.createElement('span');
-    s.className = 'sigma sigma-unknown';
-    after.after(s);
-    return s;
-  }
-  const azSigmaEl = makeSigma(azEl);
-  const tiltSigmaEl = makeSigma(tiltEl);
-  const rollSigmaEl = makeSigma(rollEl);
-  const fovSigmaEl = makeSigma(fovEl);
-  const k1SigmaEl = makeSigma(k1El);
-  const k2SigmaEl = makeSigma(k2El);
+  // K1/K2 σ is dimensionless; the angle threshold is the natural scale
+  // (same convention as merge_gate.go).
+  const azSigmaEl = createSigmaSpan(azEl);
+  const tiltSigmaEl = createSigmaSpan(tiltEl);
+  const rollSigmaEl = createSigmaSpan(rollEl);
+  const fovSigmaEl = createSigmaSpan(fovEl);
+  const k1SigmaEl = createSigmaSpan(k1El);
+  const k2SigmaEl = createSigmaSpan(k2El);
 
   function setSigma(el: HTMLSpanElement, sigma: number | null, locked: boolean, label: string): void {
     el.hidden = locked;
     if (locked) return;
-    el.textContent = `±${fmtSigmaRad(sigma)}`;
-    el.className = `sigma ${sigmaSeverityClass(sigma, SIGMA_ANGLE_WARN_RAD, SIGMA_ANGLE_REFUSE_RAD)}`;
-    el.title = `σ of ${label} from last solve`;
+    updateSigma(el, fmtSigmaRad(sigma),
+      sigmaSeverityClass(sigma, SIGMA_ANGLE_WARN_RAD, SIGMA_ANGLE_REFUSE_RAD),
+      `σ of ${label} from last solve`);
   }
 
   let bound: THREE.Group | null = null;
