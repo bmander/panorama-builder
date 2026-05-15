@@ -36,7 +36,7 @@ import {
   parseStaFromURL, stationHref,
   meshMat, overlayData, poiData,
 } from './types.js';
-import { latLngToCameraRelativeMeters, tangentMetersToLatLng, vecToAzAlt } from './geo.js';
+import { groundDistance, latLngToCameraRelativeMeters, tangentMetersToLatLng, vecToAzAlt } from './geo.js';
 import { controlPointVertex, latLngAltVertex, vertexToLatLngAlt } from './camera-anchored.js';
 import { degToRad, radToDeg } from './mathx.js';
 import type { CPConstraintView, CPSurfaceView, ControlPointView, LatLng } from './types.js';
@@ -224,6 +224,8 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   // When true, the photo viewer renders every located CP as a marker, not
   // just those observed by this station. Toggled from the settings panel.
   let showAllCPs = false;
+  // null = no distance cap. Observed CPs are direct evidence and always show.
+  let cpMaxDistanceM: number | null = null;
 
   // Hydrated per-photo data for every other station. Populated once via a
   // batch of api.getStation calls; used to render frustum cones and to
@@ -262,13 +264,19 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     for (const im of overlays.measurements.list()) {
       if (im.controlPointId) observed.add(im.controlPointId);
     }
+    const maxD = cpMaxDistanceM;
+    const camLoc = maxD !== null ? worldCamera.getPose().stationAnchor : null;
     return overlays.controlPoints.list().filter(cp => {
       if (cp.estLat === null || cp.estLng === null) return false;
-      // A focus_cp deep-link forces the CP to show through both gates.
+      // A focus_cp deep-link forces the CP to show through every gate.
       const forced = cp.id === focusedCpId;
       const isObserved = forced || observed.has(cp.id);
       if (!showAllCPs && !isObserved) return false;
       if (capturedMs !== null && !isObserved && !isExtantAt(cp, capturedMs)) return false;
+      if (maxD !== null && camLoc && !isObserved
+          && groundDistance(camLoc, { lat: cp.estLat, lng: cp.estLng }) > maxD) {
+        return false;
+      }
       return true;
     });
   }
@@ -472,6 +480,11 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     getCameraLocation: () => worldCamera.getPose().stationAnchor,
     onShowAllCPsChange: value => {
       showAllCPs = value;
+      refreshControlPointColumns();
+    },
+    onCpMaxDistanceChange: meters => {
+      if (meters === cpMaxDistanceM) return;
+      cpMaxDistanceM = meters;
       refreshControlPointColumns();
     },
     onSurfaceOpacityChange: opacity => { cpSurfacesRenderer.setOpacity(opacity); },
@@ -1215,12 +1228,27 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
           photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
           dist_k1: p.dist_k1, dist_k2: p.dist_k2,
         });
-        loader.load(
-          api.photoBlobUrl(p),
-          tex => { overlays.photos.setTexture(o, tex); },
-          undefined,
-          err => { console.error(`photo ${p.id} load failed:`, err); },
-        );
+        // Medium-res preview first, then upgrade to full-res. setTexture
+        // disposes the previous body texture, so the swap is one call. Legacy
+        // rows without a hash-form blob_path skip preview and go straight to
+        // full-res; preview failures (incl. non-JPEG → 415) fall through too.
+        const fullUrl = api.photoBlobUrl(p);
+        const previewUrl = api.photoPreviewUrl(p);
+        const onFull = (tex: THREE.Texture): void => { overlays.photos.setTexture(o, tex); };
+        const onFullErr = (err: unknown): void => { console.error(`photo ${p.id} load failed:`, err); };
+        if (previewUrl) {
+          loader.load(
+            previewUrl,
+            tex => {
+              overlays.photos.setTexture(o, tex);
+              loader.load(fullUrl, onFull, undefined, onFullErr);
+            },
+            undefined,
+            () => { loader.load(fullUrl, onFull, undefined, onFullErr); },
+          );
+        } else {
+          loader.load(fullUrl, onFull, undefined, onFullErr);
+        }
       }
 
       // Control points first so subsequent measurement adds reference an existing CP entry.

@@ -5,6 +5,7 @@ go 1.24.3
 require (
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/oapi-codegen/oapi-codegen/v2 v2.7.0
+	golang.org/x/image v0.30.0
 )
 
 require (

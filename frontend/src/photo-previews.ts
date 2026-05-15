@@ -88,8 +88,15 @@ export function createPhotoPreviews(opts: CreatePhotoPreviewsOptions): PhotoPrev
       dir: dirFromAzAlt(preview.photoAz, preview.photoTilt),
       loadedTexture: null,
     };
+    // Fly-tween planes are short-lived (replaced by station-page hydrate on
+    // touchdown), so prefer the medium-res preview; full-res arrives via the
+    // post-fly hydrate. Legacy rows without a hash-form blob_path fall back
+    // to the original blob URL.
+    const previewUrl = api.photoPreviewUrl({ blob_path: preview.blobPath });
+    const url = previewUrl
+      ?? api.photoBlobUrl({ id: preview.photoId, blob_path: preview.blobPath });
     new THREE.TextureLoader().load(
-      api.photoBlobUrl({ id: preview.photoId, blob_path: preview.blobPath }),
+      url,
       tex => {
         // Mesh removed (clear() called before load resolved) — drop the texture.
         if (!mesh.parent) { tex.dispose(); return; }

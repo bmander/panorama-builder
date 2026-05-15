@@ -27,6 +27,8 @@ export interface CreateSettingsPanelOptions {
   sky: Sky;
   getCameraLocation: () => LatLng | null;
   onShowAllCPsChange: (value: boolean) => void;
+  // null = no limit; otherwise distance in meters. Observed CPs bypass.
+  onCpMaxDistanceChange: (meters: number | null) => void;
   onSurfaceOpacityChange: (opacity: number) => void;
 }
 
@@ -37,7 +39,8 @@ function hazeSliderToDensity(v: number): number {
 
 export function createSettingsPanel({
   viewer, terrain, sunMarker, sky,
-  getCameraLocation, onShowAllCPsChange, onSurfaceOpacityChange,
+  getCameraLocation, onShowAllCPsChange, onCpMaxDistanceChange,
+  onSurfaceOpacityChange,
 }: CreateSettingsPanelOptions): SettingsPanel {
   const terrainToggleEl = getElement<HTMLInputElement>('terrain-toggle');
   const sunDateTimeEl = getElement<HTMLInputElement>('sun-datetime');
@@ -54,6 +57,7 @@ export function createSettingsPanel({
   const curvatureToggleEl = getElement<HTMLInputElement>('curvature-toggle');
   const refractionToggleEl = getElement<HTMLInputElement>('refraction-toggle');
   const showAllCPsEl = getElement<HTMLInputElement>('show-all-cps');
+  const cpMaxDistanceEl = getElement<HTMLInputElement>('cp-max-distance');
   const surfaceOpacityEl = getElement<HTMLInputElement>('surface-opacity-slider');
   // Push the slider's HTML default into the renderer so it starts at the
   // same value the UI shows. Session-only — no localStorage, matching this
@@ -147,6 +151,12 @@ export function createSettingsPanel({
 
   showAllCPsEl.addEventListener('change', () => {
     onShowAllCPsChange(showAllCPsEl.checked);
+  });
+
+  // 'input' (not 'change') so the cutoff updates live as the user types.
+  cpMaxDistanceEl.addEventListener('input', () => {
+    const n = parseFloat(cpMaxDistanceEl.value);
+    onCpMaxDistanceChange(Number.isFinite(n) && n > 0 ? n : null);
   });
 
   return {

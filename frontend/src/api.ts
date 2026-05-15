@@ -201,6 +201,15 @@ export function photoBlobUrl(photo: Pick<ApiPhoto, 'id' | 'blob_path'>): string 
   return `${API}/photos/${encodeURIComponent(photo.id)}/blob`;
 }
 
+// Returns the medium-res (max 1200px wide) preview URL for a content-
+// addressed photo, or null for legacy/session-pending rows without a
+// hash-form blob_path. The preview is generated lazily on first GET and
+// immutable thereafter. Callers must fall back to photoBlobUrl on null.
+export function photoPreviewUrl(photo: Pick<ApiPhoto, 'blob_path'>): string | null {
+  const m = photo.blob_path && BLOB_PATH_RE.exec(photo.blob_path);
+  return m ? `${API}/blobs/${m[1]}/preview` : null;
+}
+
 // --- Image measurements ---
 
 export function createImageMeasurement(

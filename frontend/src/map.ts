@@ -9,8 +9,9 @@ import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
 L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl, shadowUrl });
 import { R_EARTH, viewerAzToBearing } from './geo.js';
 import { degToRad, dot3, norm2, norm3, radToDeg } from './mathx.js';
-import { cpHref, fmtAlt } from './types.js';
+import { cpHref, fmtAlt, sigmaSeverityClass, worstHorizontalSigma } from './types.js';
 import type { Cone, LatLng } from './types.js';
+import { SIGMA_POS_REFUSE_M, SIGMA_POS_WARN_M } from './sigma-thresholds.js';
 import { TILE_PX, fetchTileElevations, tileYToLat } from './dem.js';
 import { NULL_CP_RAY_CSS, NULL_CP_RAY_LENGTH_M } from './null-cp-rays.js';
 
@@ -26,6 +27,10 @@ export interface StationMarker {
   lockLat: boolean;
   lockLng: boolean;
   lockAlt: boolean;
+  // 1σ position bounds (meters) from the last solve; null when no solve
+  // has touched this axis.
+  sigmaLat: number | null;
+  sigmaLng: number | null;
   // Viewer-azimuth bounds of each photo's horizontal frustum. The marker
   // renders these as small SVG wedges fanning out from the station origin,
   // so the index map shows where each station is looking at a glance.
@@ -56,6 +61,8 @@ export interface IndexControlPoint {
   lockLat: boolean;
   lockLng: boolean;
   lockAlt: boolean;
+  sigmaLat: number | null;
+  sigmaLng: number | null;
 }
 
 // Patch shape for the lock callbacks. Either field present means the user
@@ -380,6 +387,20 @@ export function createMapView({
       + `<label class="popup-lock-row"><input type="checkbox" class="popup-lock" data-lock="pos"${ck(lockPos)}> lock location</label>`
       + `<label class="popup-lock-row"><input type="checkbox" class="popup-lock" data-lock="alt"${ck(lockAlt)}> lock elevation</label>`;
   }
+  // Worst-axis radius so the circle is a conservative bound.
+  function drawUncertaintyCircle(
+    latlng: LatLng, sigLat: number | null, sigLng: number | null,
+  ): L.Circle | null {
+    const sigma = worstHorizontalSigma(sigLat, sigLng);
+    if (sigma === null) return null;
+    const severity = sigmaSeverityClass(sigma, SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M);
+    return L.circle([latlng.lat, latlng.lng], {
+      radius: sigma,
+      className: `uncertainty-circle ${severity}`,
+      interactive: false,
+    }).addTo(map);
+  }
+
   function wirePopupLocks(popup: L.Popup, onChange: (patch: MarkerLockPatch) => void): void {
     const root = popup.getElement();
     if (!root) return;
@@ -433,6 +454,8 @@ export function createMapView({
       .setLatLng([cp.latlng.lat, cp.latlng.lng])
       .setContent(popupHtml)
       .openOn(map);
+    const circle = drawUncertaintyCircle(cp.latlng, cp.sigmaLat, cp.sigmaLng);
+    if (circle) popup.on('remove', () => { map.removeLayer(circle); });
     wireGoButton(popup, '.move', () => {
       const dot = indexCpDots.get(cp.id);
       if (!dot) return;
@@ -578,7 +601,9 @@ export function createMapView({
       .setLatLng([p.latlng.lat, p.latlng.lng])
       .setContent(popupHtml)
       .openOn(map);
+    const circle = drawUncertaintyCircle(p.latlng, p.sigmaLat, p.sigmaLng);
     popup.on('remove', () => {
+      if (circle) map.removeLayer(circle);
       applyStationPreview(null);
       onStationPreviewClose?.();
     });

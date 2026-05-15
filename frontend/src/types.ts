@@ -396,8 +396,15 @@ export function appendSigmaScalar(
     sigmaSeverityClass(sigma, warnAt, refuseAt), tooltip);
 }
 
-// Max-of-two pattern shared by the stations / CPs index pages: pick
-// max(σ_lat, σ_lng) so the worst axis drives the color.
+// Worst-axis horizontal σ. Drives the color for index-page listings
+// and the radius of the map's uncertainty circle.
+export function worstHorizontalSigma(
+  sigLat: number | null | undefined,
+  sigLng: number | null | undefined,
+): number | null {
+  return Math.max(sigLat ?? 0, sigLng ?? 0) || null;
+}
+
 export function appendSigmaMeters(
   cell: HTMLElement,
   sigLat: number | null | undefined,
@@ -405,8 +412,8 @@ export function appendSigmaMeters(
   warnAt: number, refuseAt: number,
   tooltip?: string,
 ): void {
-  const sigma = Math.max(sigLat ?? 0, sigLng ?? 0) || null;
-  appendSigmaScalar(cell, sigma, warnAt, refuseAt, tooltip);
+  appendSigmaScalar(cell, worstHorizontalSigma(sigLat, sigLng),
+    warnAt, refuseAt, tooltip);
 }
 
 // Mirror of the RankDeficientAxis schema's `kind` literal union. Kept

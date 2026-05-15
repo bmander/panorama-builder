@@ -95,6 +95,8 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
         lockLat: cp.lock_est_lat,
         lockLng: cp.lock_est_lng,
         lockAlt: cp.lock_est_alt,
+        sigmaLat: cp.sigma_est_lat ?? null,
+        sigmaLng: cp.sigma_est_lng ?? null,
       });
     }
     view.setIndexControlPoints(dots);
@@ -145,6 +147,8 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
         lockLat: st.lock_lat,
         lockLng: st.lock_lng,
         lockAlt: st.lock_alt,
+        sigmaLat: st.sigma_lat ?? null,
+        sigmaLng: st.sigma_lng ?? null,
         cones,
       };
     }));
