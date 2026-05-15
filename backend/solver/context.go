@@ -694,17 +694,6 @@ func (c *solveContext) computeResidualsInto(dst []float64) []float64 {
 	return dst
 }
 
-// residualRMS returns the RMS over all current residual rows. Used by the
-// Ceres path to recompute initial/final RMS through the in-Go projection
-// math (so the output number is comparable to the legacy path's SSE stream).
-func (c *solveContext) residualRMS() float64 {
-	r := c.computeResidualsInto(nil)
-	if len(r) == 0 {
-		return 0
-	}
-	return rms(norm(r), len(r))
-}
-
 // scopedStationLocks reports the per-axis lock state used by the Ceres
 // bridge. Returns (eastLocked, northLocked, upLocked) matching the FFI
 // layout. In scoped modes every station outside the optimization scope
@@ -724,6 +713,10 @@ func (c *solveContext) scopedStationLocks(s Station) (east, north, up bool) {
 // configured mode. Photos outside the in-scope station (single-station
 // mode) and all photos (single-CP mode) are fully locked.
 func (c *solveContext) scopedPhotoLocks(p Photo) PhotoLocks {
+	all := PhotoLocks{
+		PhotoAz: true, PhotoTilt: true, PhotoRoll: true,
+		SizeRad: true, K1: true, K2: true,
+	}
 	switch c.cfg.Mode {
 	case ModeJoint:
 		return p.Locks
@@ -731,11 +724,9 @@ func (c *solveContext) scopedPhotoLocks(p Photo) PhotoLocks {
 		if p.StationID == c.cfg.FocusID {
 			return p.Locks
 		}
-		return allLocked
-	case ModeSingleControlPoint:
-		return allLocked
+		return all
 	}
-	return allLocked
+	return all
 }
 
 // scopedCPFullyLocked reports whether cp's parameter blocks should be
@@ -746,17 +737,10 @@ func (c *solveContext) scopedCPFullyLocked(cp ControlPoint) bool {
 	switch c.cfg.Mode {
 	case ModeJoint:
 		return false
-	case ModeSingleStation:
-		return true
 	case ModeSingleControlPoint:
 		return cp.ID != c.cfg.FocusID
 	}
 	return true
-}
-
-var allLocked = PhotoLocks{
-	PhotoAz: true, PhotoTilt: true, PhotoRoll: true,
-	SizeRad: true, K1: true, K2: true,
 }
 
 // composeChanges emits one EntityChange per entity whose effective LLA (or

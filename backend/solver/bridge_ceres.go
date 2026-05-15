@@ -215,8 +215,7 @@ func solveBridge(c *solveContext) (Result, error) {
 	// — 2·n_obs + reg rows. (Ceres includes the reg rows in summary.cost too.)
 	regRows := 0
 	if c.cfg.KRegLambda > 0 {
-		for i, p := range c.problem.Photos {
-			_ = i
+		for _, p := range c.problem.Photos {
 			if !p.Locks.K1 {
 				regRows++
 			}
@@ -301,9 +300,7 @@ func solveBridge(c *solveContext) (Result, error) {
 		go_ctx_handle:      C.uint64_t(ctxID),
 	}
 
-	// Snapshot the initial state for composeChanges + initial-RMS.
 	initialState := c.readState()
-	initialRMS := c.residualRMS()
 
 	rc := C.pc_solve(&cprob)
 	if rc != 0 {
@@ -337,16 +334,17 @@ func solveBridge(c *solveContext) (Result, error) {
 
 	finalState := c.readState()
 
-	// Final RMS computed against the in-Go ProjectPOI / BearingENU so the
-	// emitted number matches what the SSE stream's final iteration carried
-	// and what tests assert on. (summary.final_cost would differ by tiny
-	// round-off and skip the regularization rows we don't surface here.)
-	finalRMS := c.residualRMS()
+	// Convert Ceres' 0.5·||r||² to per-row RMS to match what the SSE stream
+	// emits per iteration (pc_iter_callback applies the same formula). Cost
+	// includes the Tikhonov regularization rows when KRegLambda > 0, which
+	// matches the legacy GN path's residualSize.
+	m := float64(2*nObs + regRows)
+	initialRMS := math.Sqrt(2 * outInitCost / m)
+	finalRMS := math.Sqrt(2 * outFinalCost / m)
 
-	// Tolerate floating-point noise: the legacy path declares Diverged only
-	// when bestNorm >= initialNorm; here we add a small epsilon so a no-op
-	// converged solve doesn't get flagged when round-trip arithmetic gives
-	// finalRMS one ULP above initialRMS.
+	// Tolerate floating-point noise: Ceres' LM only commits accepted steps,
+	// so final_cost ≤ initial_cost in theory; epsilon guards against a
+	// no-op solve where the two are bit-equal modulo ULP rounding.
 	diverged := finalRMS > initialRMS+1e-12
 
 	var changes []EntityChange
