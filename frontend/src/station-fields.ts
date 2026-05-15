@@ -13,6 +13,7 @@ import * as api from './api.js';
 import {
   createSigmaSpan, fmtSigmaMeters, formatLocalDateTime, getElement,
   sigmaSeverityClass, syncInputChecked, syncInputValue, updateSigma,
+  worstHorizontalSigma,
 } from './types.js';
 import type { LatLng } from './types.js';
 import {
@@ -70,7 +71,7 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
     const posLocked = s.lock_lat && s.lock_lng;
     sigmaPosEl.hidden = posLocked;
     if (!posLocked) {
-      const worst = Math.max(s.sigma_lat ?? 0, s.sigma_lng ?? 0) || null;
+      const worst = worstHorizontalSigma(s.sigma_lat, s.sigma_lng);
       updateSigma(sigmaPosEl, fmtSigmaMeters(worst),
         sigmaSeverityClass(worst, SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M),
         'σ from last solve (max of lat/lng, in meters)');

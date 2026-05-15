@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/jpeg"
 	_ "image/png" // register PNG decoder for image.Decode
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,39 +13,28 @@ import (
 	_ "golang.org/x/image/webp" // register WebP decoder for image.Decode
 )
 
-// Medium-resolution preview cap. The frontend asks for a fast first paint
-// during station hydrate and fly-tweens; the full-res blob loads after.
 const previewMaxWidth = 1200
 const previewJPEGQuality = 82
 
-// getBlobPreview serves a lazily-generated, max-1200-px-wide JPEG derived
-// from blobs/<hash>. The variant is pure cache: deterministic from the
-// immutable original, regenerable, never journaled.
 func (s *Server) getBlobPreview(w http.ResponseWriter, r *http.Request) {
 	hash := r.PathValue("hash")
 	if !blobHashRegexp.MatchString(hash) {
 		writeError(w, http.StatusNotFound, "blob missing")
 		return
 	}
-	if f, err := s.blobs.openPreviewByHash(hash); err == nil {
-		defer f.Close()
-		servePreviewFile(w, r, f)
-		return
-	}
-	if err := s.generatePreview(hash); err != nil {
-		writeError(w, err.status, err.msg)
-		return
-	}
 	f, err := s.blobs.openPreviewByHash(hash)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "preview reopen")
-		return
+		if status, msg := s.makePreview(hash); msg != "" {
+			writeError(w, status, msg)
+			return
+		}
+		f, err = s.blobs.openPreviewByHash(hash)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "preview reopen")
+			return
+		}
 	}
 	defer f.Close()
-	servePreviewFile(w, r, f)
-}
-
-func servePreviewFile(w http.ResponseWriter, r *http.Request, f *os.File) {
 	info, err := f.Stat()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "stat")
@@ -55,48 +45,53 @@ func servePreviewFile(w http.ResponseWriter, r *http.Request, f *os.File) {
 	http.ServeContent(w, r, "", info.ModTime(), f)
 }
 
-type previewErr struct {
-	status int
-	msg    string
-}
-
-// generatePreview decodes blobs/<hash>, resizes to previewMaxWidth, encodes
-// JPEG, and places it at previews/<hash>. Concurrent slow-path callers each
-// produce identical bytes; whichever rename lands first wins.
-func (s *Server) generatePreview(hash string) *previewErr {
+// makePreview returns ("", 0) on success. JPEG sources already within
+// previewMaxWidth bypass decode/resize/encode via a byte copy — saves a
+// full RGBA buffer for legacy thumbnail uploads.
+func (s *Server) makePreview(hash string) (status int, msg string) {
 	src, err := s.blobs.openByHash(hash)
 	if err != nil {
-		return &previewErr{http.StatusNotFound, "blob missing"}
+		return http.StatusNotFound, "blob missing"
 	}
 	defer src.Close()
-	// image.Decode dispatches on magic bytes; JPEG, PNG, and WebP decoders
-	// are registered via the side-effect imports at the top of this file.
-	img, _, err := image.Decode(src)
+	cfg, format, err := image.DecodeConfig(src)
 	if err != nil {
-		return &previewErr{http.StatusUnsupportedMediaType, "preview unsupported"}
+		return http.StatusUnsupportedMediaType, "preview unsupported"
 	}
-	out := resizeMaxWidth(img, previewMaxWidth)
+	if _, err := src.Seek(0, io.SeekStart); err != nil {
+		return http.StatusInternalServerError, "preview seek"
+	}
 	tmp, err := os.CreateTemp(filepath.Join(s.blobs.root, "tmp"), "preview-*")
 	if err != nil {
-		return &previewErr{http.StatusInternalServerError, "preview tmp"}
+		return http.StatusInternalServerError, "preview tmp"
 	}
 	tmpPath := tmp.Name()
-	encErr := jpeg.Encode(tmp, out, &jpeg.Options{Quality: previewJPEGQuality})
-	closeErr := tmp.Close()
-	if encErr != nil || closeErr != nil {
-		_ = os.Remove(tmpPath)
-		return &previewErr{http.StatusInternalServerError, "preview encode"}
+	var werr error
+	if format == "jpeg" && cfg.Width <= previewMaxWidth {
+		_, werr = io.Copy(tmp, src)
+	} else {
+		img, _, derr := image.Decode(src)
+		if derr != nil {
+			tmp.Close()
+			os.Remove(tmpPath)
+			return http.StatusUnsupportedMediaType, "preview unsupported"
+		}
+		werr = jpeg.Encode(tmp, resizeMaxWidth(img, previewMaxWidth), &jpeg.Options{Quality: previewJPEGQuality})
+	}
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		os.Remove(tmpPath)
+		return http.StatusInternalServerError, "preview encode"
 	}
 	if _, err := s.blobs.placePreviewAtHash(tmpPath, hash); err != nil {
-		_ = os.Remove(tmpPath)
-		return &previewErr{http.StatusInternalServerError, "preview place"}
+		os.Remove(tmpPath)
+		return http.StatusInternalServerError, "preview place"
 	}
-	return nil
+	return 0, ""
 }
 
-// resizeMaxWidth returns an image whose width is min(maxW, srcW), preserving
-// aspect ratio. Always produces a fresh RGBA so the JPEG encoder gets a
-// uniform input regardless of the source's color model.
 func resizeMaxWidth(src image.Image, maxW int) image.Image {
 	b := src.Bounds()
 	srcW, srcH := b.Dx(), b.Dy()

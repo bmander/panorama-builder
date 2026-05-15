@@ -66,10 +66,12 @@ func (b *blobStore) writeBlob(r io.Reader, maxBytes int64) (string, int64, error
 	return rel, n, nil
 }
 
-// placeAtHash moves src to blobs/<hash>, or removes src if the destination
-// already exists (dedup). Returns the relative path stored in blob_path.
-func (b *blobStore) placeAtHash(src, hash string) (string, error) {
-	rel := filepath.Join(blobDir, hash)
+// placeAt moves src to <subdir>/<hash>, or removes src if the destination
+// already exists. Both blob uploads (identical bytes) and preview encodes
+// (deterministic output given the same source) resolve races benignly:
+// whichever rename lands first wins.
+func (b *blobStore) placeAt(subdir, src, hash string) (string, error) {
+	rel := filepath.Join(subdir, hash)
 	dest := filepath.Join(b.root, rel)
 	if _, err := os.Stat(dest); err == nil {
 		_ = os.Remove(src)
@@ -81,6 +83,14 @@ func (b *blobStore) placeAtHash(src, hash string) (string, error) {
 		return "", err
 	}
 	return rel, nil
+}
+
+func (b *blobStore) placeAtHash(src, hash string) (string, error) {
+	return b.placeAt(blobDir, src, hash)
+}
+
+func (b *blobStore) placePreviewAtHash(src, hash string) (string, error) {
+	return b.placeAt(previewDir, src, hash)
 }
 
 // openByPath opens a blob stored as `<dir>/<basename>` under STORAGE_DIR,
@@ -95,40 +105,19 @@ func (b *blobStore) openByPath(blobPath string) (*os.File, error) {
 	return os.Open(filepath.Join(b.root, clean))
 }
 
+func (b *blobStore) openAt(subdir, hash string) (*os.File, error) {
+	if !blobHashRegexp.MatchString(hash) {
+		return nil, os.ErrNotExist
+	}
+	return os.Open(filepath.Join(b.root, subdir, hash))
+}
+
 func (b *blobStore) openByHash(hash string) (*os.File, error) {
-	if !blobHashRegexp.MatchString(hash) {
-		return nil, os.ErrNotExist
-	}
-	return os.Open(filepath.Join(b.root, blobDir, hash))
+	return b.openAt(blobDir, hash)
 }
 
-// openPreviewByHash opens the lazily-generated medium-res preview for the
-// original at blobs/<hash>. Caller is responsible for treating ErrNotExist
-// as "regenerate from original".
 func (b *blobStore) openPreviewByHash(hash string) (*os.File, error) {
-	if !blobHashRegexp.MatchString(hash) {
-		return nil, os.ErrNotExist
-	}
-	return os.Open(filepath.Join(b.root, previewDir, hash))
-}
-
-// placePreviewAtHash moves src to previews/<hash>, or removes src if the
-// destination already exists. JPEG encoding is deterministic from the same
-// source, so a race between two slow-path requests resolves benignly:
-// whichever rename lands first wins, the second is discarded.
-func (b *blobStore) placePreviewAtHash(src, hash string) (string, error) {
-	rel := filepath.Join(previewDir, hash)
-	dest := filepath.Join(b.root, rel)
-	if _, err := os.Stat(dest); err == nil {
-		_ = os.Remove(src)
-		return rel, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	if err := os.Rename(src, dest); err != nil {
-		return "", err
-	}
-	return rel, nil
+	return b.openAt(previewDir, hash)
 }
 
 var errPayloadTooLarge = errors.New("payload too large")

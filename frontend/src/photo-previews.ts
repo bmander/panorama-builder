@@ -88,12 +88,9 @@ export function createPhotoPreviews(opts: CreatePhotoPreviewsOptions): PhotoPrev
       dir: dirFromAzAlt(preview.photoAz, preview.photoTilt),
       loadedTexture: null,
     };
-    // Fly-tween planes are short-lived (replaced by station-page hydrate on
-    // touchdown), so prefer the medium-res preview; full-res arrives via the
-    // post-fly hydrate. Legacy rows without a hash-form blob_path fall back
-    // to the original blob URL.
-    const previewUrl = api.photoPreviewUrl({ blob_path: preview.blobPath });
-    const url = previewUrl
+    // Planes are replaced by station-page hydrate on touchdown, so preview
+    // resolution is sufficient; full-res arrives via the post-fly hydrate.
+    const url = api.photoPreviewUrl({ blob_path: preview.blobPath })
       ?? api.photoBlobUrl({ id: preview.photoId, blob_path: preview.blobPath });
     new THREE.TextureLoader().load(
       url,

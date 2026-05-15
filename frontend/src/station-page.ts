@@ -1228,26 +1228,15 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
           photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
           dist_k1: p.dist_k1, dist_k2: p.dist_k2,
         });
-        // Medium-res preview first, then upgrade to full-res. setTexture
-        // disposes the previous body texture, so the swap is one call. Legacy
-        // rows without a hash-form blob_path skip preview and go straight to
-        // full-res; preview failures (incl. non-JPEG → 415) fall through too.
         const fullUrl = api.photoBlobUrl(p);
         const previewUrl = api.photoPreviewUrl(p);
-        const onFull = (tex: THREE.Texture): void => { overlays.photos.setTexture(o, tex); };
+        const setTex = (tex: THREE.Texture): void => { overlays.photos.setTexture(o, tex); };
         const onFullErr = (err: unknown): void => { console.error(`photo ${p.id} load failed:`, err); };
+        const loadFull = (): void => { loader.load(fullUrl, setTex, undefined, onFullErr); };
         if (previewUrl) {
-          loader.load(
-            previewUrl,
-            tex => {
-              overlays.photos.setTexture(o, tex);
-              loader.load(fullUrl, onFull, undefined, onFullErr);
-            },
-            undefined,
-            () => { loader.load(fullUrl, onFull, undefined, onFullErr); },
-          );
+          loader.load(previewUrl, tex => { setTex(tex); loadFull(); }, undefined, loadFull);
         } else {
-          loader.load(fullUrl, onFull, undefined, onFullErr);
+          loadFull();
         }
       }
 
