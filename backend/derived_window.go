@@ -2,179 +2,396 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 )
 
 // derived_window.go materializes implicit lifespan bounds on control_points
-// from the observation graph.
+// AND capture-time bounds on stations from the observation graph.
 //
-// Inputs:
-//   - control_points.started_at / ended_at  (precise, certain events)
-//   - cp_observations(status, station, cp)
-//   - stations.captured_at                  (NULL = unknown, skipped)
+// The model is a Simple Temporal Network (STN) of point variables:
+//   - station.captured_at     (one point per station)
+//   - cp.started_at, cp.ended_at (two points per CP)
+// constrained by observed cp_observation edges (s observed c) giving
+//   cp.started ≤ s.captured ≤ cp.ended.
 //
-// Outputs (per CP, written to control_points.{started_at_lower,
-// started_at_upper, ended_at_lower, ended_at_upper, derivation_inconsistent}):
+// Bound-propagation rules per observed edge (s, c):
+//   c.start_upper = min(c.start_upper, s.t_upper)
+//   c.end_lower   = max(c.end_lower,   s.t_lower)
+//   s.t_lower     = max(s.t_lower,     c.start_lower)
+//   s.t_upper     = min(s.t_upper,     c.end_upper)
 //
-//   - started_upper = min(precise_started, S(s) for s ∈ obs, miss-upper)
-//   - started_lower = max(precise_started, miss-lower)
-//   - ended_upper   = min(precise_ended,   miss-upper)
-//   - ended_lower   = max(precise_ended,   S(s) for s ∈ obs, miss-lower)
+// Iterated to quiescence via a worklist; for our scale (~200 CPs, ~40
+// stations, ~540 edges) it converges in microseconds. `missing`
+// observations stay on a single-pass heuristic during initialization (peek
+// at observed neighbors to disambiguate which side of the lifespan the
+// missing date sits on); they're DTP-hard in general, out of scope.
 //
-// "miss-lower" / "miss-upper": for each missing observation m with
-// S(m) ≠ NULL, if some observed station t has S(t) > S(m) then started_lower
-// ≥ S(m) (CP didn't exist yet at S(m)); if S(t) < S(m) then ended_upper ≤
-// S(m) (CP destroyed by S(m)). Both holding for the same m sets
-// derivation_inconsistent=true.
-//
-// Recomputation runs at merge time: collectDirtyCPs scans the just-applied
-// session ops, recomputeAndJournal computes fresh bounds for each, and any
-// CP whose row changed gets a journaled `update control_points` op so the
-// commit is self-contained for revert.
+// Two callers invoke the same in-memory propagator:
+//   - propagateDatesInSession runs at solve time, reads main+overlay, and
+//     emits journaled update ops via recordOp so the user previews the
+//     propagated bounds in the session overlay before merge.
+//   - recomputeAndJournalWindows runs at merge time (after applyPlanToMain)
+//     as a safety net for the no-solve path, reading main directly and
+//     applying updates to main as it journals.
 
-// recomputeAndJournalCPWindows is the entry point called from mergeSession
-// after applyPlanToMain. It returns the additional ops (already coalesced
-// into session_ops via recordOp) so the caller can extend its plan.
-//
-// Reads are batched: one query loads every dirty CP row, a second loads
-// every observation+station_captured_at across the dirty set. Per-CP
-// computation then runs in memory.
-func recomputeAndJournalCPWindows(ctx context.Context, tx pgx.Tx, sessionID string, ops []journalOp) ([]journalOp, error) {
-	dirty, err := collectDirtyCPs(ctx, tx, ops)
-	if err != nil {
-		return nil, err
+// propagatedWindows is the fixed-point output of the propagator.
+type propagatedWindows struct {
+	CPs      map[string]DerivedWindow
+	Stations map[string]StationDerivedWindow
+}
+
+// propagateWindows runs the STN bound-propagation to quiescence on the
+// supplied graph state. Pure function — no I/O.
+func propagateWindows(cps []ControlPoint, stations []Station, obs []CpObservation) propagatedWindows {
+	type cpBounds struct {
+		startLo, startHi, endLo, endHi *time.Time
+		inconsistent                   bool
 	}
-	if len(dirty) == 0 {
+	type stBounds struct {
+		lo, hi       *time.Time
+		inconsistent bool
+	}
+	cpState := make(map[string]*cpBounds, len(cps))
+	stState := make(map[string]*stBounds, len(stations))
+	stByID := make(map[string]*Station, len(stations))
+	for i := range stations {
+		stByID[stations[i].ID] = &stations[i]
+	}
+
+	// Seed CP bounds from precise dates; station bounds from precise
+	// captured_at. Null inputs leave both bounds null (unbounded).
+	for _, cp := range cps {
+		cpState[cp.ID] = &cpBounds{
+			startLo: cp.StartedAt, startHi: cp.StartedAt,
+			endLo: cp.EndedAt, endHi: cp.EndedAt,
+		}
+	}
+	for _, st := range stations {
+		stState[st.ID] = &stBounds{lo: st.CapturedAt, hi: st.CapturedAt}
+	}
+
+	// Build observed-edge adjacency. Missing observations bucketed for the
+	// disambiguation pass below.
+	cpToObservers := make(map[string][]string) // cp id → station ids observing it
+	stationToCPs := make(map[string][]string)  // station id → cp ids observed
+	cpToMissing := make(map[string][]string)   // cp id → station ids marking missing
+	for _, o := range obs {
+		switch o.Status {
+		case Observed:
+			cpToObservers[o.ControlPointID] = append(cpToObservers[o.ControlPointID], o.StationID)
+			stationToCPs[o.StationID] = append(stationToCPs[o.StationID], o.ControlPointID)
+		case Missing:
+			cpToMissing[o.ControlPointID] = append(cpToMissing[o.ControlPointID], o.StationID)
+		}
+	}
+
+	// Missing-disambiguation pass (heuristic, single sweep, uses raw
+	// station.captured_at for the neighbor check). Tightens CP-side
+	// start_lower / end_upper, flags inconsistent on contradictions.
+	for cpID, missStations := range cpToMissing {
+		cpb := cpState[cpID]
+		if cpb == nil {
+			continue
+		}
+		for _, sID := range missStations {
+			st := stByID[sID]
+			if st == nil || st.CapturedAt == nil {
+				continue
+			}
+			m := *st.CapturedAt
+			var hasLater, hasEarlier bool
+			for _, oSID := range cpToObservers[cpID] {
+				ost := stByID[oSID]
+				if ost == nil || ost.CapturedAt == nil {
+					continue
+				}
+				if ost.CapturedAt.After(m) {
+					hasLater = true
+				}
+				if ost.CapturedAt.Before(m) {
+					hasEarlier = true
+				}
+			}
+			if hasLater && hasEarlier {
+				cpb.inconsistent = true
+			}
+			if hasLater {
+				cpb.startLo = maxPtr(cpb.startLo, &m)
+			}
+			if hasEarlier {
+				cpb.endHi = minPtr(cpb.endHi, &m)
+			}
+		}
+	}
+
+	// Worklist STN propagation on observed edges. Each entry is one
+	// entity whose bounds might have moved and need to be pushed.
+	type wlEntry struct {
+		isCP bool
+		id   string
+	}
+	worklist := make([]wlEntry, 0, len(cps)+len(stations))
+	for id := range cpState {
+		worklist = append(worklist, wlEntry{true, id})
+	}
+	for id := range stState {
+		worklist = append(worklist, wlEntry{false, id})
+	}
+
+	for len(worklist) > 0 {
+		e := worklist[len(worklist)-1]
+		worklist = worklist[:len(worklist)-1]
+		if e.isCP {
+			cpb := cpState[e.id]
+			for _, sID := range cpToObservers[e.id] {
+				stb := stState[sID]
+				if stb == nil {
+					continue
+				}
+				// s.t_lower ≥ c.start_lower; s.t_upper ≤ c.end_upper
+				moved := false
+				if cpb.startLo != nil {
+					if nv := maxPtr(stb.lo, cpb.startLo); nv != stb.lo {
+						stb.lo = nv
+						moved = true
+					}
+				}
+				if cpb.endHi != nil {
+					if nv := minPtr(stb.hi, cpb.endHi); nv != stb.hi {
+						stb.hi = nv
+						moved = true
+					}
+				}
+				if moved {
+					worklist = append(worklist, wlEntry{false, sID})
+				}
+			}
+		} else {
+			stb := stState[e.id]
+			for _, cID := range stationToCPs[e.id] {
+				cpb := cpState[cID]
+				if cpb == nil {
+					continue
+				}
+				// c.start_upper ≤ s.t_upper; c.end_lower ≥ s.t_lower
+				moved := false
+				if stb.hi != nil {
+					if nv := minPtr(cpb.startHi, stb.hi); nv != cpb.startHi {
+						cpb.startHi = nv
+						moved = true
+					}
+				}
+				if stb.lo != nil {
+					if nv := maxPtr(cpb.endLo, stb.lo); nv != cpb.endLo {
+						cpb.endLo = nv
+						moved = true
+					}
+				}
+				if moved {
+					worklist = append(worklist, wlEntry{true, cID})
+				}
+			}
+		}
+	}
+
+	// Detect contradictions + assemble outputs.
+	out := propagatedWindows{
+		CPs:      make(map[string]DerivedWindow, len(cps)),
+		Stations: make(map[string]StationDerivedWindow, len(stations)),
+	}
+	for id, c := range cpState {
+		inc := c.inconsistent ||
+			(c.startLo != nil && c.startHi != nil && c.startLo.After(*c.startHi)) ||
+			(c.endLo != nil && c.endHi != nil && c.endLo.After(*c.endHi)) ||
+			(c.startLo != nil && c.endHi != nil && c.startLo.After(*c.endHi))
+		out.CPs[id] = DerivedWindow{
+			StartedAtLower: c.startLo,
+			StartedAtUpper: c.startHi,
+			EndedAtLower:   c.endLo,
+			EndedAtUpper:   c.endHi,
+			Inconsistent:   inc,
+		}
+	}
+	for id, s := range stState {
+		inc := s.inconsistent || (s.lo != nil && s.hi != nil && s.lo.After(*s.hi))
+		out.Stations[id] = StationDerivedWindow{
+			CapturedAtLower: s.lo,
+			CapturedAtUpper: s.hi,
+			Inconsistent:    inc,
+		}
+	}
+	return out
+}
+
+// anyOpAffectsDateGraph returns true when a session's ops include at least
+// one write that could change the propagation inputs (CP precise dates,
+// station captured_at, or cp_observation rows). Solver-only writebacks
+// touch est_*/σ and don't dirty the date graph, so we can skip the load
+// and the whole pass.
+func anyOpAffectsDateGraph(ops []journalOp) bool {
+	for _, op := range ops {
+		switch op.EntityType {
+		case entityCPObservation, entityStation, entityControlPoint:
+			return true
+		}
+	}
+	return false
+}
+
+// recomputeAndJournalWindows is the merge-time entry point. Reads main
+// (post-applyPlanToMain), runs propagateWindows, and emits journaled
+// `update station` / `update control_point` ops for any row whose derived
+// columns changed. Each op is also applied to main right away so the
+// σ-gate check and downstream reads see the post-recompute state.
+func recomputeAndJournalWindows(ctx context.Context, tx pgx.Tx, sessionID string, ops []journalOp) ([]journalOp, error) {
+	if !anyOpAffectsDateGraph(ops) {
 		return nil, nil
 	}
-
-	cps, err := loadControlPointsTx(ctx, tx, dirty)
+	cps, err := loadAllControlPointsForPropagation(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
-	obs, err := loadObservationsByCPTx(ctx, tx, dirty)
+	stations, err := loadAllStationsForPropagation(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
+	obs, err := loadAllCpObservationsForPropagation(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	result := propagateWindows(cps, stations, obs)
 
-	added := make([]journalOp, 0, len(cps))
-	for _, cp := range cps {
-		fresh := computeWindowFromInputs(cp.StartedAt, cp.EndedAt, obs[cp.ID])
+	now := time.Now().UTC()
+	added := make([]journalOp, 0)
+	for i := range cps {
+		cp := cps[i]
+		fresh := result.CPs[cp.ID]
 		if derivedWindowEqual(cp.DerivedWindow, fresh) {
 			continue
 		}
 		before := jsonMust(cp)
 		cp.DerivedWindow = fresh
-		cp.UpdatedAt = time.Now().UTC()
+		cp.UpdatedAt = now
 		after := jsonMust(cp)
 		if err := recordOp(ctx, tx, sessionID, entityControlPoint, cp.ID, "update", before, after); err != nil {
 			return nil, err
 		}
-		// Apply the recompute to main right now so subsequent operations
-		// (mergeGateCheck, bumpEntityCommits, follow-on revert reads) see
-		// the post-recompute state.
 		if err := updateEntityFromJSON(ctx, tx, entityControlPoint, cp.ID, after); err != nil {
 			return nil, err
 		}
 		added = append(added, journalOp{
-			EntityType: entityControlPoint,
-			EntityID:   cp.ID,
-			Op:         "update",
-			BeforeJSON: before,
-			AfterJSON:  after,
+			EntityType: entityControlPoint, EntityID: cp.ID, Op: "update",
+			BeforeJSON: before, AfterJSON: after,
+		})
+	}
+	for i := range stations {
+		st := stations[i]
+		fresh := result.Stations[st.ID]
+		if stationDerivedWindowEqual(st.DerivedWindow, fresh) {
+			continue
+		}
+		before := jsonMust(st)
+		st.DerivedWindow = fresh
+		st.UpdatedAt = now
+		after := jsonMust(st)
+		if err := recordOp(ctx, tx, sessionID, entityStation, st.ID, "update", before, after); err != nil {
+			return nil, err
+		}
+		if err := updateEntityFromJSON(ctx, tx, entityStation, st.ID, after); err != nil {
+			return nil, err
+		}
+		added = append(added, journalOp{
+			EntityType: entityStation, EntityID: st.ID, Op: "update",
+			BeforeJSON: before, AfterJSON: after,
 		})
 	}
 	return added, nil
 }
 
-// collectDirtyCPs returns every control_point id whose derived window
-// might be affected by the just-applied set of journal ops.
-//   - any cp_observation op → its control_point_id
-//   - any station op that may have changed captured_at → all CPs
-//     observed/missing at that station (precise dates seed bounds, so a
-//     station whose date moved invalidates every CP it touches)
-//   - any control_point op whose precise dates were the inputs we'd seeded
-//     into the derived window — but the user write doesn't carry the new
-//     derived bounds; recompute lets us rebuild them from observations.
-func collectDirtyCPs(ctx context.Context, tx pgx.Tx, ops []journalOp) ([]string, error) {
-	dirty := map[string]struct{}{}
-	dirtyStations := map[string]struct{}{}
-	for _, op := range ops {
-		switch op.EntityType {
-		case entityCPObservation:
-			cpID, err := cpIDFromObservationOp(op)
-			if err != nil {
-				return nil, err
-			}
-			if cpID != "" {
-				dirty[cpID] = struct{}{}
-			}
-		case entityStation:
-			dirtyStations[op.EntityID] = struct{}{}
-		case entityControlPoint:
-			dirty[op.EntityID] = struct{}{}
+// propagateDatesInSession is the solve-time entry point. Reads main +
+// session overlay so the propagation operates on the post-session-edit
+// state the user is about to merge. Emits journaled update ops via
+// recordOp; does NOT apply to main (the session journal carries the
+// change until merge). Called from writebackChangesInSession right
+// before tx.Commit so propagated bounds appear in the overlay alongside
+// the solver's own est_*/σ writes.
+func (s *Server) propagateDatesInSession(ctx context.Context, tx pgx.Tx, sessionID string, overlay sessionOverlay) error {
+	cps, err := s.overlayedControlPoints(ctx, overlay)
+	if err != nil {
+		return err
+	}
+	stations, err := s.overlayedStations(ctx, overlay)
+	if err != nil {
+		return err
+	}
+	obs, err := s.overlayedCpObservations(ctx, overlay)
+	if err != nil {
+		return err
+	}
+	result := propagateWindows(cps, stations, obs)
+
+	now := time.Now().UTC()
+	for i := range cps {
+		cp := cps[i]
+		fresh := result.CPs[cp.ID]
+		if derivedWindowEqual(cp.DerivedWindow, fresh) {
+			continue
+		}
+		before := jsonMust(cp)
+		cp.DerivedWindow = fresh
+		cp.UpdatedAt = now
+		after := jsonMust(cp)
+		if err := recordOp(ctx, tx, sessionID, entityControlPoint, cp.ID, "update", before, after); err != nil {
+			return err
 		}
 	}
-	if len(dirtyStations) > 0 {
-		ids := make([]string, 0, len(dirtyStations))
-		for id := range dirtyStations {
-			ids = append(ids, id)
+	for i := range stations {
+		st := stations[i]
+		fresh := result.Stations[st.ID]
+		if stationDerivedWindowEqual(st.DerivedWindow, fresh) {
+			continue
 		}
-		rows, err := tx.Query(ctx,
-			`SELECT DISTINCT control_point_id FROM cp_observations WHERE station_id = ANY($1)`, ids)
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var cpID string
-			if err := rows.Scan(&cpID); err != nil {
-				return nil, err
-			}
-			dirty[cpID] = struct{}{}
-		}
-		if err := rows.Err(); err != nil {
-			return nil, err
+		before := jsonMust(st)
+		st.DerivedWindow = fresh
+		st.UpdatedAt = now
+		after := jsonMust(st)
+		if err := recordOp(ctx, tx, sessionID, entityStation, st.ID, "update", before, after); err != nil {
+			return err
 		}
 	}
-	out := make([]string, 0, len(dirty))
-	for id := range dirty {
-		out = append(out, id)
-	}
-	return out, nil
+	return nil
 }
 
-// cpIDFromObservationOp extracts control_point_id from either side of the
-// op. After-state is preferred; before-state covers deletes.
-func cpIDFromObservationOp(op journalOp) (string, error) {
-	body := op.AfterJSON
-	if len(body) == 0 {
-		body = op.BeforeJSON
-	}
-	if len(body) == 0 {
-		return "", nil
-	}
-	var o CpObservation
-	if err := json.Unmarshal(body, &o); err != nil {
-		return "", err
-	}
-	return o.ControlPointID, nil
-}
+// Full-graph read helpers — used by both merge-time and solve-time paths.
+// The queryer interface lets us reuse the same code on a *pgxpool.Pool
+// (overlay path) or a pgx.Tx (merge-time path).
 
-// loadControlPointsTx scans the given CP ids in a single query, returning
-// them in input order with missing ids silently dropped (those CPs got
-// deleted in this session).
-func loadControlPointsTx(ctx context.Context, tx pgx.Tx, ids []string) ([]ControlPoint, error) {
-	rows, err := tx.Query(ctx,
-		`SELECT `+controlPointCols+` FROM control_points WHERE id = ANY($1)`, ids)
+func loadAllStationsForPropagation(ctx context.Context, q queryerLike) ([]Station, error) {
+	rows, err := q.Query(ctx, `SELECT `+stationCols+` FROM stations`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := make([]ControlPoint, 0, len(ids))
+	out := []Station{}
+	for rows.Next() {
+		st, err := scanStation(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, st)
+	}
+	return out, rows.Err()
+}
+
+func loadAllControlPointsForPropagation(ctx context.Context, q queryerLike) ([]ControlPoint, error) {
+	rows, err := q.Query(ctx, `SELECT `+controlPointCols+` FROM control_points`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ControlPoint{}
 	for rows.Next() {
 		cp, err := scanControlPoint(rows)
 		if err != nil {
@@ -185,98 +402,61 @@ func loadControlPointsTx(ctx context.Context, tx pgx.Tx, ids []string) ([]Contro
 	return out, rows.Err()
 }
 
-// cpObservationInput is one (status, station-captured-at) pair per
-// observation referencing a CP. captured_at NULL means the station's
-// date is unknown; we skip those in the rule set.
-type cpObservationInput struct {
-	status   string
-	captured *time.Time
-}
-
-// loadObservationsByCPTx returns every observation referencing any of the
-// given CP ids, bucketed by control_point_id.
-func loadObservationsByCPTx(ctx context.Context, tx pgx.Tx, ids []string) (map[string][]cpObservationInput, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT o.control_point_id, o.status, s.captured_at
-		FROM cp_observations o
-		JOIN stations s ON s.id = o.station_id
-		WHERE o.control_point_id = ANY($1)`, ids)
+func loadAllCpObservationsForPropagation(ctx context.Context, q queryerLike) ([]CpObservation, error) {
+	rows, err := q.Query(ctx, `SELECT `+cpObservationCols+` FROM cp_observations`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string][]cpObservationInput{}
+	out := []CpObservation{}
 	for rows.Next() {
-		var cpID string
-		var in cpObservationInput
-		if err := rows.Scan(&cpID, &in.status, &in.captured); err != nil {
+		o, err := scanCpObservation(rows)
+		if err != nil {
 			return nil, err
 		}
-		out[cpID] = append(out[cpID], in)
+		out = append(out, o)
 	}
 	return out, rows.Err()
 }
 
-// computeWindowFromInputs runs the rule set above for one CP given its
-// precise dates and the observations-with-station-dates referencing it.
-// Pure function; no I/O.
-func computeWindowFromInputs(preciseStart, preciseEnd *time.Time, obs []cpObservationInput) DerivedWindow {
-	var observedDates, missingDates []time.Time
-	for _, in := range obs {
-		if in.captured == nil {
-			continue
-		}
-		switch in.status {
-		case "observed":
-			observedDates = append(observedDates, *in.captured)
-		case "missing":
-			missingDates = append(missingDates, *in.captured)
-		}
-	}
+// overlayedX functions return the main rows with the session overlay
+// applied — so a CP/station/observation that the session has staged-edited
+// or staged-inserted reflects the post-session state.
 
-	// Precise dates seed both sides of their bound.
-	win := DerivedWindow{
-		StartedAtLower: preciseStart,
-		StartedAtUpper: preciseStart,
-		EndedAtLower:   preciseEnd,
-		EndedAtUpper:   preciseEnd,
+func (s *Server) overlayedControlPoints(ctx context.Context, overlay sessionOverlay) ([]ControlPoint, error) {
+	base, err := loadAllControlPointsForPropagation(ctx, s.db)
+	if err != nil {
+		return nil, err
 	}
-
-	// Each observed date pulls started_upper down and ended_lower up.
-	for i := range observedDates {
-		t := observedDates[i]
-		win.StartedAtUpper = minPtr(win.StartedAtUpper, &t)
-		win.EndedAtLower = maxPtr(win.EndedAtLower, &t)
-	}
-
-	// Disambiguate each missing observation against the observed set.
-	for i := range missingDates {
-		m := missingDates[i]
-		var hasLater, hasEarlier bool
-		for _, o := range observedDates {
-			if o.After(m) {
-				hasLater = true
-			}
-			if o.Before(m) {
-				hasEarlier = true
-			}
-		}
-		if hasLater && hasEarlier {
-			// Both directions can't be true — the missing observation is
-			// inside the observed envelope.
-			win.Inconsistent = true
-		}
-		if hasLater {
-			win.StartedAtLower = maxPtr(win.StartedAtLower, &m)
-		}
-		if hasEarlier {
-			win.EndedAtUpper = minPtr(win.EndedAtUpper, &m)
-		}
-		// Neither direction → unattributable; contributes nothing.
-	}
-
-	return win
+	return mergeOverlay(base, overlay[entityControlPoint],
+		func(cp ControlPoint) string { return cp.ID },
+		decodeJSON[ControlPoint],
+		func(ControlPoint) bool { return true })
 }
+
+func (s *Server) overlayedStations(ctx context.Context, overlay sessionOverlay) ([]Station, error) {
+	base, err := loadAllStationsForPropagation(ctx, s.db)
+	if err != nil {
+		return nil, err
+	}
+	return mergeOverlay(base, overlay[entityStation],
+		func(st Station) string { return st.ID },
+		decodeJSON[Station],
+		func(Station) bool { return true })
+}
+
+func (s *Server) overlayedCpObservations(ctx context.Context, overlay sessionOverlay) ([]CpObservation, error) {
+	base, err := loadAllCpObservationsForPropagation(ctx, s.db)
+	if err != nil {
+		return nil, err
+	}
+	return mergeOverlay(base, overlay[entityCPObservation],
+		func(o CpObservation) string { return o.ID },
+		decodeJSON[CpObservation],
+		func(CpObservation) bool { return true })
+}
+
+// --- Equality + pointer-math helpers (shared with the rest of the file).
 
 func derivedWindowEqual(a, b DerivedWindow) bool {
 	return a.Inconsistent == b.Inconsistent &&
@@ -284,6 +464,12 @@ func derivedWindowEqual(a, b DerivedWindow) bool {
 		timePtrEqual(a.StartedAtUpper, b.StartedAtUpper) &&
 		timePtrEqual(a.EndedAtLower, b.EndedAtLower) &&
 		timePtrEqual(a.EndedAtUpper, b.EndedAtUpper)
+}
+
+func stationDerivedWindowEqual(a, b StationDerivedWindow) bool {
+	return a.Inconsistent == b.Inconsistent &&
+		timePtrEqual(a.CapturedAtLower, b.CapturedAtLower) &&
+		timePtrEqual(a.CapturedAtUpper, b.CapturedAtUpper)
 }
 
 func minPtr(a, b *time.Time) *time.Time {

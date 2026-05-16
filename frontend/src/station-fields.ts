@@ -11,9 +11,9 @@
 
 import * as api from './api.js';
 import {
-  createSigmaSpan, fmtSigmaMeters, formatLocalDateTime, getElement,
-  sigmaSeverityClass, syncInputChecked, syncInputValue, updateSigma,
-  worstHorizontalSigma,
+  createSigmaSpan, fmtSigmaMeters, formatEstimateRange, formatLocalDateTime,
+  getElement, sigmaSeverityClass, syncInputChecked, syncInputValue,
+  updateSigma, worstHorizontalSigma,
 } from './types.js';
 import type { LatLng } from './types.js';
 import {
@@ -29,6 +29,11 @@ export interface StationFields {
   // station, or null when the date is unknown. Backend stores nullable
   // TIMESTAMPTZ; the UI converts to/from datetime-local.
   capturedAt: string | null;
+  // Materialized derived bounds from the propagation pass. Surfaced as
+  // an "Est. X – Y" hint under the (empty) captured-at input.
+  derivedLower: string | null;
+  derivedUpper: string | null;
+  derivationInconsistent: boolean;
 }
 
 export interface StationFieldsHandle {
@@ -37,10 +42,6 @@ export interface StationFieldsHandle {
   // before transitioning. Other cache fields (lat/lng/locks) are internal.
   getNameAndAlt: () => { name: string | null; alt: number } | null;
   getCapturedAt: () => string | null;
-  // Display-only hint shown when captured_at is null. Caller computes the
-  // string from cp_observations + control-point derived windows; we just
-  // render it next to the (empty) input. Pass null to clear.
-  setCapturedAtEstimate: (text: string | null) => void;
 }
 
 export interface CreateStationFieldsOptions {
@@ -68,7 +69,6 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
   const lockAltEl = getElement<HTMLInputElement>('station-lock-alt');
   const capturedAtEl = getElement<HTMLInputElement>('station-captured-at');
   const capturedAtEstEl = getElement<HTMLSpanElement>('station-captured-at-est');
-  let capturedAtEstimate: string | null = null;
 
   const sigmaPosEl = createSigmaSpan(lngEl.parentElement!);
   const sigmaAltEl = createSigmaSpan(altEl.parentElement!);
@@ -105,9 +105,20 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
   }
 
   function renderCapturedAtEstimate(): void {
-    const show = cache?.capturedAt === null && capturedAtEstimate !== null;
-    capturedAtEstEl.hidden = !show;
-    capturedAtEstEl.textContent = show ? capturedAtEstimate : '';
+    if (cache?.capturedAt !== null) {
+      capturedAtEstEl.hidden = true;
+      capturedAtEstEl.textContent = '';
+      return;
+    }
+    const est = formatEstimateRange(cache.derivedLower, cache.derivedUpper);
+    const inc = cache.derivationInconsistent ? ' (!) inconsistent observations' : '';
+    if (est === null && !cache.derivationInconsistent) {
+      capturedAtEstEl.hidden = true;
+      capturedAtEstEl.textContent = '';
+      return;
+    }
+    capturedAtEstEl.hidden = false;
+    capturedAtEstEl.textContent = (est ?? '') + inc;
   }
 
   function render(): void {
@@ -126,6 +137,9 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
       lat: s.lat, lng: s.lng, alt: s.alt,
       lockLat: s.lock_lat, lockLng: s.lock_lng, lockAlt: s.lock_alt,
       capturedAt: s.captured_at,
+      derivedLower: s.derived_window.captured_at_lower,
+      derivedUpper: s.derived_window.captured_at_upper,
+      derivationInconsistent: s.derived_window.inconsistent,
     };
     onAltitudeChanged(s.alt);
     render();
@@ -206,9 +220,5 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
     hydrate,
     getNameAndAlt: () => cache && { name: cache.name, alt: cache.alt },
     getCapturedAt: () => cache?.capturedAt ?? null,
-    setCapturedAtEstimate: (text) => {
-      capturedAtEstimate = text;
-      renderCapturedAtEstimate();
-    },
   };
 }

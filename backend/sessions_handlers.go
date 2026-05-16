@@ -325,7 +325,7 @@ func (s *Server) getSessionRankDeficient(w http.ResponseWriter, r *http.Request)
 		}
 		// Mirror the merge path: recompute derived windows so the σ gate
 		// sees the same post-merge state it would in the real merge.
-		if _, err := recomputeAndJournalCPWindows(ctx, tx, id, ops); err != nil {
+		if _, err := recomputeAndJournalWindows(ctx, tx, id, ops); err != nil {
 			log.Printf("rank-deficient dry-run derived recompute failed (session %s): %v", id, err)
 		}
 	}
@@ -430,7 +430,7 @@ func (s *Server) mergeSession(w http.ResponseWriter, r *http.Request) {
 	// derived columns through the same before/after JSON. The recompute
 	// helper applies its updates to main directly and coalesces ops via
 	// recordOp, so we only need to extend the plan for bumpEntityCommits.
-	derivedOps, err := recomputeAndJournalCPWindows(ctx, tx, id, ops)
+	derivedOps, err := recomputeAndJournalWindows(ctx, tx, id, ops)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return

@@ -993,6 +993,16 @@ type Station struct {
 	CapturedAt *time.Time `json:"captured_at"`
 	CreatedAt  time.Time  `json:"created_at"`
 
+	// DerivedWindow Implicit capture-time bounds for a station, derived from its
+	// cp_observations and the lifespan of the CPs they reference.
+	// Station is a single time-point variable (not an interval), so
+	// the window is just (lower, upper). A precise captured_at on the
+	// parent appears as both the lower and upper. inconsistent is
+	// true when the observation graph constrains this station's
+	// capture time to an empty interval (e.g. observing two CPs
+	// with non-overlapping lifespans).
+	DerivedWindow StationDerivedWindow `json:"derived_window"`
+
 	// ID 13-character base32 server-assigned id
 	ID  ID      `json:"id"`
 	Lat float64 `json:"lat"`
@@ -1019,6 +1029,20 @@ type Station struct {
 	// SigmaLng σ of lng in meters (local-ENU east). NULL semantics as sigma_lat.
 	SigmaLng  *float64  `json:"sigma_lng,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// StationDerivedWindow Implicit capture-time bounds for a station, derived from its
+// cp_observations and the lifespan of the CPs they reference.
+// Station is a single time-point variable (not an interval), so
+// the window is just (lower, upper). A precise captured_at on the
+// parent appears as both the lower and upper. inconsistent is
+// true when the observation graph constrains this station's
+// capture time to an empty interval (e.g. observing two CPs
+// with non-overlapping lifespans).
+type StationDerivedWindow struct {
+	CapturedAtLower *time.Time `json:"captured_at_lower"`
+	CapturedAtUpper *time.Time `json:"captured_at_upper"`
+	Inconsistent    bool       `json:"inconsistent"`
 }
 
 // StationUpdate Partial-update body for PUT /stations/{id}. Every field is

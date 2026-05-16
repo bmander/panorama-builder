@@ -845,6 +845,7 @@ export interface components {
              *     bounds to derived CP windows.
              */
             captured_at: string | null;
+            derived_window: components["schemas"]["StationDerivedWindow"];
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -1296,6 +1297,23 @@ export interface components {
             ended_at_lower: string | null;
             /** Format: date-time */
             ended_at_upper: string | null;
+            inconsistent: boolean;
+        };
+        /**
+         * @description Implicit capture-time bounds for a station, derived from its
+         *     cp_observations and the lifespan of the CPs they reference.
+         *     Station is a single time-point variable (not an interval), so
+         *     the window is just (lower, upper). A precise captured_at on the
+         *     parent appears as both the lower and upper. inconsistent is
+         *     true when the observation graph constrains this station's
+         *     capture time to an empty interval (e.g. observing two CPs
+         *     with non-overlapping lifespans).
+         */
+        StationDerivedWindow: {
+            /** Format: date-time */
+            captured_at_lower: string | null;
+            /** Format: date-time */
+            captured_at_upper: string | null;
             inconsistent: boolean;
         };
         /**

@@ -32,8 +32,8 @@ import { createPhotoPreviews } from './photo-previews.js';
 import { createDotLayer, findHitDot } from './dot-layer.js';
 import type { Dot } from './dot-layer.js';
 import {
-  cpHref, cpLabel, cpLifespanFromApi, formatEstimateRange, getElement,
-  indexStationHref, isExtantAt, parseStaFromURL, stationHref,
+  cpHref, cpLabel, cpLifespanFromApi, getElement, indexStationHref, isExtantAt,
+  parseStaFromURL, stationHref,
   meshMat, overlayData, poiData,
 } from './types.js';
 import { groundDistance, latLngToCameraRelativeMeters, tangentMetersToLatLng, vecToAzAlt } from './geo.js';
@@ -76,28 +76,6 @@ const URL_FOV = 'fov';
 const URL_CAM_LA = 'cam_la';
 const URL_CAM_LO = 'cam_lo';
 const URL_CAM_MSL = 'cam_msl';
-
-// formatCapturedAtEstimate brackets a station's unknown captured_at from the
-// derived windows of every CP it observes. An observed CP must have existed
-// at the station's capture time, so the station's date is bounded by the
-// CP's started_at_lower (lower bound) and ended_at_upper (upper bound).
-// The intersection across all observed CPs gives the tightest bracket.
-function formatCapturedAtEstimate(data: ApiHydratedStation): string | null {
-  const cpById = new Map<string, ApiControlPoint>();
-  for (const cp of data.control_points) cpById.set(cp.id, cp);
-  let lower: string | null = null;
-  let upper: string | null = null;
-  for (const o of data.cp_observations) {
-    if (o.status !== 'observed') continue;
-    const cp = cpById.get(o.control_point_id);
-    if (!cp) continue;
-    const lo = cp.derived_window.started_at_lower;
-    const hi = cp.derived_window.ended_at_upper;
-    if (lo !== null && (lower === null || lo > lower)) lower = lo;
-    if (hi !== null && (upper === null || hi < upper)) upper = hi;
-  }
-  return formatEstimateRange(lower, upper);
-}
 
 export async function mountStationPage(opts: MountStationPageOptions): Promise<void> {
   const { initialStationId, focusImageMeasurementId } = opts;
@@ -1058,7 +1036,6 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   async function rehydrateAfterSolve(): Promise<void> {
     const data = await api.getStation(stationId);
     stationFields.hydrate(data.station);
-    stationFields.setCapturedAtEstimate(formatCapturedAtEstimate(data));
     overlays.withBatch(() => {
       const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
       applyCameraLocation(loc, data.station.alt);
@@ -1198,7 +1175,6 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     settings.refreshSunDirection();
     sync.flush();
     stationFields.hydrate(data.station);
-    stationFields.setCapturedAtEstimate(formatCapturedAtEstimate(data));
 
     // Center the viewport on the mean of the station's photo directions.
     // Matches the orientation the fly-between animation lands at, so a fly

@@ -1095,7 +1095,7 @@ components:
 
     Station:
       type: object
-      required: [id, lat, lng, alt, name, lock_lat, lock_lng, lock_alt, captured_at, created_at, updated_at]
+      required: [id, lat, lng, alt, name, lock_lat, lock_lng, lock_alt, captured_at, derived_window, created_at, updated_at]
       properties:
         id: { $ref: '#/components/schemas/Id' }
         lat: { type: number, format: double, minimum: -90, maximum: 90 }
@@ -1114,6 +1114,7 @@ components:
             null means the date is unknown. Stations with a null captured_at
             participate in the cp_observation graph but contribute no temporal
             bounds to derived CP windows.
+        derived_window: { $ref: '#/components/schemas/StationDerivedWindow' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         sigma_lat:
@@ -1568,6 +1569,23 @@ components:
         ended_at_lower:   { type: string, format: date-time, nullable: true }
         ended_at_upper:   { type: string, format: date-time, nullable: true }
         inconsistent:     { type: boolean }
+
+    StationDerivedWindow:
+      type: object
+      description: |
+        Implicit capture-time bounds for a station, derived from its
+        cp_observations and the lifespan of the CPs they reference.
+        Station is a single time-point variable (not an interval), so
+        the window is just (lower, upper). A precise captured_at on the
+        parent appears as both the lower and upper. inconsistent is
+        true when the observation graph constrains this station's
+        capture time to an empty interval (e.g. observing two CPs
+        with non-overlapping lifespans).
+      required: [captured_at_lower, captured_at_upper, inconsistent]
+      properties:
+        captured_at_lower: { type: string, format: date-time, nullable: true }
+        captured_at_upper: { type: string, format: date-time, nullable: true }
+        inconsistent:      { type: boolean }
 
     CpObservationStatus:
       type: string

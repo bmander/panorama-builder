@@ -26,10 +26,17 @@ func insertEntityFromJSON(ctx context.Context, tx pgx.Tx, entityType string, bod
 		_, err := tx.Exec(ctx, `
 			INSERT INTO stations
 			  (id, lat, lng, alt, name, lock_lat, lock_lng, lock_alt, captured_at,
-			   sigma_lat, sigma_lng, sigma_alt, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())`,
+			   sigma_lat, sigma_lng, sigma_alt,
+			   captured_at_lower, captured_at_upper, derivation_inconsistent,
+			   created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+			        $10, $11, $12,
+			        $13, $14, $15,
+			        $16, NOW())`,
 			st.ID, st.Lat, st.Lng, st.Alt, st.Name, st.LockLat, st.LockLng, st.LockAlt, st.CapturedAt,
-			st.SigmaLat, st.SigmaLng, st.SigmaAlt, st.CreatedAt)
+			st.SigmaLat, st.SigmaLng, st.SigmaAlt,
+			st.DerivedWindow.CapturedAtLower, st.DerivedWindow.CapturedAtUpper, st.DerivedWindow.Inconsistent,
+			st.CreatedAt)
 		return err
 	case entityPhoto:
 		var p Photo
@@ -149,11 +156,13 @@ func updateEntityFromJSON(ctx context.Context, tx pgx.Tx, entityType, id string,
 			  lat=$2, lng=$3, alt=$4, name=$5,
 			  lock_lat=$6, lock_lng=$7, lock_alt=$8, captured_at=$9,
 			  sigma_lat=$10, sigma_lng=$11, sigma_alt=$12,
+			  captured_at_lower=$13, captured_at_upper=$14, derivation_inconsistent=$15,
 			  updated_at=NOW()
 			WHERE id=$1`,
 			id, st.Lat, st.Lng, st.Alt, st.Name,
 			st.LockLat, st.LockLng, st.LockAlt, st.CapturedAt,
-			st.SigmaLat, st.SigmaLng, st.SigmaAlt)
+			st.SigmaLat, st.SigmaLng, st.SigmaAlt,
+			st.DerivedWindow.CapturedAtLower, st.DerivedWindow.CapturedAtUpper, st.DerivedWindow.Inconsistent)
 		return err
 	case entityPhoto:
 		var p Photo
