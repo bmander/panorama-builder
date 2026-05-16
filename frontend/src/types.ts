@@ -110,6 +110,20 @@ export function cpLifespanFromApi(cp: {
   };
 }
 
+// Render a pair of optional bound dates as "Est. <lo> – <hi>" (or
+// "Est. <lo>" when they coincide; "Est. after <lo>" / "Est. before <hi>"
+// when only one side is known). Returns null when neither bound is set,
+// so the caller can decide on placeholder text.
+export function formatEstimateRange(lo: string | null, hi: string | null): string | null {
+  const fmt = (s: string): string => new Date(s).toLocaleDateString();
+  if (lo !== null && hi !== null) {
+    return lo === hi ? `Est. ${fmt(lo)}` : `Est. ${fmt(lo)} – ${fmt(hi)}`;
+  }
+  if (lo !== null) return `Est. after ${fmt(lo)}`;
+  if (hi !== null) return `Est. before ${fmt(hi)}`;
+  return null;
+}
+
 // True when the lifespan window *might* contain timestamp `ms` —
 // i.e., the derived bounds don't rule it out. Open-ended sides (null
 // bounds) pass the gate.

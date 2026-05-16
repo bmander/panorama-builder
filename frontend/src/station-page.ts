@@ -32,8 +32,8 @@ import { createPhotoPreviews } from './photo-previews.js';
 import { createDotLayer, findHitDot } from './dot-layer.js';
 import type { Dot } from './dot-layer.js';
 import {
-  cpHref, cpLabel, cpLifespanFromApi, getElement, indexStationHref, isExtantAt,
-  parseStaFromURL, stationHref,
+  cpHref, cpLabel, cpLifespanFromApi, formatEstimateRange, getElement,
+  indexStationHref, isExtantAt, parseStaFromURL, stationHref,
   meshMat, overlayData, poiData,
 } from './types.js';
 import { groundDistance, latLngToCameraRelativeMeters, tangentMetersToLatLng, vecToAzAlt } from './geo.js';
@@ -82,8 +82,6 @@ const URL_CAM_MSL = 'cam_msl';
 // at the station's capture time, so the station's date is bounded by the
 // CP's started_at_lower (lower bound) and ended_at_upper (upper bound).
 // The intersection across all observed CPs gives the tightest bracket.
-// Returns null when no observed CP contributes a bound (or when no
-// observations exist).
 function formatCapturedAtEstimate(data: ApiHydratedStation): string | null {
   const cpById = new Map<string, ApiControlPoint>();
   for (const cp of data.control_points) cpById.set(cp.id, cp);
@@ -98,13 +96,7 @@ function formatCapturedAtEstimate(data: ApiHydratedStation): string | null {
     if (lo !== null && (lower === null || lo > lower)) lower = lo;
     if (hi !== null && (upper === null || hi < upper)) upper = hi;
   }
-  const fmt = (s: string): string => new Date(s).toLocaleDateString();
-  if (lower !== null && upper !== null) {
-    return lower === upper ? `Est. ${fmt(lower)}` : `Est. ${fmt(lower)} – ${fmt(upper)}`;
-  }
-  if (lower !== null) return `Est. after ${fmt(lower)}`;
-  if (upper !== null) return `Est. before ${fmt(upper)}`;
-  return null;
+  return formatEstimateRange(lower, upper);
 }
 
 export async function mountStationPage(opts: MountStationPageOptions): Promise<void> {
@@ -823,7 +815,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     // the crosshair brings these options back.
     if (!stationObserves) {
       const observingStationId = getCurrentStationId();
-      const postObservation = (status: 'observed' | 'missing' | 'cant_see', reason?: 'occluded' | 'too_far' | 'out_of_focus' | 'other'): void => {
+      const postObservation = (status: api.ApiCpObservationStatus, reason?: api.ApiCpObservationReason): void => {
         api.createCpObservation(observingStationId, {
           control_point_id: cpId,
           status,

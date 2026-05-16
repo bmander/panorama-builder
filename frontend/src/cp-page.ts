@@ -1,8 +1,8 @@
 import * as api from './api.js';
 import { degToRad } from './mathx.js';
 import {
-  appendSigmaMeters, appendSigmaScalar, cpLabel, fmtAlt, formatLocalDateTime,
-  getElement, indexCpHref, stationHref, stationLabel,
+  appendSigmaMeters, appendSigmaScalar, cpLabel, fmtAlt, formatEstimateRange,
+  formatLocalDateTime, getElement, indexCpHref, stationHref, stationLabel,
 } from './types.js';
 import {
   SIGMA_ALT_REFUSE_M, SIGMA_ALT_WARN_M,
@@ -263,20 +263,10 @@ function parseLenientDateTime(raw: string): string | null {
   return d.toISOString();
 }
 
-// Render the derived-window bounds for a side as "Est. <lo> – <hi>" (or
-// "Est. after <lo>" / "Est. before <hi>" when only one side is known).
-// Returns null when no bound is known on that side at all.
 function formatDerivedEstimate(cp: api.ApiControlPoint, field: DateField): string | null {
   const w = cp.derived_window;
-  const lo = field === 'started_at' ? w.started_at_lower : w.ended_at_lower;
-  const hi = field === 'started_at' ? w.started_at_upper : w.ended_at_upper;
-  const fmt = (s: string): string => new Date(s).toLocaleDateString();
-  if (lo !== null && hi !== null) {
-    return lo === hi ? `Est. ${fmt(lo)}` : `Est. ${fmt(lo)} – ${fmt(hi)}`;
-  }
-  if (lo !== null) return `Est. after ${fmt(lo)}`;
-  if (hi !== null) return `Est. before ${fmt(hi)}`;
-  return null;
+  if (field === 'started_at') return formatEstimateRange(w.started_at_lower, w.started_at_upper);
+  return formatEstimateRange(w.ended_at_lower, w.ended_at_upper);
 }
 
 function attachDateEditor(

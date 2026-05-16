@@ -333,7 +333,6 @@ func (s *Server) hasImageMeasurementForStationCP(ctx context.Context, overlay se
 	return false, nil
 }
 
-// cpObservationsByCP returns main-table rows referencing cpID.
 func (s *Server) cpObservationsByCP(ctx context.Context, cpID string) ([]CpObservation, error) {
 	rows, err := s.db.Query(ctx,
 		`SELECT `+cpObservationCols+` FROM cp_observations WHERE control_point_id=$1 ORDER BY created_at`, cpID)
@@ -352,7 +351,6 @@ func (s *Server) cpObservationsByCP(ctx context.Context, cpID string) ([]CpObser
 	return out, rows.Err()
 }
 
-// cpObservationsByStation returns main-table rows referencing stationID.
 func (s *Server) cpObservationsByStation(ctx context.Context, stationID string) ([]CpObservation, error) {
 	rows, err := s.db.Query(ctx,
 		`SELECT `+cpObservationCols+` FROM cp_observations WHERE station_id=$1 ORDER BY created_at`, stationID)

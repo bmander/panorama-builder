@@ -335,33 +335,6 @@ func (s *Server) allPhotos(ctx context.Context) ([]Photo, error) {
 	return out, rows.Err()
 }
 
-// controlPointsByStation returns CPs referenced by any image measurement on
-// this station's photos.
-func (s *Server) controlPointsByStation(ctx context.Context, stationID string) ([]ControlPoint, error) {
-	out := []ControlPoint{}
-	rows, err := s.db.Query(ctx, `
-		SELECT `+controlPointCols+`
-		FROM control_points cp
-		WHERE cp.id IN (
-		  SELECT im.control_point_id FROM image_measurements im
-		  JOIN photos p ON p.id = im.photo_id
-		  WHERE p.station_id = $1 AND im.control_point_id IS NOT NULL
-		)
-		ORDER BY cp.created_at`, stationID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		cp, err := scanControlPoint(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, cp)
-	}
-	return out, rows.Err()
-}
-
 // controlPointsByStationOrObserved returns CPs referenced by any image
 // measurement on this station's photos *or* by a cp_observation row at
 // this station — so the frontend can show observation status for CPs that
