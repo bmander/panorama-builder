@@ -15,7 +15,7 @@ export interface CreateStartStationModalOptions {
   onSubmit: (input: {
     loc: LatLng;
     name: string;
-    capturedAt: string;
+    capturedAt: string | null;
     photos: File[];
   }) => Promise<void>;
 }
@@ -112,19 +112,19 @@ export function createStartStationModal({ onSubmit }: CreateStartStationModalOpt
       titleEl.focus();
       return;
     }
-    if (!capturedAtEl.value) {
-      capturedAtEl.focus();
-      return;
-    }
-    const capturedAt = new Date(capturedAtEl.value);
-    if (Number.isNaN(capturedAt.getTime())) {
-      capturedAtEl.focus();
-      return;
+    let capturedAtIso: string | null = null;
+    if (capturedAtEl.value) {
+      const parsed = new Date(capturedAtEl.value);
+      if (Number.isNaN(parsed.getTime())) {
+        capturedAtEl.focus();
+        return;
+      }
+      capturedAtIso = parsed.toISOString();
     }
     submitBtn.disabled = true;
     const loc = pendingLoc;
     const submittedPhotos = photos.slice();
-    onSubmit({ loc, name, capturedAt: capturedAt.toISOString(), photos: submittedPhotos })
+    onSubmit({ loc, name, capturedAt: capturedAtIso, photos: submittedPhotos })
       .catch((err: unknown) => { console.error('start station failed:', err); })
       .finally(() => { submitBtn.disabled = false; });
   });

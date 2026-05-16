@@ -25,6 +25,7 @@ tags:
   - name: photos
   - name: image-measurements
   - name: control-points
+  - name: cp-observations
   - name: cp-constraints
   - name: cp-surfaces
   - name: solver
@@ -461,6 +462,76 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ControlPointFits' }
 
+  /stations/{id}/cp-observations:
+    parameters:
+      - $ref: '#/components/parameters/StationId'
+    post:
+      tags: [cp-observations]
+      summary: Mark a CP as observed / missing / cant_see at this station
+      description: |
+        Creates a per-station-per-CP observation row. Each (station, CP)
+        pair is unique — POST returns 409 if a row already exists; use
+        PUT /cp-observations/{id} to change an existing one.
+      operationId: createCpObservation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CpObservationCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CpObservation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: A cp_observation already exists for this (station, CP)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /cp-observations/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/Id' }
+    put:
+      tags: [cp-observations]
+      summary: Change the status / reason on a cp_observation
+      operationId: updateCpObservation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CpObservationUpdate' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CpObservation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [cp-observations]
+      summary: Delete a cp_observation
+      description: |
+        Refuses with 409 if the observation is `observed` and there's
+        still an image_measurement at this station referencing the CP —
+        the pixel-pinned evidence has to be removed first.
+      operationId: deleteCpObservation
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Observed evidence (image_measurement) still references this CP at this station
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /control-point-constraints:
     post:
       tags: [cp-constraints]
@@ -688,6 +759,27 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ControlPointObservations' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /control-points/{id}/cp-observations:
+    parameters:
+      - $ref: '#/components/parameters/ControlPointId'
+    get:
+      tags: [cp-observations]
+      summary: List per-station observation rows for this control point
+      description: |
+        Returns every cp_observation row referencing this CP across
+        every station. Used by the CP detail page to show which
+        stations have marked this CP observed / missing / cant_see.
+      operationId: listCpObservationsByControlPoint
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CpObservation' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /sessions:
@@ -1016,7 +1108,12 @@ components:
         captured_at:
           type: string
           format: date-time
-          description: when the photographer's camera was set up at this site
+          nullable: true
+          description: |
+            when the photographer's camera was set up at this site. Optional —
+            null means the date is unknown. Stations with a null captured_at
+            participate in the cp_observation graph but contribute no temporal
+            bounds to derived CP windows.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         sigma_lat:
@@ -1160,6 +1257,11 @@ components:
         (est_lat / est_lng / est_alt) and image-measurement observations
         across photos and stations. The estimate is set when the CP is
         created and refined by the location solver as observations accumulate.
+
+        started_at / ended_at carry only precise, certain events. The
+        derived_window object carries implicit bounds derived from
+        cp_observations + station capture dates; those bounds are
+        materialized at write time inside mergeSession.
       required:
         - id
         - description
@@ -1169,11 +1271,10 @@ components:
         - est_alt
         - started_at
         - ended_at
-        - started_after
-        - ended_before
         - lock_est_lat
         - lock_est_lng
         - lock_est_alt
+        - derived_window
         - created_at
         - updated_at
       properties:
@@ -1183,13 +1284,12 @@ components:
         est_lat: { type: number, format: double, nullable: true, minimum: -90, maximum: 90 }
         est_lng: { type: number, format: double, nullable: true, minimum: -180, maximum: 180 }
         est_alt: { type: number, format: double, nullable: true, description: meters above sea level; null when the elevation isn't known }
-        started_at: { type: string, format: date-time, nullable: true, description: when the landmark began existing }
-        ended_at: { type: string, format: date-time, nullable: true, description: when the landmark ceased to exist }
-        started_after: { type: boolean, description: when true, started_at is a strict lower bound (the landmark started after this date); meaningful only when started_at is set }
-        ended_before: { type: boolean, description: when true, ended_at is a strict upper bound (the landmark ended before this date); meaningful only when ended_at is set }
+        started_at: { type: string, format: date-time, nullable: true, description: precise, certain event when the landmark began existing }
+        ended_at: { type: string, format: date-time, nullable: true, description: precise, certain event when the landmark ceased to exist }
         lock_est_lat: { type: boolean }
         lock_est_lng: { type: boolean }
         lock_est_alt: { type: boolean }
+        derived_window: { $ref: '#/components/schemas/DerivedWindow' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         sigma_est_lat:
@@ -1237,7 +1337,7 @@ components:
         station_name: { type: string, nullable: true }
         station_lat: { type: number, format: double, minimum: -90, maximum: 90 }
         station_lng: { type: number, format: double, minimum: -180, maximum: 180 }
-        station_captured_at: { type: string, format: date-time }
+        station_captured_at: { type: string, format: date-time, nullable: true }
         photo_az: { type: number, format: double }
         photo_tilt: { type: number, format: double }
         photo_roll: { type: number, format: double }
@@ -1256,10 +1356,11 @@ components:
       type: object
       description: |
         A photo whose horizontal viewshed contains the CP's estimated
-        location and whose station capture time overlaps the CP's
-        lifespan, but which has no image measurement linking to the CP
-        yet. Pose and station coordinates used for the server-side
-        viewshed test are intentionally not exposed.
+        location and whose station capture time falls within the CP's
+        derived window (or has no temporal evidence either way), but
+        which has no image measurement linking to the CP yet. Pose and
+        station coordinates used for the server-side viewshed test are
+        intentionally not exposed.
       required:
         - photo_id
         - station_id
@@ -1269,7 +1370,7 @@ components:
         photo_id: { $ref: '#/components/schemas/Id' }
         station_id: { $ref: '#/components/schemas/Id' }
         station_name: { type: string, nullable: true }
-        station_captured_at: { type: string, format: date-time }
+        station_captured_at: { type: string, format: date-time, nullable: true }
 
     ControlPointVisiblePhotos:
       type: object
@@ -1303,7 +1404,7 @@ components:
 
     HydratedStation:
       type: object
-      required: [station, photos, image_measurements, control_points]
+      required: [station, photos, image_measurements, control_points, cp_observations]
       properties:
         station: { $ref: '#/components/schemas/Station' }
         photos:
@@ -1316,15 +1417,20 @@ components:
           type: array
           description: |
             Control points reachable from this station — i.e., those
-            referenced by at least one of this station's measurements.
-            Other CPs (in other stations) are not included.
+            referenced by at least one of this station's measurements
+            *or* by a cp_observation row at this station.
           items: { $ref: '#/components/schemas/ControlPoint' }
+        cp_observations:
+          type: array
+          description: Per-CP observation status rows for this station.
+          items: { $ref: '#/components/schemas/CpObservation' }
 
     CreateStationRequest:
       type: object
       description: |
-        POST body. lat/lng/captured_at are required; other fields default if omitted.
-      required: [lat, lng, captured_at]
+        POST body. lat/lng are required; other fields default if omitted.
+        captured_at may be omitted or null when the date is unknown.
+      required: [lat, lng]
       properties:
         lat: { type: number, format: double, minimum: -90, maximum: 90 }
         lng: { type: number, format: double, minimum: -180, maximum: 180 }
@@ -1333,15 +1439,15 @@ components:
         lock_lat: { type: boolean, description: defaults to false when omitted }
         lock_lng: { type: boolean }
         lock_alt: { type: boolean }
-        captured_at: { type: string, format: date-time }
+        captured_at: { type: string, format: date-time, nullable: true }
 
     StationUpdate:
       type: object
       description: |
         Partial-update body for PUT /stations/{id}. Every field is
         optional; only keys present in the body are written. Sending
-        `name: null` clears the name. `captured_at`, when present,
-        must be a non-null date-time.
+        `name: null` clears the name. Sending `captured_at: null`
+        clears the date.
       properties:
         lat: { type: number, format: double, minimum: -90, maximum: 90 }
         lng: { type: number, format: double, minimum: -180, maximum: 180 }
@@ -1350,7 +1456,7 @@ components:
         lock_lat: { type: boolean }
         lock_lng: { type: boolean }
         lock_alt: { type: boolean }
-        captured_at: { type: string, format: date-time }
+        captured_at: { type: string, format: date-time, nullable: true }
 
     PhotoPosePatch:
       type: object
@@ -1426,7 +1532,8 @@ components:
         Body for both `POST /control-points` and `PUT
         /control-points/{id}`. Every field optional. On POST, omitted
         fields take their column defaults; on PUT, omitted fields are
-        preserved.
+        preserved. started_at / ended_at carry only precise, certain
+        events; implicit bounds are derived server-side.
       properties:
         description: { type: string }
         notes: { type: string }
@@ -1435,11 +1542,85 @@ components:
         est_alt: { type: number, format: double, nullable: true }
         started_at: { type: string, format: date-time, nullable: true }
         ended_at: { type: string, format: date-time, nullable: true }
-        started_after: { type: boolean }
-        ended_before: { type: boolean }
         lock_est_lat: { type: boolean }
         lock_est_lng: { type: boolean }
         lock_est_alt: { type: boolean }
+
+    DerivedWindow:
+      type: object
+      description: |
+        Implicit lifespan bounds for a control point, derived from its
+        cp_observations and the capture dates of the stations they
+        anchor on. Recomputed at write time inside mergeSession; reads
+        return the materialized values directly.
+
+        started_at_lower / started_at_upper bracket when the CP began
+        existing; ended_at_lower / ended_at_upper bracket when it
+        ceased. A precise CP date (started_at / ended_at on the parent)
+        appears as both the lower and upper of its side. inconsistent
+        is true when the observation graph has contradictions for this
+        CP (e.g. a "missing" observation falls strictly between two
+        "observed" observations).
+      required: [started_at_lower, started_at_upper, ended_at_lower, ended_at_upper, inconsistent]
+      properties:
+        started_at_lower: { type: string, format: date-time, nullable: true }
+        started_at_upper: { type: string, format: date-time, nullable: true }
+        ended_at_lower:   { type: string, format: date-time, nullable: true }
+        ended_at_upper:   { type: string, format: date-time, nullable: true }
+        inconsistent:     { type: boolean }
+
+    CpObservationStatus:
+      type: string
+      enum: [observed, missing, cant_see]
+      description: |
+        observed — CP visible from at least one of the station's photos.
+        missing  — CP would be visible but isn't (born after / destroyed before).
+        cant_see — CP can't be observed for non-temporal reasons (occluded, etc.).
+
+    CpObservationReason:
+      type: string
+      enum: [occluded, too_far, out_of_focus, other]
+      description: |
+        Why the station can't see the CP. Required when status is
+        cant_see; null otherwise.
+
+    CpObservation:
+      type: object
+      required: [id, station_id, control_point_id, status, reason, created_at, updated_at]
+      properties:
+        id:               { $ref: '#/components/schemas/Id' }
+        station_id:       { $ref: '#/components/schemas/Id' }
+        control_point_id: { $ref: '#/components/schemas/Id' }
+        status:           { $ref: '#/components/schemas/CpObservationStatus' }
+        reason:
+          allOf: [{ $ref: '#/components/schemas/CpObservationReason' }]
+          nullable: true
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    CpObservationCreate:
+      type: object
+      required: [control_point_id, status]
+      description: |
+        POST body. station_id comes from the path. reason is required
+        iff status is cant_see.
+      properties:
+        control_point_id: { $ref: '#/components/schemas/Id' }
+        status:           { $ref: '#/components/schemas/CpObservationStatus' }
+        reason:
+          allOf: [{ $ref: '#/components/schemas/CpObservationReason' }]
+          nullable: true
+
+    CpObservationUpdate:
+      type: object
+      description: |
+        Partial-update body. Status and reason can be changed; the
+        reason-iff-cant_see invariant still applies.
+      properties:
+        status: { $ref: '#/components/schemas/CpObservationStatus' }
+        reason:
+          allOf: [{ $ref: '#/components/schemas/CpObservationReason' }]
+          nullable: true
 
     CPConstraintType:
       type: string
@@ -1608,7 +1789,7 @@ components:
       properties:
         entity_type:
           type: string
-          enum: [station, photo, image_measurement, control_point, cp_constraint, cp_surface]
+          enum: [station, photo, image_measurement, control_point, cp_constraint, cp_surface, cp_observation]
         entity_id: { $ref: '#/components/schemas/Id' }
         last_seq: { type: integer, format: int64, nullable: true }
 
@@ -1640,7 +1821,7 @@ components:
         seq: { type: integer, format: int64 }
         entity_type:
           type: string
-          enum: [station, photo, image_measurement, control_point, cp_constraint, cp_surface]
+          enum: [station, photo, image_measurement, control_point, cp_constraint, cp_surface, cp_observation]
         entity_id: { $ref: '#/components/schemas/Id' }
         op:
           type: string

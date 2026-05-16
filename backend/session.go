@@ -31,6 +31,7 @@ const (
 	entityControlPoint     = "control_point"
 	entityCPConstraint     = "cp_constraint"
 	entityCPSurface        = "cp_surface"
+	entityCPObservation    = "cp_observation"
 )
 
 // entityRank orders entities for merge-time application: parents before
@@ -45,6 +46,7 @@ var entityRank = map[string]int{
 	entityImageMeasurement: 3,
 	entityCPConstraint:     4,
 	entityCPSurface:        5,
+	entityCPObservation:    6,
 }
 
 type Session struct {
@@ -533,10 +535,7 @@ func applyStationPatch(st *Station, p Patch) error {
 		if err != nil {
 			return err
 		}
-		if v == nil {
-			return errors.New("captured_at must not be null")
-		}
-		st.CapturedAt = *v
+		st.CapturedAt = v
 	}
 	return nil
 }
@@ -672,18 +671,6 @@ func applyControlPointPatch(cp *ControlPoint, patch Patch) error {
 			return err
 		}
 		cp.EndedAt = v
-	}
-	if v, present, err := patch.Bool("started_after"); present {
-		if err != nil {
-			return err
-		}
-		cp.StartedAfter = v
-	}
-	if v, present, err := patch.Bool("ended_before"); present {
-		if err != nil {
-			return err
-		}
-		cp.EndedBefore = v
 	}
 	if v, present, err := patch.Bool("lock_est_lat"); present {
 		if err != nil {

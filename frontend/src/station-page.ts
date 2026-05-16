@@ -77,6 +77,36 @@ const URL_CAM_LA = 'cam_la';
 const URL_CAM_LO = 'cam_lo';
 const URL_CAM_MSL = 'cam_msl';
 
+// formatCapturedAtEstimate brackets a station's unknown captured_at from the
+// derived windows of every CP it observes. An observed CP must have existed
+// at the station's capture time, so the station's date is bounded by the
+// CP's started_at_lower (lower bound) and ended_at_upper (upper bound).
+// The intersection across all observed CPs gives the tightest bracket.
+// Returns null when no observed CP contributes a bound (or when no
+// observations exist).
+function formatCapturedAtEstimate(data: ApiHydratedStation): string | null {
+  const cpById = new Map<string, ApiControlPoint>();
+  for (const cp of data.control_points) cpById.set(cp.id, cp);
+  let lower: string | null = null;
+  let upper: string | null = null;
+  for (const o of data.cp_observations) {
+    if (o.status !== 'observed') continue;
+    const cp = cpById.get(o.control_point_id);
+    if (!cp) continue;
+    const lo = cp.derived_window.started_at_lower;
+    const hi = cp.derived_window.ended_at_upper;
+    if (lo !== null && (lower === null || lo > lower)) lower = lo;
+    if (hi !== null && (upper === null || hi < upper)) upper = hi;
+  }
+  const fmt = (s: string): string => new Date(s).toLocaleDateString();
+  if (lower !== null && upper !== null) {
+    return lower === upper ? `Est. ${fmt(lower)}` : `Est. ${fmt(lower)} – ${fmt(upper)}`;
+  }
+  if (lower !== null) return `Est. after ${fmt(lower)}`;
+  if (upper !== null) return `Est. before ${fmt(upper)}`;
+  return null;
+}
+
 export async function mountStationPage(opts: MountStationPageOptions): Promise<void> {
   const { initialStationId, focusImageMeasurementId } = opts;
   // Mutable so the URL-driven CP focus relaxes the lifespan / show-all-CPs
@@ -785,44 +815,30 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         onClick: () => { void handlers.onMatchImageMeasurement(body.overlay, body.u, body.v, cpId); },
       });
     }
-    const stationDate = stationFields.getCapturedAt();
-    if (stationDate !== null) {
-      const dateLabel = new Date(stationDate).toLocaleDateString();
+    // Visibility status submenu — observed / missing / can't see (with
+    // reason). Posts a cp_observation row at this station; the merge-time
+    // recompute folds it into the CP's derived window. Only offered when
+    // this station has no crosshair on the CP yet — once a crosshair
+    // exists, the implicit `observed` row is already in place; deleting
+    // the crosshair brings these options back.
+    if (!stationObserves) {
+      const observingStationId = getCurrentStationId();
+      const postObservation = (status: 'observed' | 'missing' | 'cant_see', reason?: 'occluded' | 'too_far' | 'out_of_focus' | 'other'): void => {
+        api.createCpObservation(observingStationId, {
+          control_point_id: cpId,
+          status,
+          reason: reason ?? null,
+        }).catch((err: unknown) => {
+          console.error('create cp_observation failed:', err);
+          alert('Update failed — see console.');
+        });
+      };
       items.push(
-        {
-          label: `Started after ${dateLabel}`,
-          onClick: () => {
-            const current = overlays.controlPoints.getById(cpId);
-            if (current) {
-              overlays.controlPoints.setLifespan(cpId, {
-                startedAt: stationDate, startedAfter: true,
-                endedAt: current.endedAt, endedBefore: current.endedBefore,
-              });
-            }
-            api.updateControlPoint(cpId, { started_at: stationDate, started_after: true })
-              .catch((err: unknown) => {
-                console.error('set started_after failed:', err);
-                alert('Update failed — see console.');
-              });
-          },
-        },
-        {
-          label: `Ended before ${dateLabel}`,
-          onClick: () => {
-            const current = overlays.controlPoints.getById(cpId);
-            if (current) {
-              overlays.controlPoints.setLifespan(cpId, {
-                startedAt: current.startedAt, startedAfter: current.startedAfter,
-                endedAt: stationDate, endedBefore: true,
-              });
-            }
-            api.updateControlPoint(cpId, { ended_at: stationDate, ended_before: true })
-              .catch((err: unknown) => {
-                console.error('set ended_before failed:', err);
-                alert('Update failed — see console.');
-              });
-          },
-        },
+        { label: 'Mark observed', onClick: () => { postObservation('observed'); } },
+        { label: 'Mark missing', onClick: () => { postObservation('missing'); } },
+        { label: 'Can\'t see — occluded', onClick: () => { postObservation('cant_see', 'occluded'); } },
+        { label: 'Can\'t see — too far', onClick: () => { postObservation('cant_see', 'too_far'); } },
+        { label: 'Can\'t see — out of focus', onClick: () => { postObservation('cant_see', 'out_of_focus'); } },
       );
     }
     // Nudge the menu right so the CP marker (and any reticules just
@@ -1050,6 +1066,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   async function rehydrateAfterSolve(): Promise<void> {
     const data = await api.getStation(stationId);
     stationFields.hydrate(data.station);
+    stationFields.setCapturedAtEstimate(formatCapturedAtEstimate(data));
     overlays.withBatch(() => {
       const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
       applyCameraLocation(loc, data.station.alt);
@@ -1189,6 +1206,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     settings.refreshSunDirection();
     sync.flush();
     stationFields.hydrate(data.station);
+    stationFields.setCapturedAtEstimate(formatCapturedAtEstimate(data));
 
     // Center the viewport on the mean of the station's photo directions.
     // Matches the orientation the fly-between animation lands at, so a fly

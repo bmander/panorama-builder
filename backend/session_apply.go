@@ -78,20 +78,40 @@ func insertEntityFromJSON(ctx context.Context, tx pgx.Tx, entityType string, bod
 		_, err := tx.Exec(ctx, `
 			INSERT INTO control_points
 			  (id, description, notes, est_lat, est_lng, est_alt, started_at, ended_at,
-			   started_after, ended_before,
 			   lock_est_lat, lock_est_lng, lock_est_alt,
 			   sigma_est_lat, sigma_est_lng, sigma_est_alt,
+			   started_at_lower, started_at_upper, ended_at_lower, ended_at_upper,
+			   derivation_inconsistent,
 			   created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
-			        $9, $10,
-			        $11, $12, $13,
-			        $14, $15, $16,
-			        $17, NOW())`,
+			        $9, $10, $11,
+			        $12, $13, $14,
+			        $15, $16, $17, $18,
+			        $19,
+			        $20, NOW())`,
 			cp.ID, cp.Description, cp.Notes, cp.EstLat, cp.EstLng, cp.EstAlt, cp.StartedAt, cp.EndedAt,
-			cp.StartedAfter, cp.EndedBefore,
 			cp.LockEstLat, cp.LockEstLng, cp.LockEstAlt,
 			cp.SigmaEstLat, cp.SigmaEstLng, cp.SigmaEstAlt,
+			cp.DerivedWindow.StartedAtLower, cp.DerivedWindow.StartedAtUpper,
+			cp.DerivedWindow.EndedAtLower, cp.DerivedWindow.EndedAtUpper,
+			cp.DerivedWindow.Inconsistent,
 			cp.CreatedAt)
+		return err
+	case entityCPObservation:
+		var o CpObservation
+		if err := json.Unmarshal(body, &o); err != nil {
+			return err
+		}
+		var reason *string
+		if o.Reason != nil {
+			s := string(*o.Reason)
+			reason = &s
+		}
+		_, err := tx.Exec(ctx, `
+			INSERT INTO cp_observations
+			  (id, station_id, control_point_id, status, reason, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+			o.ID, o.StationID, o.ControlPointID, string(o.Status), reason, o.CreatedAt)
 		return err
 	case entityCPConstraint:
 		var c CPConstraint
@@ -177,16 +197,37 @@ func updateEntityFromJSON(ctx context.Context, tx pgx.Tx, entityType, id string,
 			UPDATE control_points SET
 			  description=$2, notes=$3, est_lat=$4, est_lng=$5, est_alt=$6,
 			  started_at=$7, ended_at=$8,
-			  started_after=$9, ended_before=$10,
-			  lock_est_lat=$11, lock_est_lng=$12, lock_est_alt=$13,
-			  sigma_est_lat=$14, sigma_est_lng=$15, sigma_est_alt=$16,
+			  lock_est_lat=$9, lock_est_lng=$10, lock_est_alt=$11,
+			  sigma_est_lat=$12, sigma_est_lng=$13, sigma_est_alt=$14,
+			  started_at_lower=$15, started_at_upper=$16,
+			  ended_at_lower=$17, ended_at_upper=$18,
+			  derivation_inconsistent=$19,
 			  updated_at=NOW()
 			WHERE id=$1`,
 			id, cp.Description, cp.Notes, cp.EstLat, cp.EstLng, cp.EstAlt,
 			cp.StartedAt, cp.EndedAt,
-			cp.StartedAfter, cp.EndedBefore,
 			cp.LockEstLat, cp.LockEstLng, cp.LockEstAlt,
-			cp.SigmaEstLat, cp.SigmaEstLng, cp.SigmaEstAlt)
+			cp.SigmaEstLat, cp.SigmaEstLng, cp.SigmaEstAlt,
+			cp.DerivedWindow.StartedAtLower, cp.DerivedWindow.StartedAtUpper,
+			cp.DerivedWindow.EndedAtLower, cp.DerivedWindow.EndedAtUpper,
+			cp.DerivedWindow.Inconsistent)
+		return err
+	case entityCPObservation:
+		var o CpObservation
+		if err := json.Unmarshal(body, &o); err != nil {
+			return err
+		}
+		var reason *string
+		if o.Reason != nil {
+			s := string(*o.Reason)
+			reason = &s
+		}
+		_, err := tx.Exec(ctx, `
+			UPDATE cp_observations SET
+			  station_id=$2, control_point_id=$3, status=$4, reason=$5,
+			  updated_at=NOW()
+			WHERE id=$1`,
+			id, o.StationID, o.ControlPointID, string(o.Status), reason)
 		return err
 	case entityCPConstraint:
 		var c CPConstraint
@@ -218,6 +259,8 @@ func deleteEntityByID(ctx context.Context, tx pgx.Tx, entityType, id string) err
 		table = "cp_constraints"
 	case entityCPSurface:
 		table = "cp_surfaces"
+	case entityCPObservation:
+		table = "cp_observations"
 	default:
 		return fmt.Errorf("delete: unknown entity_type %q", entityType)
 	}

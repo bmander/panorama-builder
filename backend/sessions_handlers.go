@@ -323,6 +323,11 @@ func (s *Server) getSessionRankDeficient(w http.ResponseWriter, r *http.Request)
 		if err := applyPlanToMain(ctx, tx, plan); err != nil {
 			log.Printf("rank-deficient dry-run apply failed (session %s): %v", id, err)
 		}
+		// Mirror the merge path: recompute derived windows so the σ gate
+		// sees the same post-merge state it would in the real merge.
+		if _, err := recomputeAndJournalCPWindows(ctx, tx, id, ops); err != nil {
+			log.Printf("rank-deficient dry-run derived recompute failed (session %s): %v", id, err)
+		}
 	}
 
 	flagged, err := mergeGateCheck(ctx, tx, id)
@@ -417,6 +422,27 @@ func (s *Server) mergeSession(w http.ResponseWriter, r *http.Request) {
 	if err := applyPlanToMain(ctx, tx, plan); err != nil {
 		writeApplyError(w, err)
 		return
+	}
+	// Recompute derived-window columns for every CP touched by this
+	// session (directly or indirectly via observation/station edits) and
+	// journal the resulting `update control_point` ops so the commit fully
+	// captures the derived state change. Revert restores the prior
+	// derived columns through the same before/after JSON. The recompute
+	// helper applies its updates to main directly and coalesces ops via
+	// recordOp, so we only need to extend the plan for bumpEntityCommits.
+	derivedOps, err := recomputeAndJournalCPWindows(ctx, tx, id, ops)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	for _, op := range derivedOps {
+		plan = append(plan, netOp{
+			EntityType: op.EntityType,
+			EntityID:   op.EntityID,
+			Op:         op.Op,
+			Before:     op.BeforeJSON,
+			After:      op.AfterJSON,
+		})
 	}
 	// σ-gate: refuse merge if any touched entity has a free-axis σ over the
 	// refuse threshold. Runs AFTER apply so we see the post-merge state

@@ -17,7 +17,7 @@ import { clamp } from './mathx.js';
 export interface StartStationInput {
   readonly loc: LatLng;
   readonly name: string;
-  readonly capturedAt: string;
+  readonly capturedAt: string | null;
   readonly photos: readonly File[];
 }
 

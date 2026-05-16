@@ -239,7 +239,6 @@ function attachAltEditor(cp: api.ApiControlPoint, host: HTMLElement): () => void
 }
 
 type DateField = 'started_at' | 'ended_at';
-type BoundFlagField = 'started_after' | 'ended_before';
 
 const LENIENT_DATE_RE =
   /^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?)?)?$/;
@@ -264,14 +263,36 @@ function parseLenientDateTime(raw: string): string | null {
   return d.toISOString();
 }
 
+// Render the derived-window bounds for a side as "Est. <lo> – <hi>" (or
+// "Est. after <lo>" / "Est. before <hi>" when only one side is known).
+// Returns null when no bound is known on that side at all.
+function formatDerivedEstimate(cp: api.ApiControlPoint, field: DateField): string | null {
+  const w = cp.derived_window;
+  const lo = field === 'started_at' ? w.started_at_lower : w.ended_at_lower;
+  const hi = field === 'started_at' ? w.started_at_upper : w.ended_at_upper;
+  const fmt = (s: string): string => new Date(s).toLocaleDateString();
+  if (lo !== null && hi !== null) {
+    return lo === hi ? `Est. ${fmt(lo)}` : `Est. ${fmt(lo)} – ${fmt(hi)}`;
+  }
+  if (lo !== null) return `Est. after ${fmt(lo)}`;
+  if (hi !== null) return `Est. before ${fmt(hi)}`;
+  return null;
+}
+
 function attachDateEditor(
   cp: api.ApiControlPoint, host: HTMLElement, field: DateField,
   onValueChanged?: () => void,
 ): void {
   host.title = 'Click to edit (e.g. 1886, 1886-06, 1886-06-15, 1886-06-15 14:30)';
   const renderText = (v: string | null): void => {
-    host.classList.toggle('empty', v === null);
-    host.textContent = v === null ? 'click to set' : new Date(v).toLocaleString();
+    if (v !== null) {
+      host.classList.remove('empty');
+      host.textContent = new Date(v).toLocaleString();
+      return;
+    }
+    const est = formatDerivedEstimate(cp, field);
+    host.classList.toggle('empty', est === null);
+    host.textContent = est ?? 'click to set';
   };
   // Compare in user-visible (minute-precision local) form so a stored ISO
   // with non-zero seconds doesn't look "changed" on every blur.
@@ -307,34 +328,14 @@ function attachDateEditor(
 }
 
 function attachLifespanLabel(
-  cp: api.ApiControlPoint, labelEl: HTMLElement,
-  dateField: DateField, flagField: BoundFlagField,
-  onValueChanged?: () => void,
+  cp: api.ApiControlPoint, labelEl: HTMLElement, dateField: DateField,
 ): () => void {
   const verb = dateField === 'started_at' ? 'started' : 'ended';
-  const boundWord = flagField === 'started_after' ? 'after' : 'before';
-  labelEl.title = `Click to toggle between "${verb} at" and "${verb} ${boundWord}"`;
+  labelEl.title = `Set only when the exact ${verb} date is known. Otherwise leave blank — the derived window below shows what observations imply.`;
   const refresh = (): void => {
-    if (cp[dateField] === null) {
-      labelEl.textContent = verb;
-      return;
-    }
-    labelEl.textContent = cp[flagField] ? `${verb} ${boundWord}` : `${verb} at`;
+    labelEl.textContent = cp[dateField] === null ? verb : `${verb} at`;
   };
   refresh();
-  let inflight = false;
-  labelEl.addEventListener('click', () => {
-    if (inflight) return;
-    inflight = true;
-    const next = !cp[flagField];
-    api.updateControlPoint(cp.id, { [flagField]: next }).then(
-      updated => { cp[flagField] = updated[flagField]; onValueChanged?.(); },
-      (err: unknown) => { console.error('lifespan flag toggle failed:', err); },
-    ).finally(() => {
-      inflight = false;
-      refresh();
-    });
-  });
   return refresh;
 }
 
@@ -378,9 +379,11 @@ function renderObservations(obs: api.ApiControlPointObservations): void {
     list.appendChild(empty);
     return;
   }
-  const measurements = [...obs.image_measurements].sort((a, b) =>
-    Date.parse(a.station_captured_at) - Date.parse(b.station_captured_at)
-  );
+  const measurements = [...obs.image_measurements].sort((a, b) => {
+    const at = a.station_captured_at === null ? Infinity : Date.parse(a.station_captured_at);
+    const bt = b.station_captured_at === null ? Infinity : Date.parse(b.station_captured_at);
+    return at - bt;
+  });
   for (const m of measurements) {
     const meta = document.createElement('span');
     meta.className = 'meta';
@@ -389,7 +392,8 @@ function renderObservations(obs: api.ApiControlPointObservations): void {
     a.textContent = stationLabel(m.station_id, m.station_name);
     const captured = document.createElement('span');
     captured.className = 'captured-at';
-    captured.textContent = new Date(m.station_captured_at).toLocaleString();
+    captured.textContent = m.station_captured_at === null
+      ? '—' : new Date(m.station_captured_at).toLocaleString();
     meta.append(captured, ' in ', a);
     appendObservationItem(list, meta, createObservationClip(m));
   }
@@ -425,7 +429,8 @@ function renderVisiblePhotos(
     a.textContent = stationLabel(p.station_id, p.station_name);
     const captured = document.createElement('span');
     captured.className = 'captured-at';
-    captured.textContent = new Date(p.station_captured_at).toLocaleString();
+    captured.textContent = p.station_captured_at === null
+      ? '—' : new Date(p.station_captured_at).toLocaleString();
     meta.append(captured, ' in ', a);
     appendObservationItem(list, meta);
   }
@@ -549,11 +554,9 @@ async function main(): Promise<void> {
     SIGMA_ALT_WARN_M, SIGMA_ALT_REFUSE_M,
     'σ of alt from last solve');
   const refreshStartedLabel = attachLifespanLabel(
-    cp, getElement('started_at_label'), 'started_at', 'started_after',
-    refreshVisiblePhotos);
+    cp, getElement('started_at_label'), 'started_at');
   const refreshEndedLabel = attachLifespanLabel(
-    cp, getElement('ended_at_label'), 'ended_at', 'ended_before',
-    refreshVisiblePhotos);
+    cp, getElement('ended_at_label'), 'ended_at');
   attachDateEditor(cp, getElement('started_at'), 'started_at',
     () => { refreshStartedLabel(); refreshVisiblePhotos(); });
   attachDateEditor(cp, getElement('ended_at'), 'ended_at',

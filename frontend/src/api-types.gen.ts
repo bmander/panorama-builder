@@ -321,6 +321,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stations/{id}/cp-observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["StationId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a CP as observed / missing / cant_see at this station
+         * @description Creates a per-station-per-CP observation row. Each (station, CP)
+         *     pair is unique — POST returns 409 if a row already exists; use
+         *     PUT /cp-observations/{id} to change an existing one.
+         */
+        post: operations["createCpObservation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/cp-observations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Change the status / reason on a cp_observation */
+        put: operations["updateCpObservation"];
+        post?: never;
+        /**
+         * Delete a cp_observation
+         * @description Refuses with 409 if the observation is `observed` and there's
+         *     still an image_measurement at this station referencing the CP —
+         *     the pixel-pinned evidence has to be removed first.
+         */
+        delete: operations["deleteCpObservation"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/control-point-constraints": {
         parameters: {
             query?: never;
@@ -501,6 +550,30 @@ export interface paths {
          *     (station id + name) for the caller to deep-link.
          */
         get: operations["listControlPointObservations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/control-points/{id}/cp-observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ControlPointId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List per-station observation rows for this control point
+         * @description Returns every cp_observation row referencing this CP across
+         *     every station. Used by the CP detail page to show which
+         *     stations have marked this CP observed / missing / cant_see.
+         */
+        get: operations["listCpObservationsByControlPoint"];
         put?: never;
         post?: never;
         delete?: never;
@@ -766,9 +839,12 @@ export interface components {
             lock_alt: boolean;
             /**
              * Format: date-time
-             * @description when the photographer's camera was set up at this site
+             * @description when the photographer's camera was set up at this site. Optional —
+             *     null means the date is unknown. Stations with a null captured_at
+             *     participate in the cp_observation graph but contribute no temporal
+             *     bounds to derived CP windows.
              */
-            captured_at: string;
+            captured_at: string | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -916,6 +992,11 @@ export interface components {
          *     (est_lat / est_lng / est_alt) and image-measurement observations
          *     across photos and stations. The estimate is set when the CP is
          *     created and refined by the location solver as observations accumulate.
+         *
+         *     started_at / ended_at carry only precise, certain events. The
+         *     derived_window object carries implicit bounds derived from
+         *     cp_observations + station capture dates; those bounds are
+         *     materialized at write time inside mergeSession.
          */
         ControlPoint: {
             id: components["schemas"]["Id"];
@@ -933,21 +1014,18 @@ export interface components {
             est_alt: number | null;
             /**
              * Format: date-time
-             * @description when the landmark began existing
+             * @description precise
              */
             started_at: string | null;
             /**
              * Format: date-time
-             * @description when the landmark ceased to exist
+             * @description precise
              */
             ended_at: string | null;
-            /** @description when true */
-            started_after: boolean;
-            /** @description when true */
-            ended_before: boolean;
             lock_est_lat: boolean;
             lock_est_lng: boolean;
             lock_est_alt: boolean;
+            derived_window: components["schemas"]["DerivedWindow"];
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -984,7 +1062,7 @@ export interface components {
             /** Format: double */
             station_lng: number;
             /** Format: date-time */
-            station_captured_at: string;
+            station_captured_at: string | null;
             /** Format: double */
             photo_az: number;
             /** Format: double */
@@ -1001,17 +1079,18 @@ export interface components {
         };
         /**
          * @description A photo whose horizontal viewshed contains the CP's estimated
-         *     location and whose station capture time overlaps the CP's
-         *     lifespan, but which has no image measurement linking to the CP
-         *     yet. Pose and station coordinates used for the server-side
-         *     viewshed test are intentionally not exposed.
+         *     location and whose station capture time falls within the CP's
+         *     derived window (or has no temporal evidence either way), but
+         *     which has no image measurement linking to the CP yet. Pose and
+         *     station coordinates used for the server-side viewshed test are
+         *     intentionally not exposed.
          */
         ControlPointVisiblePhoto: {
             photo_id: components["schemas"]["Id"];
             station_id: components["schemas"]["Id"];
             station_name: string | null;
             /** Format: date-time */
-            station_captured_at: string;
+            station_captured_at: string | null;
         };
         ControlPointVisiblePhotos: {
             photos: components["schemas"]["ControlPointVisiblePhoto"][];
@@ -1038,12 +1117,17 @@ export interface components {
             image_measurements: components["schemas"]["ImageMeasurement"][];
             /**
              * @description Control points reachable from this station — i.e., those
-             *     referenced by at least one of this station's measurements.
-             *     Other CPs (in other stations) are not included.
+             *     referenced by at least one of this station's measurements
+             *     *or* by a cp_observation row at this station.
              */
             control_points: components["schemas"]["ControlPoint"][];
+            /** @description Per-CP observation status rows for this station. */
+            cp_observations: components["schemas"]["CpObservation"][];
         };
-        /** @description POST body. lat/lng/captured_at are required; other fields default if omitted. */
+        /**
+         * @description POST body. lat/lng are required; other fields default if omitted.
+         *     captured_at may be omitted or null when the date is unknown.
+         */
         CreateStationRequest: {
             /** Format: double */
             lat: number;
@@ -1060,13 +1144,13 @@ export interface components {
             lock_lng?: boolean;
             lock_alt?: boolean;
             /** Format: date-time */
-            captured_at: string;
+            captured_at?: string | null;
         };
         /**
          * @description Partial-update body for PUT /stations/{id}. Every field is
          *     optional; only keys present in the body are written. Sending
-         *     `name: null` clears the name. `captured_at`, when present,
-         *     must be a non-null date-time.
+         *     `name: null` clears the name. Sending `captured_at: null`
+         *     clears the date.
          */
         StationUpdate: {
             /** Format: double */
@@ -1080,7 +1164,7 @@ export interface components {
             lock_lng?: boolean;
             lock_alt?: boolean;
             /** Format: date-time */
-            captured_at?: string;
+            captured_at?: string | null;
         };
         /**
          * @description POST body for `POST /stations/{id}/photos`. Pose fields are
@@ -1169,7 +1253,8 @@ export interface components {
          * @description Body for both `POST /control-points` and `PUT
          *     /control-points/{id}`. Every field optional. On POST, omitted
          *     fields take their column defaults; on PUT, omitted fields are
-         *     preserved.
+         *     preserved. started_at / ended_at carry only precise, certain
+         *     events; implicit bounds are derived server-side.
          */
         ControlPointPatch: {
             description?: string;
@@ -1184,11 +1269,75 @@ export interface components {
             started_at?: string | null;
             /** Format: date-time */
             ended_at?: string | null;
-            started_after?: boolean;
-            ended_before?: boolean;
             lock_est_lat?: boolean;
             lock_est_lng?: boolean;
             lock_est_alt?: boolean;
+        };
+        /**
+         * @description Implicit lifespan bounds for a control point, derived from its
+         *     cp_observations and the capture dates of the stations they
+         *     anchor on. Recomputed at write time inside mergeSession; reads
+         *     return the materialized values directly.
+         *
+         *     started_at_lower / started_at_upper bracket when the CP began
+         *     existing; ended_at_lower / ended_at_upper bracket when it
+         *     ceased. A precise CP date (started_at / ended_at on the parent)
+         *     appears as both the lower and upper of its side. inconsistent
+         *     is true when the observation graph has contradictions for this
+         *     CP (e.g. a "missing" observation falls strictly between two
+         *     "observed" observations).
+         */
+        DerivedWindow: {
+            /** Format: date-time */
+            started_at_lower: string | null;
+            /** Format: date-time */
+            started_at_upper: string | null;
+            /** Format: date-time */
+            ended_at_lower: string | null;
+            /** Format: date-time */
+            ended_at_upper: string | null;
+            inconsistent: boolean;
+        };
+        /**
+         * @description observed — CP visible from at least one of the station's photos.
+         *     missing  — CP would be visible but isn't (born after / destroyed before).
+         *     cant_see — CP can't be observed for non-temporal reasons (occluded, etc.).
+         * @enum {string}
+         */
+        CpObservationStatus: "observed" | "missing" | "cant_see";
+        /**
+         * @description Why the station can't see the CP. Required when status is
+         *     cant_see; null otherwise.
+         * @enum {string}
+         */
+        CpObservationReason: "occluded" | "too_far" | "out_of_focus" | "other";
+        CpObservation: {
+            id: components["schemas"]["Id"];
+            station_id: components["schemas"]["Id"];
+            control_point_id: components["schemas"]["Id"];
+            status: components["schemas"]["CpObservationStatus"];
+            reason: components["schemas"]["CpObservationReason"] | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /**
+         * @description POST body. station_id comes from the path. reason is required
+         *     iff status is cant_see.
+         */
+        CpObservationCreate: {
+            control_point_id: components["schemas"]["Id"];
+            status: components["schemas"]["CpObservationStatus"];
+            reason?: components["schemas"]["CpObservationReason"] | null;
+        };
+        /**
+         * @description Partial-update body. Status and reason can be changed; the
+         *     reason-iff-cant_see invariant still applies.
+         */
+        CpObservationUpdate: {
+            status?: components["schemas"]["CpObservationStatus"];
+            reason?: components["schemas"]["CpObservationReason"] | null;
         };
         /**
          * @description plumb: cp_a and cp_b share est_lat and est_lng (vertical line);
@@ -1340,7 +1489,7 @@ export interface components {
          */
         EntityRef: {
             /** @enum {string} */
-            entity_type: "station" | "photo" | "image_measurement" | "control_point" | "cp_constraint" | "cp_surface";
+            entity_type: "station" | "photo" | "image_measurement" | "control_point" | "cp_constraint" | "cp_surface" | "cp_observation";
             entity_id: components["schemas"]["Id"];
             /** Format: int64 */
             last_seq?: number | null;
@@ -1373,7 +1522,7 @@ export interface components {
             /** Format: int64 */
             seq: number;
             /** @enum {string} */
-            entity_type: "station" | "photo" | "image_measurement" | "control_point" | "cp_constraint" | "cp_surface";
+            entity_type: "station" | "photo" | "image_measurement" | "control_point" | "cp_constraint" | "cp_surface" | "cp_observation";
             entity_id: components["schemas"]["Id"];
             /** @enum {string} */
             op: "insert" | "update" | "delete";
@@ -2057,6 +2206,101 @@ export interface operations {
             };
         };
     };
+    createCpObservation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["StationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CpObservationCreate"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CpObservation"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            /** @description A cp_observation already exists for this (station, CP) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    updateCpObservation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CpObservationUpdate"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CpObservation"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteCpObservation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+            /** @description Observed evidence (image_measurement) still references this CP at this station */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     listCPConstraints: {
         parameters: {
             query?: never;
@@ -2354,6 +2598,29 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ControlPointObservations"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listCpObservationsByControlPoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ControlPointId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CpObservation"][];
                 };
             };
             404: components["responses"]["NotFound"];

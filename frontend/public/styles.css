@@ -79,6 +79,7 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   font: 12px monospace; padding: 1px 3px; width: 9em;
 }
 .settings-row.station-pos { gap: 4px 8px; flex-direction: row; flex-wrap: wrap; align-items: center; }
+.captured-at-est { font: 11px monospace; color: #aaa; }
 .settings-group { display: flex; flex-direction: column; gap: 8px; }
 .settings-group > summary { cursor: pointer; user-select: none; color: #ccc; }
 .settings-group[open] > summary { color: #fff; }

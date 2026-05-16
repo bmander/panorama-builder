@@ -26,9 +26,9 @@ export interface StationFields {
   lat: number; lng: number; alt: number;
   lockLat: boolean; lockLng: boolean; lockAlt: boolean;
   // ISO timestamp for when the photographer set up the camera at this
-  // station. The backend stores TIMESTAMPTZ; the UI converts to/from
-  // datetime-local.
-  capturedAt: string;
+  // station, or null when the date is unknown. Backend stores nullable
+  // TIMESTAMPTZ; the UI converts to/from datetime-local.
+  capturedAt: string | null;
 }
 
 export interface StationFieldsHandle {
@@ -37,6 +37,10 @@ export interface StationFieldsHandle {
   // before transitioning. Other cache fields (lat/lng/locks) are internal.
   getNameAndAlt: () => { name: string | null; alt: number } | null;
   getCapturedAt: () => string | null;
+  // Display-only hint shown when captured_at is null. Caller computes the
+  // string from cp_observations + control-point derived windows; we just
+  // render it next to the (empty) input. Pass null to clear.
+  setCapturedAtEstimate: (text: string | null) => void;
 }
 
 export interface CreateStationFieldsOptions {
@@ -63,6 +67,8 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
   const lockPosEl = getElement<HTMLInputElement>('station-lock-pos');
   const lockAltEl = getElement<HTMLInputElement>('station-lock-alt');
   const capturedAtEl = getElement<HTMLInputElement>('station-captured-at');
+  const capturedAtEstEl = getElement<HTMLSpanElement>('station-captured-at-est');
+  let capturedAtEstimate: string | null = null;
 
   const sigmaPosEl = createSigmaSpan(lngEl.parentElement!);
   const sigmaAltEl = createSigmaSpan(altEl.parentElement!);
@@ -92,7 +98,16 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
 
   function renderCapturedAt(): void {
     if (!cache) return;
-    capturedAtEl.value = formatLocalDateTime(new Date(cache.capturedAt));
+    capturedAtEl.value = cache.capturedAt === null
+      ? ''
+      : formatLocalDateTime(new Date(cache.capturedAt));
+    renderCapturedAtEstimate();
+  }
+
+  function renderCapturedAtEstimate(): void {
+    const show = cache?.capturedAt === null && capturedAtEstimate !== null;
+    capturedAtEstEl.hidden = !show;
+    capturedAtEstEl.textContent = show ? capturedAtEstimate : '';
   }
 
   function render(): void {
@@ -127,7 +142,7 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
     if (patch.lockLat !== undefined) body.lock_lat = patch.lockLat;
     if (patch.lockLng !== undefined) body.lock_lng = patch.lockLng;
     if (patch.lockAlt !== undefined) body.lock_alt = patch.lockAlt;
-    if (patch.capturedAt !== undefined) body.captured_at = patch.capturedAt;
+    if (patch.capturedAt !== undefined) body.captured_at = patch.capturedAt ?? null;
     let updated: api.ApiStation;
     try {
       updated = await api.updateStation(getCurrentStationId(), body);
@@ -171,10 +186,10 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
     if (!cache) return;
     // datetime-local emits 'YYYY-MM-DDTHH:mm' in local time. new Date() of
     // that same string interprets it as local — round-tripping through
-    // toISOString sends UTC to the server. Empty value is not valid because
-    // station capture time is required.
+    // toISOString sends UTC to the server. Empty input clears the date.
     if (!capturedAtEl.value) {
-      renderCapturedAt();
+      if (cache.capturedAt === null) return;
+      void putPatch({ capturedAt: null });
       return;
     }
     const parsed = new Date(capturedAtEl.value);
@@ -191,5 +206,9 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
     hydrate,
     getNameAndAlt: () => cache && { name: cache.name, alt: cache.alt },
     getCapturedAt: () => cache?.capturedAt ?? null,
+    setCapturedAtEstimate: (text) => {
+      capturedAtEstimate = text;
+      renderCapturedAtEstimate();
+    },
   };
 }

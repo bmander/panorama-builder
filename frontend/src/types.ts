@@ -71,14 +71,19 @@ export interface ImageMeasurementBearing {
   readonly selected: boolean;
 }
 
-// Lifespan bounds for a control point. Either bound being null means
-// "open-ended". The *_after / *_before flags flip the matching bound to
-// strict (the landmark started/ended outside that timestamp, not on it).
+// Lifespan bounds for a control point. Combines precise event dates
+// (startedAt / endedAt — set only when known exactly) with the derived
+// window the backend materializes from cp_observations and station
+// capture dates. The four `*_lower` / `*_upper` bounds bracket where the
+// CP began and ceased existing; null on either side means "no evidence."
 export interface CPLifespan {
   readonly startedAt: string | null;
   readonly endedAt: string | null;
-  readonly startedAfter: boolean;
-  readonly endedBefore: boolean;
+  readonly derivedStartedAtLower: string | null;
+  readonly derivedStartedAtUpper: string | null;
+  readonly derivedEndedAtLower: string | null;
+  readonly derivedEndedAtUpper: string | null;
+  readonly inconsistent: boolean;
 }
 
 // Map the API's snake_case lifespan fields to our camelCase CPLifespan.
@@ -86,27 +91,36 @@ export interface CPLifespan {
 export function cpLifespanFromApi(cp: {
   readonly started_at: string | null;
   readonly ended_at: string | null;
-  readonly started_after: boolean;
-  readonly ended_before: boolean;
+  readonly derived_window: {
+    readonly started_at_lower: string | null;
+    readonly started_at_upper: string | null;
+    readonly ended_at_lower: string | null;
+    readonly ended_at_upper: string | null;
+    readonly inconsistent: boolean;
+  };
 }): CPLifespan {
   return {
     startedAt: cp.started_at,
     endedAt: cp.ended_at,
-    startedAfter: cp.started_after,
-    endedBefore: cp.ended_before,
+    derivedStartedAtLower: cp.derived_window.started_at_lower,
+    derivedStartedAtUpper: cp.derived_window.started_at_upper,
+    derivedEndedAtLower: cp.derived_window.ended_at_lower,
+    derivedEndedAtUpper: cp.derived_window.ended_at_upper,
+    inconsistent: cp.derived_window.inconsistent,
   };
 }
 
-// True when the lifespan window contains timestamp `ms`. Both bounds null
-// means "always extant".
+// True when the lifespan window *might* contain timestamp `ms` —
+// i.e., the derived bounds don't rule it out. Open-ended sides (null
+// bounds) pass the gate.
 export function isExtantAt(span: CPLifespan, ms: number): boolean {
-  if (span.startedAt !== null) {
-    const t = new Date(span.startedAt).getTime();
-    if (span.startedAfter ? ms <= t : ms < t) return false;
+  if (span.derivedStartedAtLower !== null) {
+    const t = new Date(span.derivedStartedAtLower).getTime();
+    if (ms < t) return false;
   }
-  if (span.endedAt !== null) {
-    const t = new Date(span.endedAt).getTime();
-    if (span.endedBefore ? ms >= t : ms > t) return false;
+  if (span.derivedEndedAtUpper !== null) {
+    const t = new Date(span.derivedEndedAtUpper).getTime();
+    if (ms > t) return false;
   }
   return true;
 }
@@ -121,8 +135,11 @@ export interface ControlPointView {
   readonly estAlt: number | null;
   readonly startedAt: string | null;
   readonly endedAt: string | null;
-  readonly startedAfter: boolean;
-  readonly endedBefore: boolean;
+  readonly derivedStartedAtLower: string | null;
+  readonly derivedStartedAtUpper: string | null;
+  readonly derivedEndedAtLower: string | null;
+  readonly derivedEndedAtUpper: string | null;
+  readonly inconsistent: boolean;
   readonly selected: boolean;
 }
 

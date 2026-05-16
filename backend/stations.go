@@ -120,7 +120,12 @@ func (s *Server) getStation(w http.ResponseWriter, r *http.Request) {
 		writeErrorFromDB(w, err)
 		return
 	}
-	controlPoints, err := s.controlPointsByStation(ctx, id)
+	cpObservations, err := s.cpObservationsByStation(ctx, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	controlPoints, err := s.controlPointsByStationOrObserved(ctx, id)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -130,6 +135,7 @@ func (s *Server) getStation(w http.ResponseWriter, r *http.Request) {
 		Photos:            photos,
 		ImageMeasurements: imageMeasurements,
 		ControlPoints:     controlPoints,
+		CpObservations:    cpObservations,
 	})
 }
 

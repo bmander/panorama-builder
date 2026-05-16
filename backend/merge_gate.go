@@ -17,9 +17,9 @@ import (
 // a well-solved problem clears them comfortably but tight enough that
 // "diverged" or "wandered into the null space" results don't.
 const (
-	mergeSigmaPosRefuseM    = 50.0                       // station/CP lat/lng meters
-	mergeSigmaAltRefuseM    = 10.0                       // station/CP alt meters
-	mergeSigmaAngleRefuseRad = 2.0 * math.Pi / 180       // photo angles
+	mergeSigmaPosRefuseM     = 50.0                // station/CP lat/lng meters
+	mergeSigmaAltRefuseM     = 10.0                // station/CP alt meters
+	mergeSigmaAngleRefuseRad = 2.0 * math.Pi / 180 // photo angles
 )
 
 // mergeGateCheck returns the list of σ-flagged free axes across the

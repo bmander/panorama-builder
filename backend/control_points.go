@@ -11,18 +11,21 @@ import (
 )
 
 const controlPointCols = `id, description, notes, est_lat, est_lng, est_alt, started_at, ended_at,
-	started_after, ended_before,
 	lock_est_lat, lock_est_lng, lock_est_alt, created_at, updated_at,
-	sigma_est_lat, sigma_est_lng, sigma_est_alt`
+	sigma_est_lat, sigma_est_lng, sigma_est_alt,
+	started_at_lower, started_at_upper, ended_at_lower, ended_at_upper,
+	derivation_inconsistent`
 
 func scanControlPoint(row pgx.Row) (ControlPoint, error) {
 	var cp ControlPoint
 	err := row.Scan(&cp.ID, &cp.Description, &cp.Notes, &cp.EstLat, &cp.EstLng, &cp.EstAlt,
 		&cp.StartedAt, &cp.EndedAt,
-		&cp.StartedAfter, &cp.EndedBefore,
 		&cp.LockEstLat, &cp.LockEstLng, &cp.LockEstAlt,
 		&cp.CreatedAt, &cp.UpdatedAt,
-		&cp.SigmaEstLat, &cp.SigmaEstLng, &cp.SigmaEstAlt)
+		&cp.SigmaEstLat, &cp.SigmaEstLng, &cp.SigmaEstAlt,
+		&cp.DerivedWindow.StartedAtLower, &cp.DerivedWindow.StartedAtUpper,
+		&cp.DerivedWindow.EndedAtLower, &cp.DerivedWindow.EndedAtUpper,
+		&cp.DerivedWindow.Inconsistent)
 	return cp, err
 }
 
@@ -217,25 +220,21 @@ func (s *Server) listControlPointVisiblePhotos(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// "Possibly extant at the station's capture time" — cp.derived_window
+	// already folds in precise dates, so we filter against the materialized
+	// columns. Stations with NULL captured_at pass the temporal gate (no
+	// evidence either way).
 	where := []string{
 		"p.id NOT IN (SELECT photo_id FROM image_measurements WHERE control_point_id = $1)",
 	}
 	args := []any{id}
-	if cp.StartedAt != nil {
-		op := ">="
-		if cp.StartedAfter {
-			op = ">"
-		}
-		args = append(args, *cp.StartedAt)
-		where = append(where, fmt.Sprintf("st.captured_at %s $%d", op, len(args)))
+	if cp.DerivedWindow.StartedAtLower != nil {
+		args = append(args, *cp.DerivedWindow.StartedAtLower)
+		where = append(where, fmt.Sprintf("(st.captured_at IS NULL OR st.captured_at >= $%d)", len(args)))
 	}
-	if cp.EndedAt != nil {
-		op := "<="
-		if cp.EndedBefore {
-			op = "<"
-		}
-		args = append(args, *cp.EndedAt)
-		where = append(where, fmt.Sprintf("st.captured_at %s $%d", op, len(args)))
+	if cp.DerivedWindow.EndedAtUpper != nil {
+		args = append(args, *cp.DerivedWindow.EndedAtUpper)
+		where = append(where, fmt.Sprintf("(st.captured_at IS NULL OR st.captured_at <= $%d)", len(args)))
 	}
 	sql := `
 		SELECT p.id, p.station_id, st.name, st.captured_at,
@@ -347,6 +346,37 @@ func (s *Server) controlPointsByStation(ctx context.Context, stationID string) (
 		  SELECT im.control_point_id FROM image_measurements im
 		  JOIN photos p ON p.id = im.photo_id
 		  WHERE p.station_id = $1 AND im.control_point_id IS NOT NULL
+		)
+		ORDER BY cp.created_at`, stationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		cp, err := scanControlPoint(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, cp)
+	}
+	return out, rows.Err()
+}
+
+// controlPointsByStationOrObserved returns CPs referenced by any image
+// measurement on this station's photos *or* by a cp_observation row at
+// this station — so the frontend can show observation status for CPs that
+// don't yet have a pixel pin (e.g. missing or cant_see).
+func (s *Server) controlPointsByStationOrObserved(ctx context.Context, stationID string) ([]ControlPoint, error) {
+	out := []ControlPoint{}
+	rows, err := s.db.Query(ctx, `
+		SELECT `+controlPointCols+`
+		FROM control_points cp
+		WHERE cp.id IN (
+		  SELECT im.control_point_id FROM image_measurements im
+		  JOIN photos p ON p.id = im.photo_id
+		  WHERE p.station_id = $1 AND im.control_point_id IS NOT NULL
+		  UNION
+		  SELECT control_point_id FROM cp_observations WHERE station_id = $1
 		)
 		ORDER BY cp.created_at`, stationID)
 	if err != nil {

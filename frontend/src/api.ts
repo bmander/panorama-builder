@@ -40,6 +40,11 @@ export type ApiControlPointVisiblePhotos = Schemas['ControlPointVisiblePhotos'];
 export type ApiControlPointVisiblePhoto = Schemas['ControlPointVisiblePhoto'];
 export type ApiControlPointFits = Schemas['ControlPointFits'];
 export type ApiControlPointFit = Schemas['ControlPointFit'];
+export type ApiCpObservation = Schemas['CpObservation'];
+export type ApiCpObservationCreate = Schemas['CpObservationCreate'];
+export type ApiCpObservationUpdate = Schemas['CpObservationUpdate'];
+export type ApiCpObservationStatus = Schemas['CpObservationStatus'];
+export type ApiCpObservationReason = Schemas['CpObservationReason'];
 export type SolveConfig = Schemas['SolveConfig'];
 export type SolveResult = Schemas['SolveResult'];
 export type EntityChange = Schemas['EntityChange'];
@@ -132,7 +137,7 @@ function bump<T>(p: Promise<T>): Promise<T> {
 
 // --- Stations ---
 
-export function createStation(latlng: LatLng, capturedAt: string, name?: string): Promise<ApiStation> {
+export function createStation(latlng: LatLng, capturedAt: string | null, name?: string): Promise<ApiStation> {
   return request<ApiStation>('POST', '/stations', {
     lat: latlng.lat,
     lng: latlng.lng,
@@ -262,6 +267,31 @@ export function updateControlPoint(id: string, body: ControlPointPatch): Promise
 
 export function deleteControlPoint(id: string): Promise<void> {
   return bump(requestVoid('DELETE', `/control-points/${encodeURIComponent(id)}`));
+}
+
+// --- CP observations ---
+
+export function createCpObservation(
+  stationId: string, body: ApiCpObservationCreate,
+): Promise<ApiCpObservation> {
+  return bump(request<ApiCpObservation>(
+    'POST', `/stations/${encodeURIComponent(stationId)}/cp-observations`, body));
+}
+
+export function updateCpObservation(
+  id: string, body: ApiCpObservationUpdate,
+): Promise<ApiCpObservation> {
+  return bump(request<ApiCpObservation>(
+    'PUT', `/cp-observations/${encodeURIComponent(id)}`, body));
+}
+
+export function deleteCpObservation(id: string): Promise<void> {
+  return bump(requestVoid('DELETE', `/cp-observations/${encodeURIComponent(id)}`));
+}
+
+export function listCpObservationsByControlPoint(cpId: string): Promise<ApiCpObservation[]> {
+  return request<ApiCpObservation[]>(
+    'GET', `/control-points/${encodeURIComponent(cpId)}/cp-observations`);
 }
 
 // --- Control point constraints ---

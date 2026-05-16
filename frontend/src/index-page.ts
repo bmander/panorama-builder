@@ -256,7 +256,7 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   }
 
   async function onStartStationHere(
-    input: { loc: LatLng; name: string; capturedAt: string; photos: readonly File[] },
+    input: { loc: LatLng; name: string; capturedAt: string | null; photos: readonly File[] },
   ): Promise<void> {
     const { loc, name, capturedAt, photos } = input;
     let created;

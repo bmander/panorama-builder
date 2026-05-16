@@ -43,6 +43,51 @@ func (e CommitKind) Valid() bool {
 	}
 }
 
+// Defines values for CpObservationReason.
+const (
+	Occluded   CpObservationReason = "occluded"
+	Other      CpObservationReason = "other"
+	OutOfFocus CpObservationReason = "out_of_focus"
+	TooFar     CpObservationReason = "too_far"
+)
+
+// Valid indicates whether the value is a known member of the CpObservationReason enum.
+func (e CpObservationReason) Valid() bool {
+	switch e {
+	case Occluded:
+		return true
+	case Other:
+		return true
+	case OutOfFocus:
+		return true
+	case TooFar:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CpObservationStatus.
+const (
+	CantSee  CpObservationStatus = "cant_see"
+	Missing  CpObservationStatus = "missing"
+	Observed CpObservationStatus = "observed"
+)
+
+// Valid indicates whether the value is a known member of the CpObservationStatus enum.
+func (e CpObservationStatus) Valid() bool {
+	switch e {
+	case CantSee:
+		return true
+	case Missing:
+		return true
+	case Observed:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CreateSessionResponseStatus.
 const (
 	CreateSessionResponseStatusAbandoned CreateSessionResponseStatus = "abandoned"
@@ -89,6 +134,7 @@ func (e EntityChangeKind) Valid() bool {
 const (
 	EntityRefEntityTypeControlPoint     EntityRefEntityType = "control_point"
 	EntityRefEntityTypeCpConstraint     EntityRefEntityType = "cp_constraint"
+	EntityRefEntityTypeCpObservation    EntityRefEntityType = "cp_observation"
 	EntityRefEntityTypeCpSurface        EntityRefEntityType = "cp_surface"
 	EntityRefEntityTypeImageMeasurement EntityRefEntityType = "image_measurement"
 	EntityRefEntityTypePhoto            EntityRefEntityType = "photo"
@@ -101,6 +147,8 @@ func (e EntityRefEntityType) Valid() bool {
 	case EntityRefEntityTypeControlPoint:
 		return true
 	case EntityRefEntityTypeCpConstraint:
+		return true
+	case EntityRefEntityTypeCpObservation:
 		return true
 	case EntityRefEntityTypeCpSurface:
 		return true
@@ -155,6 +203,7 @@ func (e RankDeficientErrorError) Valid() bool {
 const (
 	SessionOpEntityTypeControlPoint     SessionOpEntityType = "control_point"
 	SessionOpEntityTypeCpConstraint     SessionOpEntityType = "cp_constraint"
+	SessionOpEntityTypeCpObservation    SessionOpEntityType = "cp_observation"
 	SessionOpEntityTypeCpSurface        SessionOpEntityType = "cp_surface"
 	SessionOpEntityTypeImageMeasurement SessionOpEntityType = "image_measurement"
 	SessionOpEntityTypePhoto            SessionOpEntityType = "photo"
@@ -167,6 +216,8 @@ func (e SessionOpEntityType) Valid() bool {
 	case SessionOpEntityTypeControlPoint:
 		return true
 	case SessionOpEntityTypeCpConstraint:
+		return true
+	case SessionOpEntityTypeCpObservation:
 		return true
 	case SessionOpEntityTypeCpSurface:
 		return true
@@ -343,15 +394,31 @@ type ConflictsResponse struct {
 // (est_lat / est_lng / est_alt) and image-measurement observations
 // across photos and stations. The estimate is set when the CP is
 // created and refined by the location solver as observations accumulate.
+//
+// started_at / ended_at carry only precise, certain events. The
+// derived_window object carries implicit bounds derived from
+// cp_observations + station capture dates; those bounds are
+// materialized at write time inside mergeSession.
 type ControlPoint struct {
-	CreatedAt   time.Time `json:"created_at"`
-	Description string    `json:"description"`
+	CreatedAt time.Time `json:"created_at"`
 
-	// EndedAt when the landmark ceased to exist
+	// DerivedWindow Implicit lifespan bounds for a control point, derived from its
+	// cp_observations and the capture dates of the stations they
+	// anchor on. Recomputed at write time inside mergeSession; reads
+	// return the materialized values directly.
+	//
+	// started_at_lower / started_at_upper bracket when the CP began
+	// existing; ended_at_lower / ended_at_upper bracket when it
+	// ceased. A precise CP date (started_at / ended_at on the parent)
+	// appears as both the lower and upper of its side. inconsistent
+	// is true when the observation graph has contradictions for this
+	// CP (e.g. a "missing" observation falls strictly between two
+	// "observed" observations).
+	DerivedWindow DerivedWindow `json:"derived_window"`
+	Description   string        `json:"description"`
+
+	// EndedAt precise
 	EndedAt *time.Time `json:"ended_at"`
-
-	// EndedBefore when true
-	EndedBefore bool `json:"ended_before"`
 
 	// EstAlt meters above sea level; null when the elevation isn't known
 	EstAlt *float64 `json:"est_alt"`
@@ -378,10 +445,7 @@ type ControlPoint struct {
 	// SigmaEstLng σ of est_lng in meters (local-ENU east). NULL semantics as sigma_est_lat.
 	SigmaEstLng *float64 `json:"sigma_est_lng,omitempty"`
 
-	// StartedAfter when true
-	StartedAfter bool `json:"started_after"`
-
-	// StartedAt when the landmark began existing
+	// StartedAt precise
 	StartedAt *time.Time `json:"started_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 }
@@ -413,11 +477,11 @@ type ControlPointImageObservation struct {
 	PhotoAz float64 `json:"photo_az"`
 
 	// PhotoID 13-character base32 server-assigned id
-	PhotoID           ID        `json:"photo_id"`
-	PhotoRoll         float64   `json:"photo_roll"`
-	PhotoTilt         float64   `json:"photo_tilt"`
-	SizeRad           float64   `json:"size_rad"`
-	StationCapturedAt time.Time `json:"station_captured_at"`
+	PhotoID           ID         `json:"photo_id"`
+	PhotoRoll         float64    `json:"photo_roll"`
+	PhotoTilt         float64    `json:"photo_tilt"`
+	SizeRad           float64    `json:"size_rad"`
+	StationCapturedAt *time.Time `json:"station_captured_at"`
 
 	// StationID 13-character base32 server-assigned id
 	StationID   ID      `json:"station_id"`
@@ -436,31 +500,31 @@ type ControlPointObservations struct {
 // ControlPointPatch Body for both `POST /control-points` and `PUT
 // /control-points/{id}`. Every field optional. On POST, omitted
 // fields take their column defaults; on PUT, omitted fields are
-// preserved.
+// preserved. started_at / ended_at carry only precise, certain
+// events; implicit bounds are derived server-side.
 type ControlPointPatch struct {
-	Description  *string    `json:"description,omitempty"`
-	EndedAt      *time.Time `json:"ended_at,omitempty"`
-	EndedBefore  *bool      `json:"ended_before,omitempty"`
-	EstAlt       *float64   `json:"est_alt,omitempty"`
-	EstLat       *float64   `json:"est_lat,omitempty"`
-	EstLng       *float64   `json:"est_lng,omitempty"`
-	LockEstAlt   *bool      `json:"lock_est_alt,omitempty"`
-	LockEstLat   *bool      `json:"lock_est_lat,omitempty"`
-	LockEstLng   *bool      `json:"lock_est_lng,omitempty"`
-	Notes        *string    `json:"notes,omitempty"`
-	StartedAfter *bool      `json:"started_after,omitempty"`
-	StartedAt    *time.Time `json:"started_at,omitempty"`
+	Description *string    `json:"description,omitempty"`
+	EndedAt     *time.Time `json:"ended_at,omitempty"`
+	EstAlt      *float64   `json:"est_alt,omitempty"`
+	EstLat      *float64   `json:"est_lat,omitempty"`
+	EstLng      *float64   `json:"est_lng,omitempty"`
+	LockEstAlt  *bool      `json:"lock_est_alt,omitempty"`
+	LockEstLat  *bool      `json:"lock_est_lat,omitempty"`
+	LockEstLng  *bool      `json:"lock_est_lng,omitempty"`
+	Notes       *string    `json:"notes,omitempty"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
 }
 
 // ControlPointVisiblePhoto A photo whose horizontal viewshed contains the CP's estimated
-// location and whose station capture time overlaps the CP's
-// lifespan, but which has no image measurement linking to the CP
-// yet. Pose and station coordinates used for the server-side
-// viewshed test are intentionally not exposed.
+// location and whose station capture time falls within the CP's
+// derived window (or has no temporal evidence either way), but
+// which has no image measurement linking to the CP yet. Pose and
+// station coordinates used for the server-side viewshed test are
+// intentionally not exposed.
 type ControlPointVisiblePhoto struct {
 	// PhotoID 13-character base32 server-assigned id
-	PhotoID           ID        `json:"photo_id"`
-	StationCapturedAt time.Time `json:"station_captured_at"`
+	PhotoID           ID         `json:"photo_id"`
+	StationCapturedAt *time.Time `json:"station_captured_at"`
 
 	// StationID 13-character base32 server-assigned id
 	StationID   ID      `json:"station_id"`
@@ -470,6 +534,59 @@ type ControlPointVisiblePhoto struct {
 // ControlPointVisiblePhotos defines model for ControlPointVisiblePhotos.
 type ControlPointVisiblePhotos struct {
 	Photos []ControlPointVisiblePhoto `json:"photos"`
+}
+
+// CpObservation defines model for CpObservation.
+type CpObservation struct {
+	// ControlPointID 13-character base32 server-assigned id
+	ControlPointID ID        `json:"control_point_id"`
+	CreatedAt      time.Time `json:"created_at"`
+
+	// ID 13-character base32 server-assigned id
+	ID     ID                   `json:"id"`
+	Reason *CpObservationReason `json:"reason"`
+
+	// StationID 13-character base32 server-assigned id
+	StationID ID `json:"station_id"`
+
+	// Status observed — CP visible from at least one of the station's photos.
+	// missing  — CP would be visible but isn't (born after / destroyed before).
+	// cant_see — CP can't be observed for non-temporal reasons (occluded, etc.).
+	Status    CpObservationStatus `json:"status"`
+	UpdatedAt time.Time           `json:"updated_at"`
+}
+
+// CpObservationCreate POST body. station_id comes from the path. reason is required
+// iff status is cant_see.
+type CpObservationCreate struct {
+	// ControlPointID 13-character base32 server-assigned id
+	ControlPointID ID                   `json:"control_point_id"`
+	Reason         *CpObservationReason `json:"reason,omitempty"`
+
+	// Status observed — CP visible from at least one of the station's photos.
+	// missing  — CP would be visible but isn't (born after / destroyed before).
+	// cant_see — CP can't be observed for non-temporal reasons (occluded, etc.).
+	Status CpObservationStatus `json:"status"`
+}
+
+// CpObservationReason Why the station can't see the CP. Required when status is
+// cant_see; null otherwise.
+type CpObservationReason string
+
+// CpObservationStatus observed — CP visible from at least one of the station's photos.
+// missing  — CP would be visible but isn't (born after / destroyed before).
+// cant_see — CP can't be observed for non-temporal reasons (occluded, etc.).
+type CpObservationStatus string
+
+// CpObservationUpdate Partial-update body. Status and reason can be changed; the
+// reason-iff-cant_see invariant still applies.
+type CpObservationUpdate struct {
+	Reason *CpObservationReason `json:"reason,omitempty"`
+
+	// Status observed — CP visible from at least one of the station's photos.
+	// missing  — CP would be visible but isn't (born after / destroyed before).
+	// cant_see — CP can't be observed for non-temporal reasons (occluded, etc.).
+	Status *CpObservationStatus `json:"status,omitempty"`
 }
 
 // CreateSessionResponse defines model for CreateSessionResponse.
@@ -489,19 +606,40 @@ type CreateSessionResponse struct {
 // CreateSessionResponseStatus defines model for CreateSessionResponse.Status.
 type CreateSessionResponseStatus string
 
-// CreateStationRequest POST body. lat/lng/captured_at are required; other fields default if omitted.
+// CreateStationRequest POST body. lat/lng are required; other fields default if omitted.
+// captured_at may be omitted or null when the date is unknown.
 type CreateStationRequest struct {
 	// Alt defaults to 0 when omitted
-	Alt        *float64  `json:"alt,omitempty"`
-	CapturedAt time.Time `json:"captured_at"`
-	Lat        float64   `json:"lat"`
-	Lng        float64   `json:"lng"`
-	LockAlt    *bool     `json:"lock_alt,omitempty"`
+	Alt        *float64   `json:"alt,omitempty"`
+	CapturedAt *time.Time `json:"captured_at,omitempty"`
+	Lat        float64    `json:"lat"`
+	Lng        float64    `json:"lng"`
+	LockAlt    *bool      `json:"lock_alt,omitempty"`
 
 	// LockLat defaults to false when omitted
 	LockLat *bool   `json:"lock_lat,omitempty"`
 	LockLng *bool   `json:"lock_lng,omitempty"`
 	Name    *string `json:"name,omitempty"`
+}
+
+// DerivedWindow Implicit lifespan bounds for a control point, derived from its
+// cp_observations and the capture dates of the stations they
+// anchor on. Recomputed at write time inside mergeSession; reads
+// return the materialized values directly.
+//
+// started_at_lower / started_at_upper bracket when the CP began
+// existing; ended_at_lower / ended_at_upper bracket when it
+// ceased. A precise CP date (started_at / ended_at on the parent)
+// appears as both the lower and upper of its side. inconsistent
+// is true when the observation graph has contradictions for this
+// CP (e.g. a "missing" observation falls strictly between two
+// "observed" observations).
+type DerivedWindow struct {
+	EndedAtLower   *time.Time `json:"ended_at_lower"`
+	EndedAtUpper   *time.Time `json:"ended_at_upper"`
+	Inconsistent   bool       `json:"inconsistent"`
+	StartedAtLower *time.Time `json:"started_at_lower"`
+	StartedAtUpper *time.Time `json:"started_at_upper"`
 }
 
 // EntityChange One row's before/after for the keys the solver actually moved.
@@ -542,9 +680,12 @@ type Health struct {
 // HydratedStation defines model for HydratedStation.
 type HydratedStation struct {
 	// ControlPoints Control points reachable from this station — i.e., those
-	// referenced by at least one of this station's measurements.
-	// Other CPs (in other stations) are not included.
-	ControlPoints     []ControlPoint     `json:"control_points"`
+	// referenced by at least one of this station's measurements
+	// *or* by a cp_observation row at this station.
+	ControlPoints []ControlPoint `json:"control_points"`
+
+	// CpObservations Per-CP observation status rows for this station.
+	CpObservations    []CpObservation    `json:"cp_observations"`
 	ImageMeasurements []ImageMeasurement `json:"image_measurements"`
 	Photos            []Photo            `json:"photos"`
 	Station           Station            `json:"station"`
@@ -845,9 +986,12 @@ type Station struct {
 	// Alt meters above sea level (defaults to 0 when unknown)
 	Alt float64 `json:"alt"`
 
-	// CapturedAt when the photographer's camera was set up at this site
-	CapturedAt time.Time `json:"captured_at"`
-	CreatedAt  time.Time `json:"created_at"`
+	// CapturedAt when the photographer's camera was set up at this site. Optional —
+	// null means the date is unknown. Stations with a null captured_at
+	// participate in the cp_observation graph but contribute no temporal
+	// bounds to derived CP windows.
+	CapturedAt *time.Time `json:"captured_at"`
+	CreatedAt  time.Time  `json:"created_at"`
 
 	// ID 13-character base32 server-assigned id
 	ID  ID      `json:"id"`
@@ -879,8 +1023,8 @@ type Station struct {
 
 // StationUpdate Partial-update body for PUT /stations/{id}. Every field is
 // optional; only keys present in the body are written. Sending
-// `name: null` clears the name. `captured_at`, when present,
-// must be a non-null date-time.
+// `name: null` clears the name. Sending `captured_at: null`
+// clears the date.
 type StationUpdate struct {
 	Alt        *float64   `json:"alt,omitempty"`
 	CapturedAt *time.Time `json:"captured_at,omitempty"`
@@ -958,6 +1102,9 @@ type CreateControlPointJSONRequestBody = ControlPointPatch
 // UpdateControlPointJSONRequestBody defines body for UpdateControlPoint for application/json ContentType.
 type UpdateControlPointJSONRequestBody = ControlPointPatch
 
+// UpdateCpObservationJSONRequestBody defines body for UpdateCpObservation for application/json ContentType.
+type UpdateCpObservationJSONRequestBody = CpObservationUpdate
+
 // UpdateImageMeasurementJSONRequestBody defines body for UpdateImageMeasurement for application/json ContentType.
 type UpdateImageMeasurementJSONRequestBody = ImageMeasurementUpdate
 
@@ -984,6 +1131,9 @@ type CreateStationJSONRequestBody = CreateStationRequest
 
 // UpdateStationJSONRequestBody defines body for UpdateStation for application/json ContentType.
 type UpdateStationJSONRequestBody = StationUpdate
+
+// CreateCpObservationJSONRequestBody defines body for CreateCpObservation for application/json ContentType.
+type CreateCpObservationJSONRequestBody = CpObservationCreate
 
 // CreatePhotoJSONRequestBody defines body for CreatePhoto for application/json ContentType.
 type CreatePhotoJSONRequestBody = PhotoPosePatch

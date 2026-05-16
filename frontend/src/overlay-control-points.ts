@@ -7,8 +7,11 @@ export interface AddControlPointPayload {
   readonly estAlt: number | null;
   readonly startedAt: string | null;
   readonly endedAt: string | null;
-  readonly startedAfter: boolean;
-  readonly endedBefore: boolean;
+  readonly derivedStartedAtLower: string | null;
+  readonly derivedStartedAtUpper: string | null;
+  readonly derivedEndedAtLower: string | null;
+  readonly derivedEndedAtUpper: string | null;
+  readonly inconsistent: boolean;
 }
 
 export interface ControlPointEst {
@@ -35,8 +38,11 @@ interface ControlPointEntry {
   estAlt: number | null;
   startedAt: string | null;
   endedAt: string | null;
-  startedAfter: boolean;
-  endedBefore: boolean;
+  derivedStartedAtLower: string | null;
+  derivedStartedAtUpper: string | null;
+  derivedEndedAtLower: string | null;
+  derivedEndedAtUpper: string | null;
+  inconsistent: boolean;
 }
 
 export interface CreateControlPointRegistryOptions {
@@ -59,8 +65,11 @@ export function createControlPointRegistry(
     estAlt: cp.estAlt,
     startedAt: cp.startedAt,
     endedAt: cp.endedAt,
-    startedAfter: cp.startedAfter,
-    endedBefore: cp.endedBefore,
+    derivedStartedAtLower: cp.derivedStartedAtLower,
+    derivedStartedAtUpper: cp.derivedStartedAtUpper,
+    derivedEndedAtLower: cp.derivedEndedAtLower,
+    derivedEndedAtUpper: cp.derivedEndedAtUpper,
+    inconsistent: cp.inconsistent,
     selected: cp.id === selectedId,
   });
 
@@ -74,8 +83,11 @@ export function createControlPointRegistry(
         estAlt: payload.estAlt,
         startedAt: payload.startedAt,
         endedAt: payload.endedAt,
-        startedAfter: payload.startedAfter,
-        endedBefore: payload.endedBefore,
+        derivedStartedAtLower: payload.derivedStartedAtLower,
+        derivedStartedAtUpper: payload.derivedStartedAtUpper,
+        derivedEndedAtLower: payload.derivedEndedAtLower,
+        derivedEndedAtUpper: payload.derivedEndedAtUpper,
+        inconsistent: payload.inconsistent,
       });
       notify();
     },
@@ -106,12 +118,22 @@ export function createControlPointRegistry(
     setLifespan(id, span) {
       const cp = entries.find(c => c.id === id);
       if (!cp) return;
-      if (cp.startedAt === span.startedAt && cp.endedAt === span.endedAt
-        && cp.startedAfter === span.startedAfter && cp.endedBefore === span.endedBefore) return;
+      if (
+        cp.startedAt === span.startedAt
+        && cp.endedAt === span.endedAt
+        && cp.derivedStartedAtLower === span.derivedStartedAtLower
+        && cp.derivedStartedAtUpper === span.derivedStartedAtUpper
+        && cp.derivedEndedAtLower === span.derivedEndedAtLower
+        && cp.derivedEndedAtUpper === span.derivedEndedAtUpper
+        && cp.inconsistent === span.inconsistent
+      ) return;
       cp.startedAt = span.startedAt;
       cp.endedAt = span.endedAt;
-      cp.startedAfter = span.startedAfter;
-      cp.endedBefore = span.endedBefore;
+      cp.derivedStartedAtLower = span.derivedStartedAtLower;
+      cp.derivedStartedAtUpper = span.derivedStartedAtUpper;
+      cp.derivedEndedAtLower = span.derivedEndedAtLower;
+      cp.derivedEndedAtUpper = span.derivedEndedAtUpper;
+      cp.inconsistent = span.inconsistent;
       notify();
     },
     remove(id) {

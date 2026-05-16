@@ -28,10 +28,6 @@ func (s *Server) postStationInSession(w http.ResponseWriter, r *http.Request, se
 		writeError(w, http.StatusBadRequest, "lat/lng out of range")
 		return
 	}
-	if req.CapturedAt.IsZero() {
-		writeError(w, http.StatusBadRequest, "captured_at is required")
-		return
-	}
 	id := newID()
 	now := time.Now().UTC()
 	st := Station{
@@ -118,12 +114,15 @@ func (s *Server) deleteStationInSession(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	// Cascade: delete every photo (which itself cascades to image
-	// measurements). We journal each child explicitly so the merge can
-	// replay them in order — main's ON DELETE CASCADE handles the same fan-
-	// out at apply time, but our entity_commits index needs to know which
-	// rows we touched.
+	// Cascade: every dependent must be journaled so revert restores it.
+	// FKs are RESTRICT (migration 0024) so forgetting a dependent fails
+	// loudly at merge.
 	photos, err := s.collectPhotosForCascade(ctx, overlay, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	cpObs, err := s.collectCpObservationsForStation(ctx, overlay, id)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -134,6 +133,12 @@ func (s *Server) deleteStationInSession(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	for _, o := range cpObs {
+		if err := recordOp(ctx, tx, sess.ID, entityCPObservation, o.ID, "delete", jsonMust(o), nil); err != nil {
+			writeErrorFromDB(w, err)
+			return
+		}
+	}
 	for _, p := range photos {
 		ims, err := s.collectImageMeasurementsForPhoto(ctx, overlay, p.ID)
 		if err != nil {
@@ -208,13 +213,29 @@ func (s *Server) getStationInSession(w http.ResponseWriter, r *http.Request, ses
 		writeErrorFromDB(w, err)
 		return
 	}
+	cpObsBase, err := s.cpObservationsByStation(ctx, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	cpObs, err := mergeOverlay(cpObsBase, overlay[entityCPObservation],
+		func(o CpObservation) string { return o.ID },
+		decodeJSON[CpObservation],
+		func(o CpObservation) bool { return o.StationID == id })
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
 	wantCPs := map[string]bool{}
 	for _, im := range ims {
 		if im.ControlPointID != nil {
 			wantCPs[*im.ControlPointID] = true
 		}
 	}
-	baseCPs, err := s.controlPointsByStation(ctx, id)
+	for _, o := range cpObs {
+		wantCPs[o.ControlPointID] = true
+	}
+	baseCPs, err := s.controlPointsByStationOrObserved(ctx, id)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -229,6 +250,7 @@ func (s *Server) getStationInSession(w http.ResponseWriter, r *http.Request, ses
 		Photos:            photos,
 		ImageMeasurements: ims,
 		ControlPoints:     cps,
+		CpObservations:    cpObs,
 	})
 }
 
@@ -554,13 +576,77 @@ func (s *Server) postImageMeasurementInSession(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
+	ctx := r.Context()
+	overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+
+	// When the new measurement links to a CP, ensure the per-station
+	// cp_observation row exists with status=observed. The image-measurement
+	// pixel pin is evidence backing the observation; the two facts must
+	// agree, so we either auto-create the observed row or refuse if a
+	// missing/cant_see contradicts it.
+	var observedToCreate *CpObservation
+	if req.ControlPointID != nil {
+		photo, present, err := currentPhoto(ctx, s.db, overlay, photoID)
+		if err != nil {
+			writeErrorFromDB(w, err)
+			return
+		}
+		if !present {
+			writeError(w, http.StatusNotFound, "photo not found")
+			return
+		}
+		existing, err := s.findCpObservationByPair(ctx, overlay, photo.StationID, *req.ControlPointID)
+		if err != nil {
+			writeErrorFromDB(w, err)
+			return
+		}
+		if existing != nil && existing.Status != Observed {
+			writeError(w, http.StatusConflict,
+				"cp_observation at this station is "+string(existing.Status)+"; resolve before adding a pixel pin")
+			return
+		}
+		if existing == nil {
+			now := time.Now().UTC()
+			observedToCreate = &CpObservation{
+				ID:             newID(),
+				StationID:      photo.StationID,
+				ControlPointID: *req.ControlPointID,
+				Status:         Observed,
+				CreatedAt:      now,
+				UpdatedAt:      now,
+			}
+		}
+	}
+
 	id := newID()
 	now := time.Now().UTC()
 	im := ImageMeasurement{
 		ID: id, PhotoID: photoID, U: req.U, V: req.V, ControlPointID: req.ControlPointID,
 		CreatedAt: now, UpdatedAt: now,
 	}
-	if err := s.recordOpDirect(r.Context(), sess.ID, entityImageMeasurement, id, "insert", nil, jsonMust(im)); err != nil {
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if observedToCreate != nil {
+		if err := recordOp(ctx, tx, sess.ID, entityCPObservation, observedToCreate.ID,
+			"insert", nil, jsonMust(*observedToCreate)); err != nil {
+			writeErrorFromDB(w, err)
+			return
+		}
+	}
+	if err := recordOp(ctx, tx, sess.ID, entityImageMeasurement, id, "insert", nil, jsonMust(im)); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
@@ -656,11 +742,13 @@ func (s *Server) postControlPointInSession(w http.ResponseWriter, r *http.Reques
 	cp.EstAlt = req.EstAlt
 	cp.StartedAt = req.StartedAt
 	cp.EndedAt = req.EndedAt
-	if req.StartedAfter != nil {
-		cp.StartedAfter = *req.StartedAfter
-	}
-	if req.EndedBefore != nil {
-		cp.EndedBefore = *req.EndedBefore
+	// Precise dates seed both bounds of their side; observations at merge
+	// time may tighten the other side.
+	cp.DerivedWindow = DerivedWindow{
+		StartedAtLower: req.StartedAt,
+		StartedAtUpper: req.StartedAt,
+		EndedAtLower:   req.EndedAt,
+		EndedAtUpper:   req.EndedAt,
 	}
 	if req.LockEstLat != nil {
 		cp.LockEstLat = *req.LockEstLat
@@ -752,12 +840,23 @@ func (s *Server) deleteControlPointInSession(w http.ResponseWriter, r *http.Requ
 		writeErrorFromDB(w, err)
 		return
 	}
+	cpObs, err := s.collectCpObservationsForCP(ctx, overlay, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	for _, o := range cpObs {
+		if err := recordOp(ctx, tx, sess.ID, entityCPObservation, o.ID, "delete", jsonMust(o), nil); err != nil {
+			writeErrorFromDB(w, err)
+			return
+		}
+	}
 	for _, im := range ims {
 		if err := recordOp(ctx, tx, sess.ID, entityImageMeasurement, im.ID, "delete", jsonMust(im), nil); err != nil {
 			writeErrorFromDB(w, err)
@@ -853,27 +952,41 @@ func (s *Server) imageMeasurementsForCP(ctx context.Context, overlay sessionOver
 		})
 }
 
-// cpLifespanIncludes reports whether `t` falls inside the CP's lifespan,
-// honoring the open-vs-closed bound flags. Pairs with started_at/ended_at
-// being optional — nil bounds mean "no bound on that side".
-func cpLifespanIncludes(cp ControlPoint, t time.Time) bool {
-	if cp.StartedAt != nil {
-		if cp.StartedAfter && !t.After(*cp.StartedAt) {
-			return false
-		}
-		if !cp.StartedAfter && t.Before(*cp.StartedAt) {
-			return false
-		}
+// cpLifespanIncludes reports whether `t` falls inside the CP's derived
+// lifespan window. The window's bounds already fold in any precise
+// started_at/ended_at; nil bounds mean "no evidence on that side."
+// A nil `t` (station with unknown capture date) passes the gate — it
+// contributes no temporal evidence and shouldn't be excluded.
+func cpLifespanIncludes(cp ControlPoint, t *time.Time) bool {
+	if t == nil {
+		return true
 	}
-	if cp.EndedAt != nil {
-		if cp.EndedBefore && !t.Before(*cp.EndedAt) {
-			return false
-		}
-		if !cp.EndedBefore && t.After(*cp.EndedAt) {
-			return false
-		}
+	if cp.DerivedWindow.StartedAtLower != nil && t.Before(*cp.DerivedWindow.StartedAtLower) {
+		return false
+	}
+	if cp.DerivedWindow.EndedAtUpper != nil && t.After(*cp.DerivedWindow.EndedAtUpper) {
+		return false
 	}
 	return true
+}
+
+// timePtrLess orders nil last; ties broken by Before semantics.
+func timePtrLess(a, b *time.Time) bool {
+	if a == nil {
+		return false
+	}
+	if b == nil {
+		return true
+	}
+	return a.Before(*b)
+}
+
+// timePtrEqual compares two nullable times by value.
+func timePtrEqual(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(*b)
 }
 
 func (s *Server) listControlPointObservationsInSession(w http.ResponseWriter, r *http.Request, sess *Session) {
@@ -926,8 +1039,8 @@ func (s *Server) listControlPointObservationsInSession(w http.ResponseWriter, r 
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		a, b := rows[i], rows[j]
-		if !a.st.CapturedAt.Equal(b.st.CapturedAt) {
-			return a.st.CapturedAt.Before(b.st.CapturedAt)
+		if !timePtrEqual(a.st.CapturedAt, b.st.CapturedAt) {
+			return timePtrLess(a.st.CapturedAt, b.st.CapturedAt)
 		}
 		return a.im.CreatedAt.Before(b.im.CreatedAt)
 	})
@@ -1007,7 +1120,7 @@ func (s *Server) listControlPointVisiblePhotosInSession(w http.ResponseWriter, r
 		photoID           string
 		stationID         string
 		stationName       *string
-		stationCapturedAt time.Time
+		stationCapturedAt *time.Time
 	}
 	rows := make([]visRow, 0, len(photos))
 	for _, p := range photos {
@@ -1037,8 +1150,8 @@ func (s *Server) listControlPointVisiblePhotosInSession(w http.ResponseWriter, r
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		a, b := rows[i], rows[j]
-		if !a.stationCapturedAt.Equal(b.stationCapturedAt) {
-			return a.stationCapturedAt.Before(b.stationCapturedAt)
+		if !timePtrEqual(a.stationCapturedAt, b.stationCapturedAt) {
+			return timePtrLess(a.stationCapturedAt, b.stationCapturedAt)
 		}
 		return a.photoID < b.photoID
 	})
