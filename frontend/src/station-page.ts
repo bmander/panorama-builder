@@ -785,12 +785,13 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         onClick: () => { void handlers.onMatchImageMeasurement(body.overlay, body.u, body.v, cpId); },
       });
     }
-    // Visibility status submenu — observed / missing / can't see (with
-    // reason). Posts a cp_observation row at this station; the merge-time
-    // recompute folds it into the CP's derived window. Only offered when
-    // this station has no crosshair on the CP yet — once a crosshair
-    // exists, the implicit `observed` row is already in place; deleting
-    // the crosshair brings these options back.
+    // Negative-visibility submenu — missing / can't see (with reason). Posts
+    // a cp_observation row at this station; the merge-time recompute folds
+    // it into the CP's derived window. Only offered when this station has no
+    // crosshair on the CP yet — once a crosshair exists, the implicit
+    // `observed` row is already in place. ("Add observation here" above
+    // covers the positive case, so a separate "Mark observed" would be
+    // redundant.)
     if (!stationObserves) {
       const observingStationId = getCurrentStationId();
       const postObservation = (status: api.ApiCpObservationStatus, reason?: api.ApiCpObservationReason): void => {
@@ -804,7 +805,6 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         });
       };
       items.push(
-        { label: 'Mark observed', onClick: () => { postObservation('observed'); } },
         { label: 'Mark missing', onClick: () => { postObservation('missing'); } },
         { label: 'Can\'t see — occluded', onClick: () => { postObservation('cant_see', 'occluded'); } },
         { label: 'Can\'t see — too far', onClick: () => { postObservation('cant_see', 'too_far'); } },
