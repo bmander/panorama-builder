@@ -249,22 +249,22 @@ func recomputeAndJournalWindows(ctx context.Context, tx pgx.Tx, sessionID string
 	if !anyOpAffectsDateGraph(ops) {
 		return nil, nil
 	}
-	cps, err := loadAllControlPointsForPropagation(ctx, tx)
+	cps, err := loadAllOrderedByID(ctx, tx, controlPointCols, "control_points", scanControlPoint)
 	if err != nil {
 		return nil, err
 	}
-	stations, err := loadAllStationsForPropagation(ctx, tx)
+	stations, err := loadAllOrderedByID(ctx, tx, stationCols, "stations", scanStation)
 	if err != nil {
 		return nil, err
 	}
-	obs, err := loadAllCpObservationsForPropagation(ctx, tx)
+	obs, err := loadAllOrderedByID(ctx, tx, cpObservationCols, "cp_observations", scanCpObservation)
 	if err != nil {
 		return nil, err
 	}
 	result := propagateWindows(cps, stations, obs)
 
 	now := time.Now().UTC()
-	added := make([]journalOp, 0)
+	added := make([]journalOp, 0, len(cps)+len(stations))
 	for i := range cps {
 		cp := cps[i]
 		fresh := result.CPs[cp.ID]
@@ -311,22 +311,35 @@ func recomputeAndJournalWindows(ctx context.Context, tx pgx.Tx, sessionID string
 }
 
 // propagateDatesInSession is the solve-time entry point. Reads main +
-// session overlay so the propagation operates on the post-session-edit
-// state the user is about to merge. Emits journaled update ops via
-// recordOp; does NOT apply to main (the session journal carries the
-// change until merge). Called from writebackChangesInSession right
+// session overlay through the writeback tx (so reads share one
+// connection with the solver's own pending writes) and journals update
+// ops via recordOp; does NOT apply to main (the session journal carries
+// the change until merge). Called from writebackChangesInSession right
 // before tx.Commit so propagated bounds appear in the overlay alongside
 // the solver's own est_*/σ writes.
-func (s *Server) propagateDatesInSession(ctx context.Context, tx pgx.Tx, sessionID string, overlay sessionOverlay) error {
-	cps, err := s.overlayedControlPoints(ctx, overlay)
+//
+// Skipped entirely when the overlay carries no staged edits to date-graph
+// inputs: a pure-solver session can't change any derived bound, so the
+// load+propagate work would always be a no-op.
+func propagateDatesInSession(ctx context.Context, tx pgx.Tx, sessionID string, overlay sessionOverlay) error {
+	if !overlayAffectsDateGraph(overlay) {
+		return nil
+	}
+	cps, err := overlayedAll(ctx, tx, controlPointCols, "control_points",
+		scanControlPoint, overlay[entityControlPoint],
+		func(cp ControlPoint) string { return cp.ID })
 	if err != nil {
 		return err
 	}
-	stations, err := s.overlayedStations(ctx, overlay)
+	stations, err := overlayedAll(ctx, tx, stationCols, "stations",
+		scanStation, overlay[entityStation],
+		func(st Station) string { return st.ID })
 	if err != nil {
 		return err
 	}
-	obs, err := s.overlayedCpObservations(ctx, overlay)
+	obs, err := overlayedAll(ctx, tx, cpObservationCols, "cp_observations",
+		scanCpObservation, overlay[entityCPObservation],
+		func(o CpObservation) string { return o.ID })
 	if err != nil {
 		return err
 	}
@@ -364,96 +377,55 @@ func (s *Server) propagateDatesInSession(ctx context.Context, tx pgx.Tx, session
 	return nil
 }
 
-// Full-graph read helpers — used by both merge-time and solve-time paths.
-// The queryer interface lets us reuse the same code on a *pgxpool.Pool
-// (overlay path) or a pgx.Tx (merge-time path).
+// overlayAffectsDateGraph is the solve-time analogue to
+// anyOpAffectsDateGraph — fast path that lets a pure-solver writeback
+// skip the propagation entirely. Solver changes only touch est_*/σ, not
+// date-graph inputs, so a session with no staged station/CP/observation
+// edits cannot have moved any derived bound.
+func overlayAffectsDateGraph(overlay sessionOverlay) bool {
+	return len(overlay[entityStation]) > 0 ||
+		len(overlay[entityControlPoint]) > 0 ||
+		len(overlay[entityCPObservation]) > 0
+}
 
-func loadAllStationsForPropagation(ctx context.Context, q queryerLike) ([]Station, error) {
-	rows, err := q.Query(ctx, `SELECT `+stationCols+` FROM stations`)
+// loadAllOrderedByID scans every row of a table in deterministic id order.
+// Used by the propagation pass on both code paths. ORDER BY id keeps the
+// emitted op stream stable across runs — same inputs produce the same
+// journaled sequence, which matters for human-readable commit diffs.
+func loadAllOrderedByID[T any](
+	ctx context.Context, q queryerLike, cols, table string,
+	scan func(pgx.Row) (T, error),
+) ([]T, error) {
+	rows, err := q.Query(ctx, `SELECT `+cols+` FROM `+table+` ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []Station{}
+	out := []T{}
 	for rows.Next() {
-		st, err := scanStation(rows)
+		v, err := scan(rows)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, st)
+		out = append(out, v)
 	}
 	return out, rows.Err()
 }
 
-func loadAllControlPointsForPropagation(ctx context.Context, q queryerLike) ([]ControlPoint, error) {
-	rows, err := q.Query(ctx, `SELECT `+controlPointCols+` FROM control_points`)
+// overlayedAll wraps loadAllOrderedByID with the session-overlay merge
+// step. Returns the main rows with any staged session edits applied —
+// session-pending CPs/stations/observations show their post-edit state.
+func overlayedAll[T any](
+	ctx context.Context, q queryerLike, cols, table string,
+	scan func(pgx.Row) (T, error),
+	bucket map[string]entityState,
+	idOf func(T) string,
+) ([]T, error) {
+	base, err := loadAllOrderedByID(ctx, q, cols, table, scan)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []ControlPoint{}
-	for rows.Next() {
-		cp, err := scanControlPoint(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, cp)
-	}
-	return out, rows.Err()
-}
-
-func loadAllCpObservationsForPropagation(ctx context.Context, q queryerLike) ([]CpObservation, error) {
-	rows, err := q.Query(ctx, `SELECT `+cpObservationCols+` FROM cp_observations`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []CpObservation{}
-	for rows.Next() {
-		o, err := scanCpObservation(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, o)
-	}
-	return out, rows.Err()
-}
-
-// overlayedX functions return the main rows with the session overlay
-// applied — so a CP/station/observation that the session has staged-edited
-// or staged-inserted reflects the post-session state.
-
-func (s *Server) overlayedControlPoints(ctx context.Context, overlay sessionOverlay) ([]ControlPoint, error) {
-	base, err := loadAllControlPointsForPropagation(ctx, s.db)
-	if err != nil {
-		return nil, err
-	}
-	return mergeOverlay(base, overlay[entityControlPoint],
-		func(cp ControlPoint) string { return cp.ID },
-		decodeJSON[ControlPoint],
-		func(ControlPoint) bool { return true })
-}
-
-func (s *Server) overlayedStations(ctx context.Context, overlay sessionOverlay) ([]Station, error) {
-	base, err := loadAllStationsForPropagation(ctx, s.db)
-	if err != nil {
-		return nil, err
-	}
-	return mergeOverlay(base, overlay[entityStation],
-		func(st Station) string { return st.ID },
-		decodeJSON[Station],
-		func(Station) bool { return true })
-}
-
-func (s *Server) overlayedCpObservations(ctx context.Context, overlay sessionOverlay) ([]CpObservation, error) {
-	base, err := loadAllCpObservationsForPropagation(ctx, s.db)
-	if err != nil {
-		return nil, err
-	}
-	return mergeOverlay(base, overlay[entityCPObservation],
-		func(o CpObservation) string { return o.ID },
-		decodeJSON[CpObservation],
-		func(CpObservation) bool { return true })
+	return mergeOverlay(base, bucket, idOf, decodeJSON[T], func(T) bool { return true })
 }
 
 // --- Equality + pointer-math helpers (shared with the rest of the file).

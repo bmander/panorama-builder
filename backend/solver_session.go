@@ -402,7 +402,7 @@ func (s *Server) writebackChangesInSession(ctx context.Context, sessionID string
 	// overlay loaded above predates the solver's own writes recorded in
 	// this loop, but those writes only touch est_*/σ (not date-graph
 	// inputs), so the staleness is harmless.
-	if err := s.propagateDatesInSession(ctx, tx, sessionID, overlay); err != nil {
+	if err := propagateDatesInSession(ctx, tx, sessionID, overlay); err != nil {
 		return fmt.Errorf("propagate dates: %w", err)
 	}
 	return tx.Commit(ctx)
