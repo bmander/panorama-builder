@@ -7,7 +7,7 @@ import iconUrl from 'leaflet/dist/images/marker-icon.png';
 import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png';
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
 L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl, shadowUrl });
-import { R_EARTH, viewerAzToBearing } from './geo.js';
+import { M_PER_DEG_LAT, R_EARTH, viewerAzToBearing } from './geo.js';
 import { degToRad, dot3, norm2, norm3, radToDeg } from './mathx.js';
 import {
   cpHref, fmtAlt, formatLifespanLines, sigmaSeverityClass, worstHorizontalSigma,
@@ -33,6 +33,10 @@ export interface StationMarker {
   // has touched this axis.
   sigmaLat: number | null;
   sigmaLng: number | null;
+  // Off-diagonal east-north covariance (m²) — combined with the two sigmas
+  // gives the full 2×2 horizontal-position covariance for a tilted ellipse.
+  // Null when only the diagonals are known (older solves) or unobservable.
+  covLatLng: number | null;
   // Viewer-azimuth bounds of each photo's horizontal frustum. The marker
   // renders these as small SVG wedges fanning out from the station origin,
   // so the index map shows where each station is looking at a glance.
@@ -65,6 +69,7 @@ export interface IndexControlPoint {
   lockAlt: boolean;
   sigmaLat: number | null;
   sigmaLng: number | null;
+  covLatLng: number | null;
   lifespan: CPLifespan;
 }
 
@@ -268,7 +273,29 @@ export function createMapView({
   // Pixel size of the station divIcon and the SVG viewBox half-extent.
   const STATION_ICON_PX = 80;
   const STATION_ICON_R = 36; // wedge radius inside the SVG, in viewBox units
-  function stationIconHtml(cones: readonly Cone[]): string {
+  const STATION_APEX_R = 4;  // viewBox units; matches the existing apex circle.
+
+  // Lock indicators rendered around a marker's central dot.
+  //   lockPos → outline ring just outside the dot (lat+lng both locked)
+  //   lockAlt → horizontal line through the dot (alt locked)
+  // Stroke styling lives in CSS so stations and CPs share the same look.
+  const LOCK_RING_GAP = 3;
+  const LOCK_STROKE_W = 1.2;
+  function lockOverlaySvg(lockPos: boolean, lockAlt: boolean, markerR: number): string {
+    if (!lockPos && !lockAlt) return '';
+    const r = markerR + LOCK_RING_GAP;
+    const rStr = r.toFixed(2);
+    let svg = '';
+    if (lockPos) {
+      svg += `<circle class="marker-lock-ring" cx="0" cy="0" r="${rStr}" fill="none" stroke-width="${LOCK_STROKE_W}"/>`;
+    }
+    if (lockAlt) {
+      svg += `<line class="marker-lock-alt" x1="-${rStr}" y1="0" x2="${rStr}" y2="0" stroke-width="${LOCK_STROKE_W}"/>`;
+    }
+    return svg;
+  }
+
+  function stationIconHtml(cones: readonly Cone[], lockPos: boolean, lockAlt: boolean): string {
     const wedges = cones.map(c => {
       const bL = degToRad(viewerAzToBearing(c.azL));
       const bR = degToRad(viewerAzToBearing(c.azR));
@@ -282,13 +309,14 @@ export function createMapView({
     const half = STATION_ICON_PX / 2;
     return `<svg class="station-frustum" viewBox="${-half} ${-half} ${STATION_ICON_PX} ${STATION_ICON_PX}" width="${STATION_ICON_PX}" height="${STATION_ICON_PX}" xmlns="http://www.w3.org/2000/svg">`
       + `<g class="station-frustum-wedges">${wedges}</g>`
-      + `<circle class="station-frustum-apex" cx="0" cy="0" r="4"/>`
+      + `<circle class="station-frustum-apex" cx="0" cy="0" r="${STATION_APEX_R}"/>`
+      + lockOverlaySvg(lockPos, lockAlt, STATION_APEX_R)
       + `</svg>`;
   }
-  function stationDivIcon(cones: readonly Cone[]): L.DivIcon {
+  function stationDivIcon(p: StationMarker): L.DivIcon {
     return L.divIcon({
       className: 'station-frustum-icon',
-      html: stationIconHtml(cones),
+      html: stationIconHtml(p.cones, p.lockLat && p.lockLng, p.lockAlt),
       iconSize: [STATION_ICON_PX, STATION_ICON_PX],
       iconAnchor: [STATION_ICON_PX / 2, STATION_ICON_PX / 2],
     });
@@ -363,9 +391,23 @@ export function createMapView({
   const previewRayLayers: L.Polyline[] = [];
   let indexControlPoints: readonly IndexControlPoint[] = [];
   const indexCpDots = new Map<string, L.Marker>();
-  const CP_ICON = L.divIcon({
-    className: 'cp-dot', html: '', iconSize: [10, 10], iconAnchor: [5, 5],
-  });
+  const CP_DOT_R = 5;             // viewBox units; matches the prior CSS-styled cp-dot diameter.
+  const CP_ICON_PX = 2 * (CP_DOT_R + LOCK_RING_GAP + LOCK_STROKE_W); // leaves room for the outline.
+  function cpIconHtml(lockPos: boolean, lockAlt: boolean): string {
+    const half = CP_ICON_PX / 2;
+    return `<svg viewBox="${-half} ${-half} ${CP_ICON_PX} ${CP_ICON_PX}" width="${CP_ICON_PX}" height="${CP_ICON_PX}" xmlns="http://www.w3.org/2000/svg">`
+      + `<circle class="cp-marker-dot" cx="0" cy="0" r="${CP_DOT_R}"/>`
+      + lockOverlaySvg(lockPos, lockAlt, CP_DOT_R)
+      + `</svg>`;
+  }
+  function cpDivIcon(lockPos: boolean, lockAlt: boolean): L.DivIcon {
+    return L.divIcon({
+      className: 'cp-marker',
+      html: cpIconHtml(lockPos, lockAlt),
+      iconSize: [CP_ICON_PX, CP_ICON_PX],
+      iconAnchor: [CP_ICON_PX / 2, CP_ICON_PX / 2],
+    });
+  }
   const isCpObserved = (id: string): boolean =>
     stationPreview?.observedCpIds.has(id) ?? false;
   const INDEX_CP_POPUP_OPTS: L.PopupOptions = { className: 'index-cp-popup', closeButton: true };
@@ -390,15 +432,48 @@ export function createMapView({
       + `<label class="popup-lock-row"><input type="checkbox" class="popup-lock" data-lock="pos"${ck(lockPos)}> lock location</label>`
       + `<label class="popup-lock-row"><input type="checkbox" class="popup-lock" data-lock="alt"${ck(lockAlt)}> lock elevation</label>`;
   }
-  // Worst-axis radius so the circle is a conservative bound.
+  // 1-σ uncertainty ellipse rendered as a 48-segment leaflet polygon (no
+  // native ellipse class). When cov is present, the ellipse's principal
+  // axis aligns with the actual horizontal-position covariance eigenvector;
+  // otherwise it degenerates to an axis-aligned ellipse (σ_lng E-W, σ_lat
+  // N-S). Severity bucket still uses the worst-axis σ so the colour scale
+  // matches the popup readout.
   function drawUncertaintyCircle(
-    latlng: LatLng, sigLat: number | null, sigLng: number | null,
-  ): L.Circle | null {
-    const sigma = worstHorizontalSigma(sigLat, sigLng);
-    if (sigma === null) return null;
-    const severity = sigmaSeverityClass(sigma, SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M);
-    return L.circle([latlng.lat, latlng.lng], {
-      radius: sigma,
+    latlng: LatLng,
+    sigLat: number | null, sigLng: number | null, covLatLng: number | null,
+  ): L.Polygon | null {
+    if (sigLat === null || sigLng === null) return null;
+    const severity = sigmaSeverityClass(
+      worstHorizontalSigma(sigLat, sigLng),
+      SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M);
+    // Eigendecomposition of [[σ_E², cov], [cov, σ_N²]] in E,N order.
+    const vE = sigLng * sigLng;
+    const vN = sigLat * sigLat;
+    const cov = covLatLng ?? 0;
+    const mean = (vE + vN) / 2;
+    const half = (vE - vN) / 2;
+    const disc = Math.sqrt(half * half + cov * cov);
+    const major = Math.sqrt(Math.max(mean + disc, 0));
+    const minor = Math.sqrt(Math.max(mean - disc, 0));
+    // atan2(2·cov, vE - vN) / 2 lands the major axis along the larger
+    // eigenvector. Zero cov (or σ_E ≈ σ_N) leaves the ellipse axis-aligned.
+    const theta = 0.5 * Math.atan2(2 * cov, vE - vN);
+    const cosT = Math.cos(theta), sinT = Math.sin(theta);
+    const cosLat = Math.cos(latlng.lat * Math.PI / 180);
+    const segments = 48;
+    const ring: L.LatLngTuple[] = [];
+    for (let i = 0; i < segments; ++i) {
+      const phi = (2 * Math.PI * i) / segments;
+      const xL = major * Math.cos(phi);
+      const yL = minor * Math.sin(phi);
+      const dE = xL * cosT - yL * sinT;
+      const dN = xL * sinT + yL * cosT;
+      ring.push([
+        latlng.lat + dN / M_PER_DEG_LAT,
+        latlng.lng + dE / (M_PER_DEG_LAT * cosLat),
+      ]);
+    }
+    return L.polygon(ring, {
       className: `uncertainty-circle ${severity}`,
       interactive: false,
     }).addTo(map);
@@ -462,7 +537,7 @@ export function createMapView({
       .setLatLng([cp.latlng.lat, cp.latlng.lng])
       .setContent(popupHtml)
       .openOn(map);
-    const circle = drawUncertaintyCircle(cp.latlng, cp.sigmaLat, cp.sigmaLng);
+    const circle = drawUncertaintyCircle(cp.latlng, cp.sigmaLat, cp.sigmaLng, cp.covLatLng);
     if (circle) popup.on('remove', () => { map.removeLayer(circle); });
     wireGoButton(popup, '.move', () => {
       const dot = indexCpDots.get(cp.id);
@@ -479,7 +554,9 @@ export function createMapView({
     for (const dot of indexCpDots.values()) map.removeLayer(dot);
     indexCpDots.clear();
     for (const cp of indexControlPoints) {
-      const dot = L.marker([cp.latlng.lat, cp.latlng.lng], { icon: CP_ICON });
+      const dot = L.marker([cp.latlng.lat, cp.latlng.lng], {
+        icon: cpDivIcon(cp.lockLat && cp.lockLng, cp.lockAlt),
+      });
       wireMarkerMoveAware(dot, () => { openIndexCpPopup(cp); });
       dot.addTo(map);
       // Observed-state class can only be toggled after the icon element exists.
@@ -572,14 +649,18 @@ export function createMapView({
         const existing = stationMarkers.get(p.id);
         if (existing) {
           existing.marker.setLatLng([p.latlng.lat, p.latlng.lng]);
-          if (existing.view.cones !== p.cones) {
-            existing.marker.setIcon(stationDivIcon(p.cones));
+          const prev = existing.view;
+          if (prev.cones !== p.cones
+              || prev.lockLat !== p.lockLat
+              || prev.lockLng !== p.lockLng
+              || prev.lockAlt !== p.lockAlt) {
+            existing.marker.setIcon(stationDivIcon(p));
           }
           existing.view = p;
           continue;
         }
         const m = L.marker([p.latlng.lat, p.latlng.lng], {
-          icon: stationDivIcon(p.cones),
+          icon: stationDivIcon(p),
         });
         wireMarkerMoveAware(m, () => { openStationPopup(p); });
         m.addTo(map);
@@ -609,7 +690,7 @@ export function createMapView({
       .setLatLng([p.latlng.lat, p.latlng.lng])
       .setContent(popupHtml)
       .openOn(map);
-    const circle = drawUncertaintyCircle(p.latlng, p.sigmaLat, p.sigmaLng);
+    const circle = drawUncertaintyCircle(p.latlng, p.sigmaLat, p.sigmaLng, p.covLatLng);
     popup.on('remove', () => {
       if (circle) map.removeLayer(circle);
       applyStationPreview(null);

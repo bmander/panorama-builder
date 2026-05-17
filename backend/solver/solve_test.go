@@ -76,13 +76,14 @@ func TestSolveIdentityNoChange(t *testing.T) {
 		t.Errorf("identity world should have ~zero initial residual; got %v", res.InitialResidualRMS)
 	}
 	// An identity-world solve doesn't move any parameter, but it still
-	// computes per-entity σ from the converged Hessian and writes those
-	// back through the journal. The load-bearing assertion is that no
-	// *parameter* keys changed — σ-only changes are expected.
+	// computes per-entity uncertainty (σ + cov) from the converged Hessian
+	// and writes those back through the journal. The load-bearing assertion
+	// is that no *parameter* keys changed — uncertainty-only changes are
+	// expected.
 	for _, c := range res.Changes {
 		for k := range c.After {
-			if !strings.HasPrefix(k, "sigma_") {
-				t.Errorf("identity world had a non-σ change: %s.%s.%s", c.Kind, c.ID, k)
+			if !strings.HasPrefix(k, "sigma_") && !strings.HasPrefix(k, "cov_") {
+				t.Errorf("identity world had a non-uncertainty change: %s.%s.%s", c.Kind, c.ID, k)
 			}
 		}
 	}

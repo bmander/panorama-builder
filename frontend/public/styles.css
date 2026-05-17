@@ -101,9 +101,10 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .uncertainty-circle.sigma-warn { stroke: var(--sigma-warn); fill: var(--sigma-warn); }
 .uncertainty-circle.sigma-bad  { stroke: var(--sigma-bad);  fill: var(--sigma-bad);  }
 .poi-anchor-marker { color: #5080ff; filter: drop-shadow(0 0 2px rgba(0,0,0,0.85)); }
-.cp-dot { background: #ff5050; border: 1px solid rgba(0,0,0,0.6); border-radius: 50%;
-          box-sizing: border-box; cursor: pointer; }
-.cp-dot.observed { background: #50d050; }
+.leaflet-marker-icon.leaflet-interactive.cp-marker { background: transparent; border: none; cursor: pointer; }
+.cp-marker .cp-marker-dot { fill: #ff5050; stroke: rgba(0,0,0,0.6); stroke-width: 1; }
+.cp-marker.observed .cp-marker-dot { fill: #50d050; }
+.marker-lock-ring, .marker-lock-alt { stroke: rgba(0,0,0,0.85); fill: none; }
 /* Hitbox limited to the apex circle: the wedge fan is decoration only, so
    clicks on the wedges fall through to the map. The apex re-enables
    pointer events for itself and bubbles its events up to the marker

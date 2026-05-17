@@ -5,7 +5,11 @@
 
 package main
 
-import "math"
+import (
+	"math"
+
+	"github.com/bmander/panorama-builder/backend/solver"
+)
 
 func bearingDeg(lat1, lng1, lat2, lng2 float64) float64 {
 	phi1 := lat1 * math.Pi / 180
@@ -28,4 +32,14 @@ func inHorizontalViewshed(stLat, stLng, cpLat, cpLng, photoAz, sizeRad float64) 
 	center := viewerAzToBearingDeg(photoAz)
 	diff := math.Mod(math.Mod(target-center, 360)+540, 360) - 180
 	return math.Abs(diff) <= sizeRad*180/math.Pi/2
+}
+
+// equirectDistMeters is the equirectangular small-area distance — accurate
+// to ~0.1% within a few hundred km, ample for ordering candidate photos by
+// proximity.
+func equirectDistMeters(lat1, lng1, lat2, lng2 float64) float64 {
+	cosLat := math.Cos(((lat1 + lat2) / 2) * math.Pi / 180)
+	dN := (lat2 - lat1) * solver.MPerDegLat
+	dE := (lng2 - lng1) * solver.MPerDegLat * cosLat
+	return math.Sqrt(dN*dN + dE*dE)
 }

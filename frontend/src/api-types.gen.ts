@@ -867,6 +867,14 @@ export interface components {
              * @description σ of alt in meters. NULL semantics as sigma_lat.
              */
             sigma_alt?: number | null;
+            /**
+             * Format: double
+             * @description Off-diagonal east-north covariance at the last successful solve, in
+             *     m² (local-ENU). With sigma_lat and sigma_lng this gives the full
+             *     2×2 horizontal-position covariance the frontend uses to render a
+             *     tilted error ellipse. NULL semantics as sigma_lat.
+             */
+            cov_lat_lng?: number | null;
         };
         Photo: {
             id: components["schemas"]["Id"];
@@ -1048,6 +1056,14 @@ export interface components {
              * @description σ of est_alt in meters. NULL semantics as sigma_est_lat.
              */
             sigma_est_alt?: number | null;
+            /**
+             * Format: double
+             * @description Off-diagonal east-north covariance of (est_lat, est_lng) in m²
+             *     (local-ENU). With sigma_est_lat and sigma_est_lng this gives the
+             *     full 2×2 horizontal covariance the frontend uses to render a
+             *     tilted error ellipse. NULL semantics as sigma_est_lat.
+             */
+            cov_est_lat_lng?: number | null;
         };
         ControlPointImageObservation: {
             id: components["schemas"]["Id"];

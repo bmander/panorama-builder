@@ -365,6 +365,8 @@ int Run(const pc_problem* prob) {
     for (int i = 0; i < n_stations * 3; ++i) prob->out_station_sigma[i] = NaN;
     for (int i = 0; i < n_photos * 6;   ++i) prob->out_photo_sigma[i]   = NaN;
     for (int i = 0; i < n_cps * 3;      ++i) prob->out_cp_sigma[i]      = NaN;
+    for (int i = 0; i < n_stations;     ++i) prob->out_station_cov_lat_lng[i] = NaN;
+    for (int i = 0; i < n_cps;          ++i) prob->out_cp_cov_lat_lng[i]      = NaN;
     *prob->out_sigma_ok = 0;
 
     // Skip covariance when the solve clearly didn't reach a meaningful state.
@@ -381,29 +383,44 @@ int Run(const pc_problem* prob) {
         cov_opts.null_space_rank = -1;  // automatic — drop singular directions
         ceres::Covariance covariance(cov_opts);
 
-        // Diagonal blocks only: we want per-axis σ, not cross-correlations.
-        // Deduplicate aliased CP blocks via cp_axis_rep so we don't ask for
-        // the same block twice.
-        std::vector<std::pair<const double*, const double*>> diag_blocks;
-        diag_blocks.reserve(n_stations*3 + n_photos + n_cps*3);
+        // Diagonal blocks for per-axis σ, plus the (east, north) off-diagonal
+        // pair per entity for the horizontal-position cov used by the map's
+        // tilted error ellipse. Ceres rejects duplicate pairs outright, so
+        // aliased CP blocks (plumb constraints share the east+north reps
+        // across members) must be deduplicated on both the diagonal and
+        // off-diagonal channels.
+        std::vector<std::pair<const double*, const double*>> cov_pairs;
+        cov_pairs.reserve(n_stations*4 + n_photos + n_cps*4);
         std::vector<const double*> seen;
         auto add_block = [&](const double* p) {
             for (const double* q : seen) if (q == p) return;
             seen.push_back(p);
-            diag_blocks.emplace_back(p, p);
+            cov_pairs.emplace_back(p, p);
+        };
+        std::vector<std::pair<const double*, const double*>> seen_pairs;
+        auto add_pair = [&](const double* a, const double* b) {
+            for (const auto& sp : seen_pairs) {
+                if (sp.first == a && sp.second == b) return;
+            }
+            seen_pairs.emplace_back(a, b);
+            cov_pairs.emplace_back(a, b);
         };
         for (int i = 0; i < n_stations; ++i) {
             for (int axis = 0; axis < 3; ++axis) add_block(station_block(i, axis));
+            add_pair(station_block(i, /*east */0),
+                     station_block(i, /*north*/1));
         }
         for (int i = 0; i < n_photos; ++i) add_block(photo_block(i));
         for (int i = 0; i < n_cps; ++i) {
             for (int axis = 0; axis < 3; ++axis) add_block(cp_block(i, axis));
+            add_pair(cp_block(i, /*east */0),
+                     cp_block(i, /*north*/1));
         }
 
         // Compute() returns false on a rank deficiency it couldn't resolve.
         // Per-block extraction still works when we proceed though, so we try
         // anyway and let NaN propagate naturally for failed blocks.
-        const bool cov_ok = covariance.Compute(diag_blocks, &problem);
+        const bool cov_ok = covariance.Compute(cov_pairs, &problem);
         *prob->out_sigma_ok = cov_ok ? 1 : 0;
 
         // Ceres computes (JᵀJ)⁻¹ assuming residuals have unit variance. The
@@ -435,10 +452,22 @@ int Run(const pc_problem* prob) {
             }
         };
 
+        // Helper: read the scalar covariance between two 1-D blocks. Same
+        // residual-variance scaling as the diagonal σ², applied here as σ²
+        // (residual_scale²) since cov has units of σ², not σ.
+        auto fetch_cov = [&](const double* a, const double* b) -> double {
+            double v = 0;
+            if (!covariance.GetCovarianceBlock(a, b, &v)) return NaN;
+            if (!std::isfinite(v)) return NaN;
+            return v * residual_scale * residual_scale;
+        };
+
         for (int i = 0; i < n_stations; ++i) {
             for (int axis = 0; axis < 3; ++axis) {
                 fill_sigma(station_block(i, axis), prob->out_station_sigma + 3*i + axis, 1);
             }
+            prob->out_station_cov_lat_lng[i] =
+                fetch_cov(station_block(i, 0), station_block(i, 1));
         }
         for (int i = 0; i < n_photos; ++i) {
             fill_sigma(photo_block(i), prob->out_photo_sigma + 6*i, 6);
@@ -450,6 +479,8 @@ int Run(const pc_problem* prob) {
                 // self-contained.
                 fill_sigma(cp_block(i, axis), prob->out_cp_sigma + 3*i + axis, 1);
             }
+            prob->out_cp_cov_lat_lng[i] =
+                fetch_cov(cp_block(i, 0), cp_block(i, 1));
         }
     }
 

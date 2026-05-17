@@ -18,14 +18,14 @@ import (
 // X-Session-Id header is present; otherwise they return the main-only view.
 
 const stationCols = `id, lat, lng, alt, name, lock_lat, lock_lng, lock_alt, captured_at, created_at, updated_at,
-	sigma_lat, sigma_lng, sigma_alt,
+	sigma_lat, sigma_lng, sigma_alt, cov_lat_lng,
 	captured_at_lower, captured_at_upper, derivation_inconsistent`
 
 func scanStation(row pgx.Row) (Station, error) {
 	var st Station
 	err := row.Scan(&st.ID, &st.Lat, &st.Lng, &st.Alt, &st.Name,
 		&st.LockLat, &st.LockLng, &st.LockAlt, &st.CapturedAt, &st.CreatedAt, &st.UpdatedAt,
-		&st.SigmaLat, &st.SigmaLng, &st.SigmaAlt,
+		&st.SigmaLat, &st.SigmaLng, &st.SigmaAlt, &st.CovLatLng,
 		&st.DerivedWindow.CapturedAtLower, &st.DerivedWindow.CapturedAtUpper,
 		&st.DerivedWindow.Inconsistent)
 	return st, err

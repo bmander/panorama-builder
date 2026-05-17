@@ -252,6 +252,10 @@ func solveBridge(c *solveContext) (Result, error) {
 	stationSigma := make([]float64, nStations*3)
 	photoSigma := make([]float64, nPhotos*6)
 	cpSigma := make([]float64, nCPs*3)
+	// Off-diagonal east-north covariance per entity (m²), used by the
+	// frontend to render a tilted error ellipse.
+	stationCovLatLng := make([]float64, nStations)
+	cpCovLatLng := make([]float64, nCPs)
 
 	// cgo's pointer rule forbids passing a Go pointer to C if the memory it
 	// points to contains other Go pointers. pc_problem is itself a value type
@@ -283,6 +287,8 @@ func solveBridge(c *solveContext) (Result, error) {
 	pinSlice(unsafe.Pointer(floatPtr(stationSigma)))
 	pinSlice(unsafe.Pointer(floatPtr(photoSigma)))
 	pinSlice(unsafe.Pointer(floatPtr(cpSigma)))
+	pinSlice(unsafe.Pointer(floatPtr(stationCovLatLng)))
+	pinSlice(unsafe.Pointer(floatPtr(cpCovLatLng)))
 	pinner.Pin(&outIters)
 	pinner.Pin(&outInitCost)
 	pinner.Pin(&outFinalCost)
@@ -319,11 +325,13 @@ func solveBridge(c *solveContext) (Result, error) {
 		out_final_cost:      (*C.double)(unsafe.Pointer(&outFinalCost)),
 		out_converged:       (*C.int32_t)(unsafe.Pointer(&outConverged)),
 		out_aborted:         (*C.int32_t)(unsafe.Pointer(&outAborted)),
-		out_station_sigma:   floatPtr(stationSigma),
-		out_photo_sigma:     floatPtr(photoSigma),
-		out_cp_sigma:        floatPtr(cpSigma),
-		out_sigma_ok:        (*C.int32_t)(unsafe.Pointer(&outSigmaOK)),
-		go_ctx_handle:       C.uint64_t(ctxID),
+		out_station_sigma:        floatPtr(stationSigma),
+		out_photo_sigma:          floatPtr(photoSigma),
+		out_cp_sigma:             floatPtr(cpSigma),
+		out_station_cov_lat_lng:  floatPtr(stationCovLatLng),
+		out_cp_cov_lat_lng:       floatPtr(cpCovLatLng),
+		out_sigma_ok:             (*C.int32_t)(unsafe.Pointer(&outSigmaOK)),
+		go_ctx_handle:            C.uint64_t(ctxID),
 	}
 
 	initialState := c.readState()
@@ -380,7 +388,8 @@ func solveBridge(c *solveContext) (Result, error) {
 
 	var sigma map[string]map[string]float64
 	if outSigmaOK != 0 && outConverged != 0 && !diverged {
-		sigma = c.buildSigmaMap(stationSigma, photoSigma, cpSigma, cpAxisRep)
+		sigma = c.buildSigmaMap(stationSigma, photoSigma, cpSigma,
+			stationCovLatLng, cpCovLatLng, cpAxisRep)
 		changes = c.mergeSigmaIntoChanges(changes, sigma)
 	}
 
@@ -395,13 +404,13 @@ func solveBridge(c *solveContext) (Result, error) {
 	}, nil
 }
 
-// mergeSigmaIntoChanges folds per-entity σ values into the journal-bound
-// changes list, prefixing each axis key with "sigma_". Entities present in
-// sigma but absent from changes get a fresh change (with empty Before/After
-// for the parameter slot — just σ updates). This is how σ gets persisted
-// through the session journal alongside parameter writebacks: the backend's
-// applyChangeToX handlers recognize "sigma_*" keys and fold them into the
-// row's σ columns.
+// mergeSigmaIntoChanges folds per-entity uncertainty values into the
+// journal-bound changes list. Keys are merged verbatim (buildSigmaMap emits
+// them with their final column-style names, e.g. "sigma_lat", "cov_lat_lng",
+// "sigma_est_alt"). Entities present in sigma but absent from changes get a
+// fresh change row carrying only the uncertainty updates. The backend's
+// applyChangeToX handlers recognize each of those keys and fold them into
+// the row's σ / cov columns.
 func (c *solveContext) mergeSigmaIntoChanges(
 	changes []EntityChange, sigma map[string]map[string]float64,
 ) []EntityChange {
@@ -435,8 +444,8 @@ func (c *solveContext) mergeSigmaIntoChanges(
 			idx = len(changes) - 1
 			byID[kind+":"+id] = idx
 		}
-		for axisName, v := range axes {
-			changes[idx].After["sigma_"+axisName] = v
+		for key, v := range axes {
+			changes[idx].After[key] = v
 		}
 	}
 	return changes
@@ -448,7 +457,9 @@ func (c *solveContext) mergeSigmaIntoChanges(
 // since that's what the per-axis residual integrates over; callers that
 // want degrees can scale by 1/M_PER_DEG_LAT.
 func (c *solveContext) buildSigmaMap(
-	stationSigma, photoSigma, cpSigma []float64, cpAxisRep []int32,
+	stationSigma, photoSigma, cpSigma []float64,
+	stationCovLatLng, cpCovLatLng []float64,
+	cpAxisRep []int32,
 ) map[string]map[string]float64 {
 	out := map[string]map[string]float64{}
 	put := func(id, key string, v float64) {
@@ -467,22 +478,37 @@ func (c *solveContext) buildSigmaMap(
 		}
 		m[key] = v
 	}
+	// putCov mirrors put() but allows negative values (cov can be either
+	// sign). The |v| < 1e-12 filter catches both Ceres' exact-zero output
+	// for locked / constant blocks and double-precision noise.
+	putCov := func(id, key string, v float64) {
+		if math.IsNaN(v) || math.Abs(v) < 1e-12 {
+			return
+		}
+		m, ok := out[id]
+		if !ok {
+			m = map[string]float64{}
+			out[id] = m
+		}
+		m[key] = v
+	}
 	for i, st := range c.problem.Stations {
 		// Station σ is in local-ENU meters: east, north, up. Map back to
 		// (lng, lat, alt) by convention — east ≈ Δlng·cos(lat)·M_PER_DEG_LAT,
 		// north ≈ Δlat·M_PER_DEG_LAT. We surface meters directly so the
 		// caller doesn't have to round-trip.
-		put(st.ID, "lng", stationSigma[3*i+axisEast])
-		put(st.ID, "lat", stationSigma[3*i+axisNorth])
-		put(st.ID, "alt", stationSigma[3*i+axisUp])
+		put(st.ID, "sigma_lng", stationSigma[3*i+axisEast])
+		put(st.ID, "sigma_lat", stationSigma[3*i+axisNorth])
+		put(st.ID, "sigma_alt", stationSigma[3*i+axisUp])
+		putCov(st.ID, "cov_lat_lng", stationCovLatLng[i])
 	}
 	for i, p := range c.problem.Photos {
-		put(p.ID, "photo_az", photoSigma[6*i+0])
-		put(p.ID, "photo_tilt", photoSigma[6*i+1])
-		put(p.ID, "photo_roll", photoSigma[6*i+2])
-		put(p.ID, "size_rad", photoSigma[6*i+3])
-		put(p.ID, "dist_k1", photoSigma[6*i+4])
-		put(p.ID, "dist_k2", photoSigma[6*i+5])
+		put(p.ID, "sigma_photo_az", photoSigma[6*i+0])
+		put(p.ID, "sigma_photo_tilt", photoSigma[6*i+1])
+		put(p.ID, "sigma_photo_roll", photoSigma[6*i+2])
+		put(p.ID, "sigma_size_rad", photoSigma[6*i+3])
+		put(p.ID, "sigma_dist_k1", photoSigma[6*i+4])
+		put(p.ID, "sigma_dist_k2", photoSigma[6*i+5])
 	}
 	for i, cp := range c.problem.ControlPoints {
 		// CP σ also in local-ENU meters; same lng/lat/alt mapping as stations.
@@ -491,9 +517,12 @@ func (c *solveContext) buildSigmaMap(
 		eRep := int(cpAxisRep[3*i+axisEast])
 		nRep := int(cpAxisRep[3*i+axisNorth])
 		uRep := int(cpAxisRep[3*i+axisUp])
-		put(cp.ID, "est_lng", cpSigma[3*eRep+axisEast])
-		put(cp.ID, "est_lat", cpSigma[3*nRep+axisNorth])
-		put(cp.ID, "est_alt", cpSigma[3*uRep+axisUp])
+		put(cp.ID, "sigma_est_lng", cpSigma[3*eRep+axisEast])
+		put(cp.ID, "sigma_est_lat", cpSigma[3*nRep+axisNorth])
+		put(cp.ID, "sigma_est_alt", cpSigma[3*uRep+axisUp])
+		// Reading cov off the rep mirrors the σ logic: aliased members all
+		// see the same covariance because they share the underlying block.
+		putCov(cp.ID, "cov_est_lat_lng", cpCovLatLng[int(cpAxisRep[3*i+axisEast])])
 	}
 	return out
 }

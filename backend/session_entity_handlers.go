@@ -1117,6 +1117,7 @@ func (s *Server) listControlPointVisiblePhotosInSession(w http.ResponseWriter, r
 		return
 	}
 
+	withDist := make([]visiblePhotoWithDist, 0, len(photos))
 	for _, p := range photos {
 		if taken[p.ID] {
 			continue
@@ -1135,21 +1136,18 @@ func (s *Server) listControlPointVisiblePhotosInSession(w http.ResponseWriter, r
 		if !inHorizontalViewshed(st.Lat, st.Lng, *cp.EstLat, *cp.EstLng, p.PhotoAz, p.SizeRad) {
 			continue
 		}
-		out.Photos = append(out.Photos, ControlPointVisiblePhoto{
-			PhotoID:              p.ID,
-			StationID:            p.StationID,
-			StationName:          st.Name,
-			StationCapturedAt:    st.CapturedAt,
-			StationDerivedWindow: st.DerivedWindow,
+		withDist = append(withDist, visiblePhotoWithDist{
+			photo: ControlPointVisiblePhoto{
+				PhotoID:              p.ID,
+				StationID:            p.StationID,
+				StationName:          st.Name,
+				StationCapturedAt:    st.CapturedAt,
+				StationDerivedWindow: st.DerivedWindow,
+			},
+			distM: equirectDistMeters(st.Lat, st.Lng, *cp.EstLat, *cp.EstLng),
 		})
 	}
-	sort.Slice(out.Photos, func(i, j int) bool {
-		a, b := out.Photos[i], out.Photos[j]
-		if !timePtrEqual(a.StationCapturedAt, b.StationCapturedAt) {
-			return timePtrLess(a.StationCapturedAt, b.StationCapturedAt)
-		}
-		return a.PhotoID < b.PhotoID
-	})
+	out.Photos = sortVisiblePhotosByDist(withDist)
 	writeJSON(w, http.StatusOK, out)
 }
 

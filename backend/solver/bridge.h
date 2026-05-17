@@ -78,10 +78,16 @@ typedef struct {
     // the axis's covariance could not be determined (locked, or fully
     // unobservable). All-NaN output is the signal that covariance computation
     // failed entirely (e.g. solver diverged); caller treats as "no σ data".
-    double *out_station_sigma;  // [n_stations * 3]   (meters in local ENU)
-    double *out_photo_sigma;    // [n_photos * 6]     (radians for angles, unitless for K1/K2)
-    double *out_cp_sigma;       // [n_cps * 3]        (meters in local ENU)
-    int32_t *out_sigma_ok;      // 1 if covariance was computed; 0 means all NaN
+    double *out_station_sigma;       // [n_stations * 3]   (meters in local ENU)
+    double *out_photo_sigma;         // [n_photos * 6]     (radians for angles, unitless for K1/K2)
+    double *out_cp_sigma;            // [n_cps * 3]        (meters in local ENU)
+    // Off-diagonal east-north covariance per entity, m². NaN when either
+    // axis is locked / unobservable. With the two diagonal σ values these
+    // give the full 2×2 horizontal-position covariance for drawing tilted
+    // error ellipses.
+    double *out_station_cov_lat_lng; // [n_stations]
+    double *out_cp_cov_lat_lng;      // [n_cps]
+    int32_t *out_sigma_ok;           // 1 if covariance was computed; 0 means all NaN
 
     // Iteration-callback context: opaque to C++, passed back through to
     // pc_iter_callback verbatim. The Go side allocates a uint64 handle into

@@ -397,7 +397,12 @@ type ConflictsResponse struct {
 // cp_observations + station capture dates; those bounds are
 // materialized at write time inside mergeSession.
 type ControlPoint struct {
-	CreatedAt time.Time `json:"created_at"`
+	// CovEstLatLng Off-diagonal east-north covariance of (est_lat, est_lng) in m²
+	// (local-ENU). With sigma_est_lat and sigma_est_lng this gives the
+	// full 2×2 horizontal covariance the frontend uses to render a
+	// tilted error ellipse. NULL semantics as sigma_est_lat.
+	CovEstLatLng *float64  `json:"cov_est_lat_lng,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 
 	// DerivedWindow Implicit lifespan bounds for a control point, derived from its
 	// cp_observations and the capture dates of the stations they
@@ -1011,7 +1016,13 @@ type Station struct {
 	// participate in the cp_observation graph but contribute no temporal
 	// bounds to derived CP windows.
 	CapturedAt *time.Time `json:"captured_at"`
-	CreatedAt  time.Time  `json:"created_at"`
+
+	// CovLatLng Off-diagonal east-north covariance at the last successful solve, in
+	// m² (local-ENU). With sigma_lat and sigma_lng this gives the full
+	// 2×2 horizontal-position covariance the frontend uses to render a
+	// tilted error ellipse. NULL semantics as sigma_lat.
+	CovLatLng *float64  `json:"cov_lat_lng,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 
 	// DerivedWindow Implicit capture-time bounds for a station, derived from its
 	// cp_observations and the lifespan of the CPs they reference.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -12,7 +13,7 @@ import (
 
 const controlPointCols = `id, description, notes, est_lat, est_lng, est_alt, started_at, ended_at,
 	lock_est_lat, lock_est_lng, lock_est_alt, created_at, updated_at,
-	sigma_est_lat, sigma_est_lng, sigma_est_alt,
+	sigma_est_lat, sigma_est_lng, sigma_est_alt, cov_est_lat_lng,
 	started_at_lower, started_at_upper, ended_at_lower, ended_at_upper,
 	derivation_inconsistent`
 
@@ -22,7 +23,7 @@ func scanControlPoint(row pgx.Row) (ControlPoint, error) {
 		&cp.StartedAt, &cp.EndedAt,
 		&cp.LockEstLat, &cp.LockEstLng, &cp.LockEstAlt,
 		&cp.CreatedAt, &cp.UpdatedAt,
-		&cp.SigmaEstLat, &cp.SigmaEstLng, &cp.SigmaEstAlt,
+		&cp.SigmaEstLat, &cp.SigmaEstLng, &cp.SigmaEstAlt, &cp.CovEstLatLng,
 		&cp.DerivedWindow.StartedAtLower, &cp.DerivedWindow.StartedAtUpper,
 		&cp.DerivedWindow.EndedAtLower, &cp.DerivedWindow.EndedAtUpper,
 		&cp.DerivedWindow.Inconsistent)
@@ -245,14 +246,14 @@ func (s *Server) listControlPointVisiblePhotos(w http.ResponseWriter, r *http.Re
 		       st.lat, st.lng, p.photo_az, p.size_rad
 		FROM photos p
 		JOIN stations st ON st.id = p.station_id
-		WHERE ` + strings.Join(where, " AND ") + `
-		ORDER BY st.captured_at, p.id`
+		WHERE ` + strings.Join(where, " AND ")
 	rows, err := s.db.Query(r.Context(), sql, args...)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
 	defer rows.Close()
+	var withDist []visiblePhotoWithDist
 	for rows.Next() {
 		var p ControlPointVisiblePhoto
 		var stationLat, stationLng, photoAz, sizeRad float64
@@ -268,13 +269,36 @@ func (s *Server) listControlPointVisiblePhotos(w http.ResponseWriter, r *http.Re
 		if !inHorizontalViewshed(stationLat, stationLng, *cp.EstLat, *cp.EstLng, photoAz, sizeRad) {
 			continue
 		}
-		out.Photos = append(out.Photos, p)
+		withDist = append(withDist, visiblePhotoWithDist{
+			photo: p,
+			distM: equirectDistMeters(stationLat, stationLng, *cp.EstLat, *cp.EstLng),
+		})
 	}
 	if err := rows.Err(); err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
+	out.Photos = sortVisiblePhotosByDist(withDist)
 	writeJSON(w, http.StatusOK, out)
+}
+
+type visiblePhotoWithDist struct {
+	photo ControlPointVisiblePhoto
+	distM float64
+}
+
+func sortVisiblePhotosByDist(withDist []visiblePhotoWithDist) []ControlPointVisiblePhoto {
+	sort.Slice(withDist, func(i, j int) bool {
+		if withDist[i].distM != withDist[j].distM {
+			return withDist[i].distM < withDist[j].distM
+		}
+		return withDist[i].photo.PhotoID < withDist[j].photo.PhotoID
+	})
+	out := make([]ControlPointVisiblePhoto, len(withDist))
+	for i, w := range withDist {
+		out[i] = w.photo
+	}
+	return out
 }
 
 // imageMeasurementsByControlPoint returns rows in main that currently

@@ -475,6 +475,9 @@ func applyChangeToStation(st *Station, after map[string]float64) {
 		case "sigma_alt":
 			s := v
 			st.SigmaAlt = &s
+		case "cov_lat_lng":
+			s := v
+			st.CovLatLng = &s
 		}
 	}
 }
@@ -532,6 +535,8 @@ func applyChangeToControlPoint(cp *ControlPoint, after map[string]float64) {
 			cp.SigmaEstLng = &val
 		case "sigma_est_alt":
 			cp.SigmaEstAlt = &val
+		case "cov_est_lat_lng":
+			cp.CovEstLatLng = &val
 		}
 	}
 }
