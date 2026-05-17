@@ -1110,6 +1110,11 @@ export interface components {
             /** Format: date-time */
             station_captured_at: string | null;
             station_derived_window: components["schemas"]["StationDerivedWindow"];
+            /**
+             * Format: double
+             * @description Horizontal distance from the station to the CP's stored estimate, in meters.
+             */
+            distance_m: number;
         };
         ControlPointVisiblePhotos: {
             photos: components["schemas"]["ControlPointVisiblePhoto"][];

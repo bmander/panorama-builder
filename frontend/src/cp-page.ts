@@ -1,9 +1,9 @@
 import * as api from './api.js';
 import { degToRad } from './mathx.js';
 import {
-  appendSigmaMeters, appendSigmaScalar, cpLabel, fmtAlt, formatEstimateRange,
-  formatImpreciseDate, formatLocalDateTime, getElement, indexCpHref,
-  stationHref, stationLabel,
+  appendSigmaMeters, appendSigmaScalar, cpLabel, fmtAlt, fmtSigmaMeters,
+  formatEstimateRange, formatImpreciseDate, formatLocalDateTime, getElement,
+  indexCpHref, makeListCell, stationHref, stationLabel,
 } from './types.js';
 import {
   SIGMA_ALT_REFUSE_M, SIGMA_ALT_WARN_M,
@@ -415,45 +415,139 @@ function cpObservationLabel(o: api.ApiCpObservation): string | null {
   return null;
 }
 
+type VisiblePhotoSortKey = 'date' | 'distance';
+type VisiblePhotoSortDir = 'asc' | 'desc';
+
+let visiblePhotosSort: { key: VisiblePhotoSortKey; dir: VisiblePhotoSortDir } =
+  { key: 'distance', dir: 'asc' };
+let visiblePhotosCtx: {
+  cp: api.ApiControlPoint;
+  payload: api.ApiControlPointVisiblePhotos;
+  observationsByStation: Map<string, api.ApiCpObservation>;
+} | null = null;
+
+function visiblePhotoSortValue(
+  p: api.ApiControlPointVisiblePhoto, key: VisiblePhotoSortKey,
+): number {
+  if (key === 'distance') return p.distance_m;
+  // Date proxy: prefer the precise captured_at; else midpoint / single bound
+  // of the derived window. ??–?? rows have no temporal evidence and are
+  // pinned to the end regardless of direction.
+  if (p.station_captured_at !== null) return Date.parse(p.station_captured_at);
+  const w = p.station_derived_window;
+  const lo = w.captured_at_lower !== null ? Date.parse(w.captured_at_lower) : NaN;
+  const hi = w.captured_at_upper !== null ? Date.parse(w.captured_at_upper) : NaN;
+  if (!Number.isNaN(lo) && !Number.isNaN(hi)) return (lo + hi) / 2;
+  if (!Number.isNaN(lo)) return lo;
+  if (!Number.isNaN(hi)) return hi;
+  return Number.POSITIVE_INFINITY;
+}
+
+function sortVisiblePhotos(
+  photos: readonly api.ApiControlPointVisiblePhoto[],
+): api.ApiControlPointVisiblePhoto[] {
+  const sign = visiblePhotosSort.dir === 'asc' ? 1 : -1;
+  return [...photos].sort((a, b) => {
+    const av = visiblePhotoSortValue(a, visiblePhotosSort.key);
+    const bv = visiblePhotoSortValue(b, visiblePhotosSort.key);
+    if (!Number.isFinite(av) && !Number.isFinite(bv)) return 0;
+    if (!Number.isFinite(av)) return 1;
+    if (!Number.isFinite(bv)) return -1;
+    return sign * (av - bv);
+  });
+}
+
+function renderVisiblePhotosHeader(): HTMLElement {
+  const li = document.createElement('li');
+  li.className = 'header';
+  li.append(renderVisiblePhotoHdrButton('date', 'Date'));
+  const stationHdr = document.createElement('span');
+  stationHdr.className = 'col col-station hdr-label';
+  stationHdr.textContent = 'Station';
+  li.append(stationHdr);
+  li.append(renderVisiblePhotoHdrButton('distance', 'Distance'));
+  return li;
+}
+
+function renderVisiblePhotoHdrButton(
+  key: VisiblePhotoSortKey, label: string,
+): HTMLElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = `col col-${key} hdr`;
+  if (visiblePhotosSort.key === key) btn.classList.add('active');
+  btn.textContent = label;
+  if (visiblePhotosSort.key === key) {
+    const arrow = document.createElement('span');
+    arrow.className = 'sort-arrow';
+    arrow.textContent = visiblePhotosSort.dir === 'asc' ? ' ↑' : ' ↓';
+    btn.append(arrow);
+  }
+  btn.addEventListener('click', () => {
+    visiblePhotosSort = visiblePhotosSort.key === key
+      ? { key, dir: visiblePhotosSort.dir === 'asc' ? 'desc' : 'asc' }
+      : { key, dir: 'asc' };
+    renderVisiblePhotosFromCtx();
+  });
+  return btn;
+}
+
+function renderVisiblePhotoRow(
+  cp: api.ApiControlPoint,
+  p: api.ApiControlPointVisiblePhoto,
+  obs: api.ApiCpObservation | undefined,
+): HTMLElement {
+  const li = document.createElement('li');
+  const date = makeListCell('col-date', formatImpreciseDate(
+    p.station_captured_at,
+    p.station_derived_window.captured_at_lower,
+    p.station_derived_window.captured_at_upper), false);
+  const station = document.createElement('span');
+  station.className = 'col col-station';
+  const a = document.createElement('a');
+  a.href = stationHref(p.station_id, { focusControlPointId: cp.id });
+  a.textContent = stationLabel(p.station_id, p.station_name);
+  station.append(a);
+  const label = obs ? cpObservationLabel(obs) : null;
+  if (obs && label !== null) {
+    const status = document.createElement('span');
+    status.className = `status ${obs.status}`;
+    status.textContent = label;
+    station.append(' ', status);
+  }
+  const distance = makeListCell('col-distance', fmtSigmaMeters(p.distance_m), false);
+  li.append(date, station, distance);
+  return li;
+}
+
+function renderVisiblePhotosFromCtx(): void {
+  if (visiblePhotosCtx === null) return;
+  const { cp, payload, observationsByStation } = visiblePhotosCtx;
+  const list = getElement('visible-photos');
+  list.replaceChildren();
+  list.appendChild(renderVisiblePhotosHeader());
+  for (const p of sortVisiblePhotos(payload.photos)) {
+    list.appendChild(renderVisiblePhotoRow(cp, p, observationsByStation.get(p.station_id)));
+  }
+}
+
 function renderVisiblePhotos(
   cp: api.ApiControlPoint,
   payload: api.ApiControlPointVisiblePhotos,
   observationsByStation: Map<string, api.ApiCpObservation>,
 ): void {
   if (cp.est_lat === null || cp.est_lng === null) {
+    visiblePhotosCtx = null;
     renderVisiblePhotosEmpty('Estimate a location to see candidate photos.');
     return;
   }
   if (payload.photos.length === 0) {
+    visiblePhotosCtx = null;
     renderVisiblePhotosEmpty('no candidate photos');
     return;
   }
-  const list = getElement('visible-photos');
-  list.replaceChildren();
-  for (const p of payload.photos) {
-    const meta = document.createElement('span');
-    meta.className = 'meta';
-    const a = document.createElement('a');
-    a.href = stationHref(p.station_id, { focusControlPointId: cp.id });
-    a.textContent = stationLabel(p.station_id, p.station_name);
-    const captured = document.createElement('span');
-    captured.className = 'captured-at';
-    captured.textContent = formatImpreciseDate(
-      p.station_captured_at,
-      p.station_derived_window.captured_at_lower,
-      p.station_derived_window.captured_at_upper);
-    meta.append(captured, ' in ', a);
-
-    const obs = observationsByStation.get(p.station_id);
-    const label = obs ? cpObservationLabel(obs) : null;
-    if (obs && label !== null) {
-      const status = document.createElement('span');
-      status.className = `status ${obs.status}`;
-      status.textContent = label;
-      meta.append(' ', status);
-    }
-    appendObservationItem(list, meta);
-  }
+  visiblePhotosCtx = { cp, payload, observationsByStation };
+  renderVisiblePhotosFromCtx();
 }
 
 type LockField = 'lock_est_lat' | 'lock_est_lng' | 'lock_est_alt';

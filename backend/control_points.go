@@ -296,6 +296,7 @@ func sortVisiblePhotosByDist(withDist []visiblePhotoWithDist) []ControlPointVisi
 	})
 	out := make([]ControlPointVisiblePhoto, len(withDist))
 	for i, w := range withDist {
+		w.photo.DistanceM = w.distM
 		out[i] = w.photo
 	}
 	return out

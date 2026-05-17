@@ -534,6 +534,9 @@ type ControlPointPatch struct {
 // station coordinates used for the server-side viewshed test are
 // intentionally not exposed.
 type ControlPointVisiblePhoto struct {
+	// DistanceM Horizontal distance from the station to the CP's stored estimate, in meters.
+	DistanceM float64 `json:"distance_m"`
+
 	// PhotoID 13-character base32 server-assigned id
 	PhotoID           ID         `json:"photo_id"`
 	StationCapturedAt *time.Time `json:"station_captured_at"`

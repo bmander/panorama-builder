@@ -1388,12 +1388,14 @@ components:
         - station_name
         - station_captured_at
         - station_derived_window
+        - distance_m
       properties:
         photo_id: { $ref: '#/components/schemas/Id' }
         station_id: { $ref: '#/components/schemas/Id' }
         station_name: { type: string, nullable: true }
         station_captured_at: { type: string, format: date-time, nullable: true }
         station_derived_window: { $ref: '#/components/schemas/StationDerivedWindow' }
+        distance_m: { type: number, format: double, description: "Horizontal distance from the station to the CP's stored estimate, in meters." }
 
     ControlPointVisiblePhotos:
       type: object
