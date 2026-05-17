@@ -159,6 +159,7 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 		SELECT im.id, im.photo_id, im.u, im.v,
 		       p.station_id, st.name, st.lat, st.lng,
 		       st.captured_at,
+		       st.captured_at_lower, st.captured_at_upper, st.derivation_inconsistent,
 		       p.photo_az, p.photo_tilt, p.photo_roll, p.size_rad, p.aspect
 		FROM image_measurements im
 		JOIN photos p    ON p.id = im.photo_id
@@ -176,6 +177,8 @@ func (s *Server) listControlPointObservations(w http.ResponseWriter, r *http.Req
 			&o.ID, &o.PhotoID, &o.U, &o.V,
 			&o.StationID, &o.StationName, &o.StationLat, &o.StationLng,
 			&o.StationCapturedAt,
+			&o.StationDerivedWindow.CapturedAtLower, &o.StationDerivedWindow.CapturedAtUpper,
+			&o.StationDerivedWindow.Inconsistent,
 			&o.PhotoAz, &o.PhotoTilt, &o.PhotoRoll, &o.SizeRad, &o.Aspect,
 		); err != nil {
 			writeErrorFromDB(w, err)
@@ -238,6 +241,7 @@ func (s *Server) listControlPointVisiblePhotos(w http.ResponseWriter, r *http.Re
 	}
 	sql := `
 		SELECT p.id, p.station_id, st.name, st.captured_at,
+		       st.captured_at_lower, st.captured_at_upper, st.derivation_inconsistent,
 		       st.lat, st.lng, p.photo_az, p.size_rad
 		FROM photos p
 		JOIN stations st ON st.id = p.station_id
@@ -254,6 +258,8 @@ func (s *Server) listControlPointVisiblePhotos(w http.ResponseWriter, r *http.Re
 		var stationLat, stationLng, photoAz, sizeRad float64
 		if err := rows.Scan(
 			&p.PhotoID, &p.StationID, &p.StationName, &p.StationCapturedAt,
+			&p.StationDerivedWindow.CapturedAtLower, &p.StationDerivedWindow.CapturedAtUpper,
+			&p.StationDerivedWindow.Inconsistent,
 			&stationLat, &stationLng, &photoAz, &sizeRad,
 		); err != nil {
 			writeErrorFromDB(w, err)

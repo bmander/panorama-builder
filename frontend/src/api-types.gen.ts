@@ -1064,6 +1064,7 @@ export interface components {
             station_lng: number;
             /** Format: date-time */
             station_captured_at: string | null;
+            station_derived_window: components["schemas"]["StationDerivedWindow"];
             /** Format: double */
             photo_az: number;
             /** Format: double */
@@ -1092,6 +1093,7 @@ export interface components {
             station_name: string | null;
             /** Format: date-time */
             station_captured_at: string | null;
+            station_derived_window: components["schemas"]["StationDerivedWindow"];
         };
         ControlPointVisiblePhotos: {
             photos: components["schemas"]["ControlPointVisiblePhoto"][];

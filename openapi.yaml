@@ -1324,6 +1324,7 @@ components:
         - station_lat
         - station_lng
         - station_captured_at
+        - station_derived_window
         - photo_az
         - photo_tilt
         - photo_roll
@@ -1339,6 +1340,7 @@ components:
         station_lat: { type: number, format: double, minimum: -90, maximum: 90 }
         station_lng: { type: number, format: double, minimum: -180, maximum: 180 }
         station_captured_at: { type: string, format: date-time, nullable: true }
+        station_derived_window: { $ref: '#/components/schemas/StationDerivedWindow' }
         photo_az: { type: number, format: double }
         photo_tilt: { type: number, format: double }
         photo_roll: { type: number, format: double }
@@ -1367,11 +1369,13 @@ components:
         - station_id
         - station_name
         - station_captured_at
+        - station_derived_window
       properties:
         photo_id: { $ref: '#/components/schemas/Id' }
         station_id: { $ref: '#/components/schemas/Id' }
         station_name: { type: string, nullable: true }
         station_captured_at: { type: string, format: date-time, nullable: true }
+        station_derived_window: { $ref: '#/components/schemas/StationDerivedWindow' }
 
     ControlPointVisiblePhotos:
       type: object

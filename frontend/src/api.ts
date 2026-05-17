@@ -38,6 +38,7 @@ export type ApiControlPointObservations = Schemas['ControlPointObservations'];
 export type ApiControlPointImageObservation = Schemas['ControlPointImageObservation'];
 export type ApiControlPointVisiblePhotos = Schemas['ControlPointVisiblePhotos'];
 export type ApiControlPointVisiblePhoto = Schemas['ControlPointVisiblePhoto'];
+export type ApiStationDerivedWindow = Schemas['StationDerivedWindow'];
 export type ApiControlPointFits = Schemas['ControlPointFits'];
 export type ApiControlPointFit = Schemas['ControlPointFit'];
 export type ApiCpObservation = Schemas['CpObservation'];

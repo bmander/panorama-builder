@@ -226,6 +226,16 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   let showAllCPs = false;
   // null = no distance cap. Observed CPs are direct evidence and always show.
   let cpMaxDistanceM: number | null = null;
+  // Per-station cp_observation status, indexed by control_point_id. Drives
+  // both the visibility filter (non-`observed` hides the marker) and POST vs
+  // PUT routing in the CP context menu — a stale `observed` row from legacy
+  // data would 409 on POST, so we PUT when an id is known. `id: null` is the
+  // brief optimistic window between click and server ack.
+  interface CpObservationCache {
+    readonly id: string | null;
+    readonly status: api.ApiCpObservationStatus;
+  }
+  const cpObservationByCp = new Map<string, CpObservationCache>();
 
   // Hydrated per-photo data for every other station. Populated once via a
   // batch of api.getStation calls; used to render frustum cones and to
@@ -271,6 +281,11 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       // A focus_cp deep-link forces the CP to show through every gate.
       const forced = cp.id === focusedCpId;
       const isObserved = forced || observed.has(cp.id);
+      // A negative cp_observation at this station (missing / cant_see) is the
+      // photographer's explicit "not here" — hide unless an image measurement
+      // contradicts it (observed wins) or a deep-link is forcing it visible.
+      const obs = cpObservationByCp.get(cp.id);
+      if (!isObserved && obs && obs.status !== 'observed') return false;
       if (!showAllCPs && !isObserved) return false;
       if (capturedMs !== null && !isObserved && !isExtantAt(cp, capturedMs)) return false;
       if (maxD !== null && camLoc && !isObserved
@@ -795,14 +810,24 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     if (!stationObserves) {
       const observingStationId = getCurrentStationId();
       const postObservation = (status: api.ApiCpObservationStatus, reason?: api.ApiCpObservationReason): void => {
-        api.createCpObservation(observingStationId, {
-          control_point_id: cpId,
-          status,
-          reason: reason ?? null,
-        }).catch((err: unknown) => {
-          console.error('create cp_observation failed:', err);
-          alert('Update failed — see console.');
-        });
+        const prior = cpObservationByCp.get(cpId);
+        cpObservationByCp.set(cpId, { id: prior?.id ?? null, status });
+        refreshControlPointColumns();
+        const req: Promise<api.ApiCpObservation> = prior?.id
+          ? api.updateCpObservation(prior.id, { status, reason: reason ?? null })
+          : api.createCpObservation(observingStationId, {
+              control_point_id: cpId,
+              status,
+              reason: reason ?? null,
+            });
+        req.then(o => { cpObservationByCp.set(cpId, { id: o.id, status: o.status }); })
+          .catch((err: unknown) => {
+            console.error('cp_observation upsert failed:', err);
+            if (prior) cpObservationByCp.set(cpId, prior);
+            else cpObservationByCp.delete(cpId);
+            refreshControlPointColumns();
+            alert('Update failed — see console.');
+          });
       };
       items.push(
         { label: 'Mark missing', onClick: () => { postObservation('missing'); } },
@@ -1120,6 +1145,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     clearMultiSelectedConstraints();
     cpSurfaces = [];
     selectedSurfaceId = null;
+    cpObservationByCp.clear();
     sundialModal.reset();
     sundialMarkerDots = [];
     sundialLine.visible = false;
@@ -1239,6 +1265,10 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
           controlPointId: im.control_point_id,
         });
         sync.registerImageMeasurement(im.id, { u: im.u, v: im.v, control_point_id: im.control_point_id });
+      }
+
+      for (const o of data.cp_observations) {
+        cpObservationByCp.set(o.control_point_id, { id: o.id, status: o.status });
       }
     });
 

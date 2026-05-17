@@ -15,6 +15,18 @@ const CLIP_DEG = 2;
 const CLIP_RAD = degToRad(CLIP_DEG);
 const CLIP_SIZE_PX = 96;
 
+// "??" fills a missing bound so "c. 1859–??" reads as "we have a lower
+// bound but no upper" rather than just "1859".
+function fmtStationDate(
+  capturedAt: string | null,
+  window: api.ApiStationDerivedWindow,
+): string {
+  if (capturedAt !== null) return new Date(capturedAt).toLocaleDateString();
+  const yr = (s: string | null): string =>
+    s === null ? '??' : String(new Date(s).getUTCFullYear());
+  return `c. ${yr(window.captured_at_lower)}–${yr(window.captured_at_upper)}`;
+}
+
 function createObservationClip(m: api.ApiControlPointImageObservation): HTMLElement {
   const scaledW = CLIP_SIZE_PX * m.size_rad / CLIP_RAD;
   const scaledH = scaledW / m.aspect;
@@ -382,8 +394,7 @@ function renderObservations(obs: api.ApiControlPointObservations): void {
     a.textContent = stationLabel(m.station_id, m.station_name);
     const captured = document.createElement('span');
     captured.className = 'captured-at';
-    captured.textContent = m.station_captured_at === null
-      ? '—' : new Date(m.station_captured_at).toLocaleString();
+    captured.textContent = fmtStationDate(m.station_captured_at, m.station_derived_window);
     meta.append(captured, ' in ', a);
     appendObservationItem(list, meta, createObservationClip(m));
   }
@@ -398,8 +409,25 @@ function renderVisiblePhotosEmpty(text: string): void {
   list.appendChild(li);
 }
 
+// Human label for a per-station cp_observation, e.g. "marked missing" or
+// "can't see — occluded". Returned text drives the badge in the candidate
+// photos list so the user knows the photographer has already weighed in.
+function cpObservationLabel(o: api.ApiCpObservation): string | null {
+  if (o.status === 'missing') return 'marked missing';
+  if (o.status === 'cant_see') {
+    const r = o.reason;
+    if (r === 'occluded')      return "can't see — occluded";
+    if (r === 'too_far')       return "can't see — too far";
+    if (r === 'out_of_focus')  return "can't see — out of focus";
+    return "can't see";
+  }
+  return null;
+}
+
 function renderVisiblePhotos(
-  cp: api.ApiControlPoint, payload: api.ApiControlPointVisiblePhotos,
+  cp: api.ApiControlPoint,
+  payload: api.ApiControlPointVisiblePhotos,
+  observationsByStation: Map<string, api.ApiCpObservation>,
 ): void {
   if (cp.est_lat === null || cp.est_lng === null) {
     renderVisiblePhotosEmpty('Estimate a location to see candidate photos.');
@@ -419,9 +447,17 @@ function renderVisiblePhotos(
     a.textContent = stationLabel(p.station_id, p.station_name);
     const captured = document.createElement('span');
     captured.className = 'captured-at';
-    captured.textContent = p.station_captured_at === null
-      ? '—' : new Date(p.station_captured_at).toLocaleString();
+    captured.textContent = fmtStationDate(p.station_captured_at, p.station_derived_window);
     meta.append(captured, ' in ', a);
+
+    const obs = observationsByStation.get(p.station_id);
+    const label = obs ? cpObservationLabel(obs) : null;
+    if (obs && label !== null) {
+      const status = document.createElement('span');
+      status.className = `status ${obs.status}`;
+      status.textContent = label;
+      meta.append(' ', status);
+    }
     appendObservationItem(list, meta);
   }
 }
@@ -490,10 +526,11 @@ async function main(): Promise<void> {
   idEl.textContent = id;
   nameEl.textContent = 'Loading…';
 
-  const [cpResult, obsResult, visResult] = await Promise.allSettled([
+  const [cpResult, obsResult, visResult, cpObsResult] = await Promise.allSettled([
     api.getControlPoint(id),
     api.listControlPointObservations(id),
     api.listControlPointVisiblePhotos(id),
+    api.listCpObservationsByControlPoint(id),
   ]);
 
   if (cpResult.status === 'rejected') {
@@ -510,6 +547,16 @@ async function main(): Promise<void> {
   };
   refreshMapLink();
 
+  // cp_observation rows can only be created from the station page, so the
+  // cp-page edits (lat/lng/date/notes) below never mutate them — fetched
+  // once at load and reused on every refreshVisiblePhotos render.
+  const observationsByStation = new Map<string, api.ApiCpObservation>();
+  if (cpObsResult.status === 'fulfilled') {
+    for (const o of cpObsResult.value) observationsByStation.set(o.station_id, o);
+  } else {
+    console.error('cp-observations fetch failed:', cpObsResult.reason);
+  }
+
   // Many editor callbacks fire `refreshVisiblePhotos` and the user may edit
   // faster than the request round-trips; the seq counter prevents an earlier
   // slow response from overwriting a later one's render.
@@ -517,7 +564,7 @@ async function main(): Promise<void> {
   const refreshVisiblePhotos = (): void => {
     const my = ++visSeq;
     api.listControlPointVisiblePhotos(id).then(
-      payload => { if (my === visSeq) renderVisiblePhotos(cp, payload); },
+      payload => { if (my === visSeq) renderVisiblePhotos(cp, payload, observationsByStation); },
       (err: unknown) => {
         if (my !== visSeq) return;
         console.error('visible-photos fetch failed:', err);
@@ -555,7 +602,7 @@ async function main(): Promise<void> {
   attachLockToggle(cp, 'lock-est-alt', 'lock_est_alt');
 
   if (visResult.status === 'fulfilled') {
-    renderVisiblePhotos(cp, visResult.value);
+    renderVisiblePhotos(cp, visResult.value, observationsByStation);
   } else {
     console.error('visible-photos fetch failed:', visResult.reason);
     renderVisiblePhotosEmpty('Failed to load candidate photos.');

@@ -59,6 +59,11 @@ h2 { font-size: 14px; color: #aaa; margin: 32px 0 8px; font-weight: normal;
 .observations .meta { color: #888; }
 .observations .captured-at { color: #ddd; }
 .observations .empty { color: #888; font-style: italic; padding: 6px 8px; }
+.observations .status { margin-left: auto; padding: 1px 6px; border-radius: 3px;
+                        font-size: 11px; text-transform: uppercase;
+                        letter-spacing: 0.05em; white-space: nowrap; }
+.observations .status.missing  { background: rgba(208,160,96,0.18); color: #d0a060; }
+.observations .status.cant_see { background: rgba(208,96,96,0.18);  color: #d06060; }
 .observations .clip { position: relative; flex: 0 0 auto;
                       width: 96px; height: 96px; overflow: hidden;
                       background: #000; border-radius: 3px;

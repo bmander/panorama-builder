@@ -483,6 +483,16 @@ type ControlPointImageObservation struct {
 	SizeRad           float64    `json:"size_rad"`
 	StationCapturedAt *time.Time `json:"station_captured_at"`
 
+	// StationDerivedWindow Implicit capture-time bounds for a station, derived from its
+	// cp_observations and the lifespan of the CPs they reference.
+	// Station is a single time-point variable (not an interval), so
+	// the window is just (lower, upper). A precise captured_at on the
+	// parent appears as both the lower and upper. inconsistent is
+	// true when the observation graph constrains this station's
+	// capture time to an empty interval (e.g. observing two CPs
+	// with non-overlapping lifespans).
+	StationDerivedWindow StationDerivedWindow `json:"station_derived_window"`
+
 	// StationID 13-character base32 server-assigned id
 	StationID   ID      `json:"station_id"`
 	StationLat  float64 `json:"station_lat"`
@@ -525,6 +535,16 @@ type ControlPointVisiblePhoto struct {
 	// PhotoID 13-character base32 server-assigned id
 	PhotoID           ID         `json:"photo_id"`
 	StationCapturedAt *time.Time `json:"station_captured_at"`
+
+	// StationDerivedWindow Implicit capture-time bounds for a station, derived from its
+	// cp_observations and the lifespan of the CPs they reference.
+	// Station is a single time-point variable (not an interval), so
+	// the window is just (lower, upper). A precise captured_at on the
+	// parent appears as both the lower and upper. inconsistent is
+	// true when the observation graph constrains this station's
+	// capture time to an empty interval (e.g. observing two CPs
+	// with non-overlapping lifespans).
+	StationDerivedWindow StationDerivedWindow `json:"station_derived_window"`
 
 	// StationID 13-character base32 server-assigned id
 	StationID   ID      `json:"station_id"`

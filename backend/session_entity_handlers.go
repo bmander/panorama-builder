@@ -1047,20 +1047,21 @@ func (s *Server) listControlPointObservationsInSession(w http.ResponseWriter, r 
 	out := make([]ControlPointImageObservation, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, ControlPointImageObservation{
-			ID:                r.im.ID,
-			PhotoID:           r.im.PhotoID,
-			U:                 r.im.U,
-			V:                 r.im.V,
-			StationID:         r.p.StationID,
-			StationName:       r.st.Name,
-			StationLat:        r.st.Lat,
-			StationLng:        r.st.Lng,
-			StationCapturedAt: r.st.CapturedAt,
-			PhotoAz:           r.p.PhotoAz,
-			PhotoTilt:         r.p.PhotoTilt,
-			PhotoRoll:         r.p.PhotoRoll,
-			SizeRad:           r.p.SizeRad,
-			Aspect:            r.p.Aspect,
+			ID:                   r.im.ID,
+			PhotoID:              r.im.PhotoID,
+			U:                    r.im.U,
+			V:                    r.im.V,
+			StationID:            r.p.StationID,
+			StationName:          r.st.Name,
+			StationLat:           r.st.Lat,
+			StationLng:           r.st.Lng,
+			StationCapturedAt:    r.st.CapturedAt,
+			StationDerivedWindow: r.st.DerivedWindow,
+			PhotoAz:              r.p.PhotoAz,
+			PhotoTilt:            r.p.PhotoTilt,
+			PhotoRoll:            r.p.PhotoRoll,
+			SizeRad:              r.p.SizeRad,
+			Aspect:               r.p.Aspect,
 		})
 	}
 	writeJSON(w, http.StatusOK, ControlPointObservations{ImageMeasurements: out})
@@ -1116,13 +1117,6 @@ func (s *Server) listControlPointVisiblePhotosInSession(w http.ResponseWriter, r
 		return
 	}
 
-	type visRow struct {
-		photoID           string
-		stationID         string
-		stationName       *string
-		stationCapturedAt *time.Time
-	}
-	rows := make([]visRow, 0, len(photos))
 	for _, p := range photos {
 		if taken[p.ID] {
 			continue
@@ -1141,28 +1135,21 @@ func (s *Server) listControlPointVisiblePhotosInSession(w http.ResponseWriter, r
 		if !inHorizontalViewshed(st.Lat, st.Lng, *cp.EstLat, *cp.EstLng, p.PhotoAz, p.SizeRad) {
 			continue
 		}
-		rows = append(rows, visRow{
-			photoID:           p.ID,
-			stationID:         p.StationID,
-			stationName:       st.Name,
-			stationCapturedAt: st.CapturedAt,
-		})
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		a, b := rows[i], rows[j]
-		if !timePtrEqual(a.stationCapturedAt, b.stationCapturedAt) {
-			return timePtrLess(a.stationCapturedAt, b.stationCapturedAt)
-		}
-		return a.photoID < b.photoID
-	})
-	for _, r := range rows {
 		out.Photos = append(out.Photos, ControlPointVisiblePhoto{
-			PhotoID:           r.photoID,
-			StationID:         r.stationID,
-			StationName:       r.stationName,
-			StationCapturedAt: r.stationCapturedAt,
+			PhotoID:              p.ID,
+			StationID:            p.StationID,
+			StationName:          st.Name,
+			StationCapturedAt:    st.CapturedAt,
+			StationDerivedWindow: st.DerivedWindow,
 		})
 	}
+	sort.Slice(out.Photos, func(i, j int) bool {
+		a, b := out.Photos[i], out.Photos[j]
+		if !timePtrEqual(a.StationCapturedAt, b.StationCapturedAt) {
+			return timePtrLess(a.StationCapturedAt, b.StationCapturedAt)
+		}
+		return a.PhotoID < b.PhotoID
+	})
 	writeJSON(w, http.StatusOK, out)
 }
 
