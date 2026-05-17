@@ -7,7 +7,7 @@ import iconUrl from 'leaflet/dist/images/marker-icon.png';
 import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png';
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
 L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl, shadowUrl });
-import { M_PER_DEG_LAT, R_EARTH, viewerAzToBearing } from './geo.js';
+import { R_EARTH, tangentMetersToLatLng, viewerAzToBearing } from './geo.js';
 import { degToRad, dot3, norm2, norm3, radToDeg } from './mathx.js';
 import {
   cpHref, fmtAlt, formatLifespanLines, sigmaSeverityClass, worstHorizontalSigma,
@@ -273,7 +273,7 @@ export function createMapView({
   // Pixel size of the station divIcon and the SVG viewBox half-extent.
   const STATION_ICON_PX = 80;
   const STATION_ICON_R = 36; // wedge radius inside the SVG, in viewBox units
-  const STATION_APEX_R = 4;  // viewBox units; matches the existing apex circle.
+  const STATION_APEX_R = 4;
 
   // Lock indicators rendered around a marker's central dot.
   //   lockPos → outline ring just outside the dot (lat+lng both locked)
@@ -391,8 +391,9 @@ export function createMapView({
   const previewRayLayers: L.Polyline[] = [];
   let indexControlPoints: readonly IndexControlPoint[] = [];
   const indexCpDots = new Map<string, L.Marker>();
-  const CP_DOT_R = 5;             // viewBox units; matches the prior CSS-styled cp-dot diameter.
-  const CP_ICON_PX = 2 * (CP_DOT_R + LOCK_RING_GAP + LOCK_STROKE_W); // leaves room for the outline.
+  const CP_DOT_R = 5;
+  // Leave room around the dot for the lock-pos ring plus its stroke.
+  const CP_ICON_PX = 2 * (CP_DOT_R + LOCK_RING_GAP + LOCK_STROKE_W);
   function cpIconHtml(lockPos: boolean, lockAlt: boolean): string {
     const half = CP_ICON_PX / 2;
     return `<svg viewBox="${-half} ${-half} ${CP_ICON_PX} ${CP_ICON_PX}" width="${CP_ICON_PX}" height="${CP_ICON_PX}" xmlns="http://www.w3.org/2000/svg">`
@@ -432,13 +433,13 @@ export function createMapView({
       + `<label class="popup-lock-row"><input type="checkbox" class="popup-lock" data-lock="pos"${ck(lockPos)}> lock location</label>`
       + `<label class="popup-lock-row"><input type="checkbox" class="popup-lock" data-lock="alt"${ck(lockAlt)}> lock elevation</label>`;
   }
-  // 1-σ uncertainty ellipse rendered as a 48-segment leaflet polygon (no
-  // native ellipse class). When cov is present, the ellipse's principal
-  // axis aligns with the actual horizontal-position covariance eigenvector;
-  // otherwise it degenerates to an axis-aligned ellipse (σ_lng E-W, σ_lat
-  // N-S). Severity bucket still uses the worst-axis σ so the colour scale
-  // matches the popup readout.
-  function drawUncertaintyCircle(
+  // 1-σ ellipse from the 2×2 horizontal-position covariance. The principal
+  // axis aligns with cov's larger eigenvector when present; with cov=0 it
+  // degenerates to an axis-aligned ellipse. Severity bucket uses the
+  // worst-axis σ so the colour scale matches the popup readout. Sampled as
+  // a polygon because Leaflet lacks a native ellipse primitive.
+  const ELLIPSE_SEGMENTS = 32;
+  function drawUncertaintyEllipse(
     latlng: LatLng,
     sigLat: number | null, sigLng: number | null, covLatLng: number | null,
   ): L.Polygon | null {
@@ -446,7 +447,6 @@ export function createMapView({
     const severity = sigmaSeverityClass(
       worstHorizontalSigma(sigLat, sigLng),
       SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M);
-    // Eigendecomposition of [[σ_E², cov], [cov, σ_N²]] in E,N order.
     const vE = sigLng * sigLng;
     const vN = sigLat * sigLat;
     const cov = covLatLng ?? 0;
@@ -455,23 +455,17 @@ export function createMapView({
     const disc = Math.sqrt(half * half + cov * cov);
     const major = Math.sqrt(Math.max(mean + disc, 0));
     const minor = Math.sqrt(Math.max(mean - disc, 0));
-    // atan2(2·cov, vE - vN) / 2 lands the major axis along the larger
-    // eigenvector. Zero cov (or σ_E ≈ σ_N) leaves the ellipse axis-aligned.
     const theta = 0.5 * Math.atan2(2 * cov, vE - vN);
     const cosT = Math.cos(theta), sinT = Math.sin(theta);
-    const cosLat = Math.cos(latlng.lat * Math.PI / 180);
-    const segments = 48;
     const ring: L.LatLngTuple[] = [];
-    for (let i = 0; i < segments; ++i) {
-      const phi = (2 * Math.PI * i) / segments;
+    for (let i = 0; i < ELLIPSE_SEGMENTS; ++i) {
+      const phi = (2 * Math.PI * i) / ELLIPSE_SEGMENTS;
       const xL = major * Math.cos(phi);
       const yL = minor * Math.sin(phi);
       const dE = xL * cosT - yL * sinT;
       const dN = xL * sinT + yL * cosT;
-      ring.push([
-        latlng.lat + dN / M_PER_DEG_LAT,
-        latlng.lng + dE / (M_PER_DEG_LAT * cosLat),
-      ]);
+      const ll = tangentMetersToLatLng(latlng, dE, -dN);
+      ring.push([ll.lat, ll.lng]);
     }
     return L.polygon(ring, {
       className: `uncertainty-circle ${severity}`,
@@ -537,7 +531,7 @@ export function createMapView({
       .setLatLng([cp.latlng.lat, cp.latlng.lng])
       .setContent(popupHtml)
       .openOn(map);
-    const circle = drawUncertaintyCircle(cp.latlng, cp.sigmaLat, cp.sigmaLng, cp.covLatLng);
+    const circle = drawUncertaintyEllipse(cp.latlng, cp.sigmaLat, cp.sigmaLng, cp.covLatLng);
     if (circle) popup.on('remove', () => { map.removeLayer(circle); });
     wireGoButton(popup, '.move', () => {
       const dot = indexCpDots.get(cp.id);
@@ -690,7 +684,7 @@ export function createMapView({
       .setLatLng([p.latlng.lat, p.latlng.lng])
       .setContent(popupHtml)
       .openOn(map);
-    const circle = drawUncertaintyCircle(p.latlng, p.sigmaLat, p.sigmaLng, p.covLatLng);
+    const circle = drawUncertaintyEllipse(p.latlng, p.sigmaLat, p.sigmaLng, p.covLatLng);
     popup.on('remove', () => {
       if (circle) map.removeLayer(circle);
       applyStationPreview(null);

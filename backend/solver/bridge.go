@@ -252,8 +252,6 @@ func solveBridge(c *solveContext) (Result, error) {
 	stationSigma := make([]float64, nStations*3)
 	photoSigma := make([]float64, nPhotos*6)
 	cpSigma := make([]float64, nCPs*3)
-	// Off-diagonal east-north covariance per entity (m²), used by the
-	// frontend to render a tilted error ellipse.
 	stationCovLatLng := make([]float64, nStations)
 	cpCovLatLng := make([]float64, nCPs)
 
@@ -297,41 +295,41 @@ func solveBridge(c *solveContext) (Result, error) {
 	pinner.Pin(&outSigmaOK)
 
 	cprob := C.pc_problem{
-		n_stations:          C.int32_t(nStations),
-		n_photos:            C.int32_t(nPhotos),
-		n_cps:               C.int32_t(nCPs),
-		n_obs:               C.int32_t(nObs),
-		station_anchor_lla:  floatPtr(stationAnchorLLA),
-		cp_anchor_lla:       floatPtr(cpAnchorLLA),
-		station_offset:      floatPtr(stationOffset),
-		cp_offset:           floatPtr(cpOffset),
-		station_lock:        u8Ptr(stationLock),
-		cp_lock:             u8Ptr(cpLock),
-		photo_pose:          floatPtr(photoPose),
-		photo_aspect:        floatPtr(photoAspect),
-		photo_lock:          u8Ptr(photoLock),
-		photo_station_idx:   i32Ptr(photoStationIdx),
-		cp_axis_rep:         i32Ptr(cpAxisRep),
-		obs_photo_idx:       i32Ptr(obsPhotoIdx),
-		obs_cp_idx:          i32Ptr(obsCPIdx),
-		obs_uv:              floatPtr(obsUV),
-		k_reg_lambda:        C.double(c.cfg.KRegLambda),
-		position_reg_lambda: C.double(c.cfg.PositionRegLambda),
-		max_iters:           C.int32_t(c.cfg.MaxIters),
-		function_tol:        C.double(c.cfg.ResidualTolRad),
-		parameter_tol:       C.double(c.cfg.StepTol),
-		out_iterations:      (*C.int32_t)(unsafe.Pointer(&outIters)),
-		out_initial_cost:    (*C.double)(unsafe.Pointer(&outInitCost)),
-		out_final_cost:      (*C.double)(unsafe.Pointer(&outFinalCost)),
-		out_converged:       (*C.int32_t)(unsafe.Pointer(&outConverged)),
-		out_aborted:         (*C.int32_t)(unsafe.Pointer(&outAborted)),
-		out_station_sigma:        floatPtr(stationSigma),
-		out_photo_sigma:          floatPtr(photoSigma),
-		out_cp_sigma:             floatPtr(cpSigma),
-		out_station_cov_lat_lng:  floatPtr(stationCovLatLng),
-		out_cp_cov_lat_lng:       floatPtr(cpCovLatLng),
-		out_sigma_ok:             (*C.int32_t)(unsafe.Pointer(&outSigmaOK)),
-		go_ctx_handle:            C.uint64_t(ctxID),
+		n_stations:              C.int32_t(nStations),
+		n_photos:                C.int32_t(nPhotos),
+		n_cps:                   C.int32_t(nCPs),
+		n_obs:                   C.int32_t(nObs),
+		station_anchor_lla:      floatPtr(stationAnchorLLA),
+		cp_anchor_lla:           floatPtr(cpAnchorLLA),
+		station_offset:          floatPtr(stationOffset),
+		cp_offset:               floatPtr(cpOffset),
+		station_lock:            u8Ptr(stationLock),
+		cp_lock:                 u8Ptr(cpLock),
+		photo_pose:              floatPtr(photoPose),
+		photo_aspect:            floatPtr(photoAspect),
+		photo_lock:              u8Ptr(photoLock),
+		photo_station_idx:       i32Ptr(photoStationIdx),
+		cp_axis_rep:             i32Ptr(cpAxisRep),
+		obs_photo_idx:           i32Ptr(obsPhotoIdx),
+		obs_cp_idx:              i32Ptr(obsCPIdx),
+		obs_uv:                  floatPtr(obsUV),
+		k_reg_lambda:            C.double(c.cfg.KRegLambda),
+		position_reg_lambda:     C.double(c.cfg.PositionRegLambda),
+		max_iters:               C.int32_t(c.cfg.MaxIters),
+		function_tol:            C.double(c.cfg.ResidualTolRad),
+		parameter_tol:           C.double(c.cfg.StepTol),
+		out_iterations:          (*C.int32_t)(unsafe.Pointer(&outIters)),
+		out_initial_cost:        (*C.double)(unsafe.Pointer(&outInitCost)),
+		out_final_cost:          (*C.double)(unsafe.Pointer(&outFinalCost)),
+		out_converged:           (*C.int32_t)(unsafe.Pointer(&outConverged)),
+		out_aborted:             (*C.int32_t)(unsafe.Pointer(&outAborted)),
+		out_station_sigma:       floatPtr(stationSigma),
+		out_photo_sigma:         floatPtr(photoSigma),
+		out_cp_sigma:            floatPtr(cpSigma),
+		out_station_cov_lat_lng: floatPtr(stationCovLatLng),
+		out_cp_cov_lat_lng:      floatPtr(cpCovLatLng),
+		out_sigma_ok:            (*C.int32_t)(unsafe.Pointer(&outSigmaOK)),
+		go_ctx_handle:           C.uint64_t(ctxID),
 	}
 
 	initialState := c.readState()
@@ -451,37 +449,22 @@ func (c *solveContext) mergeSigmaIntoChanges(
 	return changes
 }
 
-// buildSigmaMap converts the flat σ arrays returned by the bridge into the
-// per-entity map exposed on Result. NaN entries are dropped (axis was locked
-// or fully unobservable). Station and CP σ stay in their ENU-meter units
-// since that's what the per-axis residual integrates over; callers that
-// want degrees can scale by 1/M_PER_DEG_LAT.
+// buildSigmaMap converts the flat σ + cov arrays returned by the bridge into
+// the per-entity map exposed on Result. Station and CP positions stay in
+// ENU-meter units (σ in m, cov in m²) since that's what the per-axis
+// residual integrates over; callers that want degrees can scale by
+// 1/M_PER_DEG_LAT.
 func (c *solveContext) buildSigmaMap(
 	stationSigma, photoSigma, cpSigma []float64,
 	stationCovLatLng, cpCovLatLng []float64,
 	cpAxisRep []int32,
 ) map[string]map[string]float64 {
 	out := map[string]map[string]float64{}
+	// NaN ⇒ axis fully unobservable. |v| < ε ⇒ Ceres reports exact zero
+	// for SetParameterBlockConstant blocks (and σ approaching the
+	// double-precision noise floor), neither worth journaling. Using |v|
+	// covers both σ (≥ 0) and cov (signed) without a second helper.
 	put := func(id, key string, v float64) {
-		// NaN: axis fully unobservable. σ below ε: either locked (Ceres
-		// reports zero for SetParameterBlockConstant blocks) or determined
-		// to below double-precision noise — neither is interesting to
-		// surface as a stored uncertainty, so drop both to keep the
-		// journal lean.
-		if math.IsNaN(v) || v < 1e-12 {
-			return
-		}
-		m, ok := out[id]
-		if !ok {
-			m = map[string]float64{}
-			out[id] = m
-		}
-		m[key] = v
-	}
-	// putCov mirrors put() but allows negative values (cov can be either
-	// sign). The |v| < 1e-12 filter catches both Ceres' exact-zero output
-	// for locked / constant blocks and double-precision noise.
-	putCov := func(id, key string, v float64) {
 		if math.IsNaN(v) || math.Abs(v) < 1e-12 {
 			return
 		}
@@ -500,7 +483,7 @@ func (c *solveContext) buildSigmaMap(
 		put(st.ID, "sigma_lng", stationSigma[3*i+axisEast])
 		put(st.ID, "sigma_lat", stationSigma[3*i+axisNorth])
 		put(st.ID, "sigma_alt", stationSigma[3*i+axisUp])
-		putCov(st.ID, "cov_lat_lng", stationCovLatLng[i])
+		put(st.ID, "cov_lat_lng", stationCovLatLng[i])
 	}
 	for i, p := range c.problem.Photos {
 		put(p.ID, "sigma_photo_az", photoSigma[6*i+0])
@@ -522,7 +505,7 @@ func (c *solveContext) buildSigmaMap(
 		put(cp.ID, "sigma_est_alt", cpSigma[3*uRep+axisUp])
 		// Reading cov off the rep mirrors the σ logic: aliased members all
 		// see the same covariance because they share the underlying block.
-		putCov(cp.ID, "cov_est_lat_lng", cpCovLatLng[int(cpAxisRep[3*i+axisEast])])
+		put(cp.ID, "cov_est_lat_lng", cpCovLatLng[int(cpAxisRep[3*i+axisEast])])
 	}
 	return out
 }
