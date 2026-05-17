@@ -171,7 +171,7 @@ func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (*Sessio
 // reduces them into per-entity terminal state. With recordOp coalescing
 // eagerly, each entity already has at most one row, but we re-fold here in
 // case ops are written through a future path that bypasses recordOp.
-func loadSessionOverlay(ctx context.Context, db *pgxpool.Pool, sessionID string) (sessionOverlay, error) {
+func loadSessionOverlay(ctx context.Context, db queryerLike, sessionID string) (sessionOverlay, error) {
 	rows, err := db.Query(ctx, `
 		SELECT seq, entity_type, entity_id, op, before_json, after_json
 		FROM session_ops
