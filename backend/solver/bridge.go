@@ -221,6 +221,20 @@ func solveBridge(c *solveContext) (Result, error) {
 			}
 		}
 	}
+	if c.cfg.PositionRegLambda > 0 {
+		for _, st := range c.problem.Stations {
+			eL, nL, uL := c.scopedStationLocks(st)
+			if !eL {
+				regRows++
+			}
+			if !nL {
+				regRows++
+			}
+			if !uL {
+				regRows++
+			}
+		}
+	}
 	ctxID := registerCtx(&bridgeCtx{cfg: c.cfg, residualSize: 2*nObs + regRows})
 	defer releaseCtx(ctxID)
 
@@ -277,38 +291,39 @@ func solveBridge(c *solveContext) (Result, error) {
 	pinner.Pin(&outSigmaOK)
 
 	cprob := C.pc_problem{
-		n_stations:         C.int32_t(nStations),
-		n_photos:           C.int32_t(nPhotos),
-		n_cps:              C.int32_t(nCPs),
-		n_obs:              C.int32_t(nObs),
-		station_anchor_lla: floatPtr(stationAnchorLLA),
-		cp_anchor_lla:      floatPtr(cpAnchorLLA),
-		station_offset:     floatPtr(stationOffset),
-		cp_offset:          floatPtr(cpOffset),
-		station_lock:       u8Ptr(stationLock),
-		cp_lock:            u8Ptr(cpLock),
-		photo_pose:         floatPtr(photoPose),
-		photo_aspect:       floatPtr(photoAspect),
-		photo_lock:         u8Ptr(photoLock),
-		photo_station_idx:  i32Ptr(photoStationIdx),
-		cp_axis_rep:        i32Ptr(cpAxisRep),
-		obs_photo_idx:      i32Ptr(obsPhotoIdx),
-		obs_cp_idx:         i32Ptr(obsCPIdx),
-		obs_uv:             floatPtr(obsUV),
-		k_reg_lambda:       C.double(c.cfg.KRegLambda),
-		max_iters:          C.int32_t(c.cfg.MaxIters),
-		function_tol:       C.double(c.cfg.ResidualTolRad),
-		parameter_tol:      C.double(c.cfg.StepTol),
-		out_iterations:     (*C.int32_t)(unsafe.Pointer(&outIters)),
-		out_initial_cost:   (*C.double)(unsafe.Pointer(&outInitCost)),
-		out_final_cost:     (*C.double)(unsafe.Pointer(&outFinalCost)),
-		out_converged:      (*C.int32_t)(unsafe.Pointer(&outConverged)),
-		out_aborted:        (*C.int32_t)(unsafe.Pointer(&outAborted)),
-		out_station_sigma:  floatPtr(stationSigma),
-		out_photo_sigma:    floatPtr(photoSigma),
-		out_cp_sigma:       floatPtr(cpSigma),
-		out_sigma_ok:       (*C.int32_t)(unsafe.Pointer(&outSigmaOK)),
-		go_ctx_handle:      C.uint64_t(ctxID),
+		n_stations:          C.int32_t(nStations),
+		n_photos:            C.int32_t(nPhotos),
+		n_cps:               C.int32_t(nCPs),
+		n_obs:               C.int32_t(nObs),
+		station_anchor_lla:  floatPtr(stationAnchorLLA),
+		cp_anchor_lla:       floatPtr(cpAnchorLLA),
+		station_offset:      floatPtr(stationOffset),
+		cp_offset:           floatPtr(cpOffset),
+		station_lock:        u8Ptr(stationLock),
+		cp_lock:             u8Ptr(cpLock),
+		photo_pose:          floatPtr(photoPose),
+		photo_aspect:        floatPtr(photoAspect),
+		photo_lock:          u8Ptr(photoLock),
+		photo_station_idx:   i32Ptr(photoStationIdx),
+		cp_axis_rep:         i32Ptr(cpAxisRep),
+		obs_photo_idx:       i32Ptr(obsPhotoIdx),
+		obs_cp_idx:          i32Ptr(obsCPIdx),
+		obs_uv:              floatPtr(obsUV),
+		k_reg_lambda:        C.double(c.cfg.KRegLambda),
+		position_reg_lambda: C.double(c.cfg.PositionRegLambda),
+		max_iters:           C.int32_t(c.cfg.MaxIters),
+		function_tol:        C.double(c.cfg.ResidualTolRad),
+		parameter_tol:       C.double(c.cfg.StepTol),
+		out_iterations:      (*C.int32_t)(unsafe.Pointer(&outIters)),
+		out_initial_cost:    (*C.double)(unsafe.Pointer(&outInitCost)),
+		out_final_cost:      (*C.double)(unsafe.Pointer(&outFinalCost)),
+		out_converged:       (*C.int32_t)(unsafe.Pointer(&outConverged)),
+		out_aborted:         (*C.int32_t)(unsafe.Pointer(&outAborted)),
+		out_station_sigma:   floatPtr(stationSigma),
+		out_photo_sigma:     floatPtr(photoSigma),
+		out_cp_sigma:        floatPtr(cpSigma),
+		out_sigma_ok:        (*C.int32_t)(unsafe.Pointer(&outSigmaOK)),
+		go_ctx_handle:       C.uint64_t(ctxID),
 	}
 
 	initialState := c.readState()

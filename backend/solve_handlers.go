@@ -82,6 +82,9 @@ func parseSolveConfig(w http.ResponseWriter, r *http.Request) (solver.Config, bo
 	if req.KRegLambda != nil {
 		cfg.KRegLambda = *req.KRegLambda
 	}
+	if req.PositionRegLambda != nil {
+		cfg.PositionRegLambda = *req.PositionRegLambda
+	}
 	return cfg, true
 }
 

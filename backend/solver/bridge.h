@@ -59,7 +59,8 @@ typedef struct {
     const double  *obs_uv;              // [n_obs * 2]
 
     // Tuning.
-    double  k_reg_lambda;       // 0 disables Tikhonov on K1/K2
+    double  k_reg_lambda;            // 0 disables Tikhonov on K1/K2
+    double  position_reg_lambda;     // 0 disables station-offset prior
     int32_t max_iters;
     double  function_tol;       // maps to options.function_tolerance
     double  parameter_tol;      // maps to options.parameter_tolerance

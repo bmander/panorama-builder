@@ -973,6 +973,9 @@ type SolveConfig struct {
 	// MaxIters GN iteration cap (synchronous default 30
 	MaxIters *int `json:"max_iters,omitempty"`
 
+	// PositionRegLambda Tikhonov prior on each unlocked station's ENU offset (meters) from its user-supplied lat/lng. Each axis adds residual √λ·offset_m. Default 0 (off). Useful range ~1e-8 to 1e-3; λ=(σ_residual_rad/σ_position_m)².
+	PositionRegLambda *float64 `json:"position_reg_lambda,omitempty"`
+
 	// RelImproveTol per-iteration fractional reduction in residual RMS below which the run is considered converged (default 1e-4); push smaller for tighter convergence at the cost of more iterations
 	RelImproveTol *float64 `json:"rel_improve_tol,omitempty"`
 

@@ -1436,6 +1436,11 @@ export interface components {
              */
             k_reg_lambda?: number;
             /**
+             * Format: double
+             * @description Tikhonov prior on each unlocked station's ENU offset (meters) from its user-supplied lat/lng. Each axis adds residual √λ·offset_m. Default 0 (off). Useful range ~1e-8 to 1e-3; λ=(σ_residual_rad/σ_position_m)².
+             */
+            position_reg_lambda?: number;
+            /**
              * @description When true, run the solver but skip the DB writeback. The response
              *     still carries iterations, residuals, auto_locked_columns, and the
              *     diff that would have been applied. Useful for diagnosis.

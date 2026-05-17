@@ -57,6 +57,7 @@ export function createSolveModal(
   const tolEl = getElement<HTMLInputElement>('solve-residual-tol');
   const relImproveTolEl = getElement<HTMLInputElement>('solve-rel-improve-tol');
   const kRegLambdaEl = getElement<HTMLInputElement>('solve-k-reg-lambda');
+  const positionRegLambdaEl = getElement<HTMLInputElement>('solve-position-reg-lambda');
   const dryRunEl = getElement<HTMLInputElement>('solve-dry-run');
   const progressEl = getElement('solve-progress');
   const statusEl = getElement('solve-status');
@@ -70,6 +71,7 @@ export function createSolveModal(
     tolEl.disabled = running;
     relImproveTolEl.disabled = running;
     kRegLambdaEl.disabled = running;
+    positionRegLambdaEl.disabled = running;
     dryRunEl.disabled = running;
     runBtn.hidden = running;
     closeBtn.hidden = running;
@@ -214,6 +216,13 @@ export function createSolveModal(
       if (!Number.isFinite(parsed)) { kRegLambdaEl.focus(); return; }
       kRegLambda = parsed;
     }
+    const positionRegRaw = positionRegLambdaEl.value.trim();
+    let positionRegLambda: number | null = null;
+    if (positionRegRaw !== '') {
+      const parsed = parseFloat(positionRegRaw);
+      if (!Number.isFinite(parsed) || parsed < 0) { positionRegLambdaEl.focus(); return; }
+      positionRegLambda = parsed;
+    }
     const dryRun = dryRunEl.checked;
     const base: api.SolveConfig = {
       residual_tol_rad: tol,
@@ -221,6 +230,7 @@ export function createSolveModal(
       dry_run: dryRun,
     };
     if (kRegLambda !== null) base.k_reg_lambda = kRegLambda;
+    if (positionRegLambda !== null) base.position_reg_lambda = positionRegLambda;
 
     setRunning(true);
     progressEl.hidden = false;

@@ -143,6 +143,15 @@ type Config struct {
 	// (lots of corner-spread observations) essentially untouched. Pass a
 	// negative value to opt out entirely.
 	KRegLambda float64
+	// PositionRegLambda is the Tikhonov weight applied to each station's
+	// ENU offset (east, north, up in meters) from its user-supplied lat/lng.
+	// Each unlocked station axis adds a residual √λ·offset_m, pulling the
+	// station back toward where the user placed it unless the observations
+	// genuinely demand otherwise. Zero ⇒ no prior (default). Useful units:
+	// λ = (σ_residual_rad / σ_position_m)². For example, λ = 1e-6 weighs a
+	// 1-m drift the same as a 1-mrad bearing error; λ = 1e-4 makes 100 m of
+	// drift cost about the same as a 1-rad bearing residual.
+	PositionRegLambda float64
 }
 
 func (c Config) withDefaults() Config {

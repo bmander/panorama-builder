@@ -235,19 +235,20 @@ struct ObsCost {
     }
 };
 
-// Tikhonov regularization on one of the photo's distortion coefficients.
-// Adds a 1-residual block emitting √λ · K_i, pulling the coefficient toward 0.
-// k_idx selects K1 (4) or K2 (5) within the 6-vector pose block.
-struct KRegCost {
+// Tikhonov L2 regularization on one scalar within a parameter block. Adds
+// a 1-residual block emitting √λ · x[idx], pulling the value toward 0. Used
+// for both K1/K2 (idx 4/5 within the 6-vec photo block) and station ENU
+// offsets (idx 0 against a 1-D axis block).
+struct TikhonovL2Cost {
     double sqrt_lambda;
-    int    k_idx;
+    int    idx;
 
-    KRegCost(double sqrt_lambda_in, int k_idx_in)
-        : sqrt_lambda(sqrt_lambda_in), k_idx(k_idx_in) {}
+    TikhonovL2Cost(double sqrt_lambda_in, int idx_in)
+        : sqrt_lambda(sqrt_lambda_in), idx(idx_in) {}
 
     template <typename T>
-    bool operator()(const T* const photo, T* residual) const {
-        residual[0] = T(sqrt_lambda) * photo[k_idx];
+    bool operator()(const T* const x, T* residual) const {
+        residual[0] = T(sqrt_lambda) * x[idx];
         return true;
     }
 };

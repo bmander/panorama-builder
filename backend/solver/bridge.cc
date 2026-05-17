@@ -27,7 +27,22 @@ namespace {
 using ::pc::Anchor;
 using ::pc::MakeAnchor;
 using ::pc::ObsCost;
-using ::pc::KRegCost;
+using ::pc::TikhonovL2Cost;
+
+// Bound constraints installed on the photo parameter block. size_rad mirrors
+// the post-solve clampSize() in Go; K1/K2 use a generous physical range that
+// covers normal-lens Brown-Conrady values without letting the weakly-observed
+// narrow-FOV case run off to enormous magnitudes.
+constexpr double kSizeRadLo = 2.0 * 3.14159265358979323846 / 180.0;  // 2°
+constexpr double kSizeRadHi = 3.14159265358979323846 * 0.95;
+constexpr double kKBound    = 0.5;
+
+// Cauchy loss scale (radians) for the angular observation residuals. Below
+// this scale the loss is ~L2; well above it the influence of an outlier
+// observation is smoothly attenuated. Picked so well-fit residuals
+// (sub-10 mrad) are essentially L2 while a wandering iterate doesn't get
+// yanked by a few catastrophically misprojected observations.
+constexpr double kObsCauchyScale = 0.01;
 
 // Exported from Go via //export pc_iter_callback in bridge_ceres.go. Returns
 // 1 to abort the solve, 0 to continue. The handle round-trips an opaque Go
@@ -150,7 +165,24 @@ int Run(const pc_problem* prob) {
         }
     }
     for (int i = 0; i < n_photos; ++i) {
-        problem.AddParameterBlock(photo_block(i), 6);
+        double* pb = photo_block(i);
+        // Project any out-of-bounds initial value onto the feasible interval
+        // before installing the bound — Ceres errors if the initial iterate
+        // violates the bound. K1/K2 in particular may carry values from a
+        // prior diverged solve that fall outside [-kKBound, kKBound].
+        if (pb[3] < kSizeRadLo) pb[3] = kSizeRadLo;
+        if (pb[3] > kSizeRadHi) pb[3] = kSizeRadHi;
+        if (pb[4] < -kKBound)   pb[4] = -kKBound;
+        if (pb[4] >  kKBound)   pb[4] =  kKBound;
+        if (pb[5] < -kKBound)   pb[5] = -kKBound;
+        if (pb[5] >  kKBound)   pb[5] =  kKBound;
+        problem.AddParameterBlock(pb, 6);
+        problem.SetParameterLowerBound(pb, 3, kSizeRadLo);
+        problem.SetParameterUpperBound(pb, 3, kSizeRadHi);
+        problem.SetParameterLowerBound(pb, 4, -kKBound);
+        problem.SetParameterUpperBound(pb, 4,  kKBound);
+        problem.SetParameterLowerBound(pb, 5, -kKBound);
+        problem.SetParameterUpperBound(pb, 5,  kKBound);
     }
     for (int i = 0; i < n_cps; ++i) {
         for (int axis = 0; axis < 3; ++axis) {
@@ -177,7 +209,7 @@ int Run(const pc_problem* prob) {
             /*cE*/1, /*cN*/1, /*cU*/1>(functor);
 
         problem.AddResidualBlock(
-            cost, nullptr,
+            cost, new ceres::CauchyLoss(kObsCauchyScale),
             station_block(s_idx, /*east */0),
             station_block(s_idx, /*north*/1),
             station_block(s_idx, /*up   */2),
@@ -192,14 +224,30 @@ int Run(const pc_problem* prob) {
         for (int i = 0; i < n_photos; ++i) {
             const uint8_t* lock = prob->photo_lock + 6*i;
             if (!lock[4]) {
-                auto* cost = new ceres::AutoDiffCostFunction<KRegCost, 1, 6>(
-                    new KRegCost(sqrt_lambda, 4));
+                auto* cost = new ceres::AutoDiffCostFunction<TikhonovL2Cost, 1, 6>(
+                    new TikhonovL2Cost(sqrt_lambda, 4));
                 problem.AddResidualBlock(cost, nullptr, photo_block(i));
             }
             if (!lock[5]) {
-                auto* cost = new ceres::AutoDiffCostFunction<KRegCost, 1, 6>(
-                    new KRegCost(sqrt_lambda, 5));
+                auto* cost = new ceres::AutoDiffCostFunction<TikhonovL2Cost, 1, 6>(
+                    new TikhonovL2Cost(sqrt_lambda, 5));
                 problem.AddResidualBlock(cost, nullptr, photo_block(i));
+            }
+        }
+    }
+
+    // Pulls each unlocked station's ENU offset toward 0 (the user-supplied
+    // lat/lng/alt). Locked axes are already constant so the residual would be
+    // a no-op constant — skip.
+    if (prob->position_reg_lambda > 0.0) {
+        const double sqrt_lambda = std::sqrt(prob->position_reg_lambda);
+        for (int i = 0; i < n_stations; ++i) {
+            const uint8_t* lock = prob->station_lock + 3*i;
+            for (int axis = 0; axis < 3; ++axis) {
+                if (lock[axis]) continue;
+                auto* cost = new ceres::AutoDiffCostFunction<TikhonovL2Cost, 1, 1>(
+                    new TikhonovL2Cost(sqrt_lambda, 0));
+                problem.AddResidualBlock(cost, nullptr, station_block(i, axis));
             }
         }
     }
