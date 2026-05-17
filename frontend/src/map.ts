@@ -9,8 +9,10 @@ import shadowUrl from 'leaflet/dist/images/marker-shadow.png';
 L.Icon.Default.mergeOptions({ iconUrl, iconRetinaUrl, shadowUrl });
 import { R_EARTH, viewerAzToBearing } from './geo.js';
 import { degToRad, dot3, norm2, norm3, radToDeg } from './mathx.js';
-import { cpHref, fmtAlt, sigmaSeverityClass, worstHorizontalSigma } from './types.js';
-import type { Cone, LatLng } from './types.js';
+import {
+  cpHref, fmtAlt, formatLifespanLines, sigmaSeverityClass, worstHorizontalSigma,
+} from './types.js';
+import type { Cone, CPLifespan, LatLng } from './types.js';
 import { SIGMA_POS_REFUSE_M, SIGMA_POS_WARN_M } from './sigma-thresholds.js';
 import { TILE_PX, fetchTileElevations, tileYToLat } from './dem.js';
 import { NULL_CP_RAY_CSS, NULL_CP_RAY_LENGTH_M } from './null-cp-rays.js';
@@ -63,6 +65,7 @@ export interface IndexControlPoint {
   lockAlt: boolean;
   sigmaLat: number | null;
   sigmaLng: number | null;
+  lifespan: CPLifespan;
 }
 
 // Patch shape for the lock callbacks. Either field present means the user
@@ -446,7 +449,12 @@ export function createMapView({
 
   function openIndexCpPopup(cp: IndexControlPoint): void {
     const label = cp.description || `cp ${cp.id.slice(0, 6)}`;
+    const [startedLine, endedLine] = formatLifespanLines(cp.lifespan);
     const popupHtml = `<span class="name">${escapeHtml(label)}</span>`
+      + `<div class="popup-dates">`
+      + `<div>${escapeHtml(startedLine)}</div>`
+      + `<div>${escapeHtml(endedLine)}</div>`
+      + `</div>`
       + paramRowsHtml(cp.alt, cp.lockLat && cp.lockLng, cp.lockAlt)
       + `<a class="go" href="${cpHref(cp.id)}">View details →</a>`
       + goButtonHtml('Move', 'move');

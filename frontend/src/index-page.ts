@@ -86,7 +86,8 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     for (const cp of cpsById.values()) {
       if (cp.est_lat === null || cp.est_lng === null) continue;
       const observed = previewObservedCpIds.has(cp.id);
-      if (!observed && !isExtantAt(cpLifespanFromApi(cp), filterMs)) continue;
+      const lifespan = cpLifespanFromApi(cp);
+      if (!observed && !isExtantAt(lifespan, filterMs)) continue;
       dots.push({
         id: cp.id,
         latlng: { lat: cp.est_lat, lng: cp.est_lng },
@@ -97,6 +98,7 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
         lockAlt: cp.lock_est_alt,
         sigmaLat: cp.sigma_est_lat ?? null,
         sigmaLng: cp.sigma_est_lng ?? null,
+        lifespan,
       });
     }
     view.setIndexControlPoints(dots);

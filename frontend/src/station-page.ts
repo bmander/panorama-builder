@@ -32,8 +32,8 @@ import { createPhotoPreviews } from './photo-previews.js';
 import { createDotLayer, findHitDot } from './dot-layer.js';
 import type { Dot } from './dot-layer.js';
 import {
-  cpHref, cpLabel, cpLifespanFromApi, getElement, indexStationHref, isExtantAt,
-  parseStaFromURL, stationHref,
+  cpHref, cpLabel, cpLifespanFromApi, formatLifespanLines, getElement,
+  indexStationHref, isExtantAt, parseStaFromURL, stationHref,
   meshMat, overlayData, poiData,
 } from './types.js';
 import { groundDistance, latLngToCameraRelativeMeters, tangentMetersToLatLng, vecToAzAlt } from './geo.js';
@@ -782,6 +782,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   ): void {
     const cp = overlays.controlPoints.getById(cpId);
     const header = cpLabel(cp?.description ?? '');
+    const info = cp ? formatLifespanLines(cp) : undefined;
     const items: ContextMenuItem[] = [
       { label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } },
     ];
@@ -832,13 +833,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       items.push(
         { label: 'Mark missing', onClick: () => { postObservation('missing'); } },
         { label: 'Can\'t see — occluded', onClick: () => { postObservation('cant_see', 'occluded'); } },
-        { label: 'Can\'t see — too far', onClick: () => { postObservation('cant_see', 'too_far'); } },
-        { label: 'Can\'t see — out of focus', onClick: () => { postObservation('cant_see', 'out_of_focus'); } },
+        { label: 'Can\'t see — unclear', onClick: () => { postObservation('cant_see', 'unclear'); } },
       );
     }
     // Nudge the menu right so the CP marker (and any reticules just
     // revealed by the selection above) stays uncovered by the menu.
-    contextMenu.open(sx + 20, sy, items, header);
+    contextMenu.open(sx + 20, sy, items, header, info);
   }
 
   function writeCameraToURL(): void {

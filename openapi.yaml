@@ -1601,7 +1601,7 @@ components:
 
     CpObservationReason:
       type: string
-      enum: [occluded, too_far, out_of_focus, other]
+      enum: [occluded, unclear, other]
       description: |
         Why the station can't see the CP. Required when status is
         cant_see; null otherwise.

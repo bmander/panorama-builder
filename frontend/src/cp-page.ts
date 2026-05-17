@@ -2,7 +2,8 @@ import * as api from './api.js';
 import { degToRad } from './mathx.js';
 import {
   appendSigmaMeters, appendSigmaScalar, cpLabel, fmtAlt, formatEstimateRange,
-  formatLocalDateTime, getElement, indexCpHref, stationHref, stationLabel,
+  formatImpreciseDate, formatLocalDateTime, getElement, indexCpHref,
+  stationHref, stationLabel,
 } from './types.js';
 import {
   SIGMA_ALT_REFUSE_M, SIGMA_ALT_WARN_M,
@@ -14,18 +15,6 @@ const CP_ID_RE = /^\/cp\/([A-Z2-7]{13})$/;
 const CLIP_DEG = 2;
 const CLIP_RAD = degToRad(CLIP_DEG);
 const CLIP_SIZE_PX = 96;
-
-// "??" fills a missing bound so "c. 1859–??" reads as "we have a lower
-// bound but no upper" rather than just "1859".
-function fmtStationDate(
-  capturedAt: string | null,
-  window: api.ApiStationDerivedWindow,
-): string {
-  if (capturedAt !== null) return new Date(capturedAt).toLocaleDateString();
-  const yr = (s: string | null): string =>
-    s === null ? '??' : String(new Date(s).getUTCFullYear());
-  return `c. ${yr(window.captured_at_lower)}–${yr(window.captured_at_upper)}`;
-}
 
 function createObservationClip(m: api.ApiControlPointImageObservation): HTMLElement {
   const scaledW = CLIP_SIZE_PX * m.size_rad / CLIP_RAD;
@@ -394,7 +383,10 @@ function renderObservations(obs: api.ApiControlPointObservations): void {
     a.textContent = stationLabel(m.station_id, m.station_name);
     const captured = document.createElement('span');
     captured.className = 'captured-at';
-    captured.textContent = fmtStationDate(m.station_captured_at, m.station_derived_window);
+    captured.textContent = formatImpreciseDate(
+      m.station_captured_at,
+      m.station_derived_window.captured_at_lower,
+      m.station_derived_window.captured_at_upper);
     meta.append(captured, ' in ', a);
     appendObservationItem(list, meta, createObservationClip(m));
   }
@@ -416,9 +408,8 @@ function cpObservationLabel(o: api.ApiCpObservation): string | null {
   if (o.status === 'missing') return 'marked missing';
   if (o.status === 'cant_see') {
     const r = o.reason;
-    if (r === 'occluded')      return "can't see — occluded";
-    if (r === 'too_far')       return "can't see — too far";
-    if (r === 'out_of_focus')  return "can't see — out of focus";
+    if (r === 'occluded') return "can't see — occluded";
+    if (r === 'unclear')  return "can't see — unclear";
     return "can't see";
   }
   return null;
@@ -447,7 +438,10 @@ function renderVisiblePhotos(
     a.textContent = stationLabel(p.station_id, p.station_name);
     const captured = document.createElement('span');
     captured.className = 'captured-at';
-    captured.textContent = fmtStationDate(p.station_captured_at, p.station_derived_window);
+    captured.textContent = formatImpreciseDate(
+      p.station_captured_at,
+      p.station_derived_window.captured_at_lower,
+      p.station_derived_window.captured_at_upper);
     meta.append(captured, ' in ', a);
 
     const obs = observationsByStation.get(p.station_id);

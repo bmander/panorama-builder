@@ -45,10 +45,9 @@ func (e CommitKind) Valid() bool {
 
 // Defines values for CpObservationReason.
 const (
-	Occluded   CpObservationReason = "occluded"
-	Other      CpObservationReason = "other"
-	OutOfFocus CpObservationReason = "out_of_focus"
-	TooFar     CpObservationReason = "too_far"
+	Occluded CpObservationReason = "occluded"
+	Other    CpObservationReason = "other"
+	Unclear  CpObservationReason = "unclear"
 )
 
 // Valid indicates whether the value is a known member of the CpObservationReason enum.
@@ -58,9 +57,7 @@ func (e CpObservationReason) Valid() bool {
 		return true
 	case Other:
 		return true
-	case OutOfFocus:
-		return true
-	case TooFar:
+	case Unclear:
 		return true
 	default:
 		return false

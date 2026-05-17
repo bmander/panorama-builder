@@ -124,6 +124,28 @@ export function formatEstimateRange(lo: string | null, hi: string | null): strin
   return null;
 }
 
+// Always returns a string — empty bounds render as "c. ??–??" so callers
+// can show the field unconditionally and signal "no temporal evidence"
+// without a special placeholder branch.
+export function formatImpreciseDate(
+  precise: string | null, lower: string | null, upper: string | null,
+): string {
+  if (precise !== null) return new Date(precise).toLocaleDateString();
+  const yr = (s: string | null): string =>
+    s === null ? '??' : String(new Date(s).getUTCFullYear());
+  return `c. ${yr(lower)}–${yr(upper)}`;
+}
+
+// "started …" / "ended …" pair used by the map-view CP popup and the
+// world-view CP context menu. Returned as a tuple so callers can render
+// each line in their own DOM shape.
+export function formatLifespanLines(span: CPLifespan): readonly [string, string] {
+  return [
+    `started ${formatImpreciseDate(span.startedAt, span.derivedStartedAtLower, span.derivedStartedAtUpper)}`,
+    `ended ${formatImpreciseDate(span.endedAt, span.derivedEndedAtLower, span.derivedEndedAtUpper)}`,
+  ];
+}
+
 // True when the lifespan window *might* contain timestamp `ms` —
 // i.e., the derived bounds don't rule it out. Open-ended sides (null
 // bounds) pass the gate.

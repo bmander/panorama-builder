@@ -1330,7 +1330,7 @@ export interface components {
          *     cant_see; null otherwise.
          * @enum {string}
          */
-        CpObservationReason: "occluded" | "too_far" | "out_of_focus" | "other";
+        CpObservationReason: "occluded" | "unclear" | "other";
         CpObservation: {
             id: components["schemas"]["Id"];
             station_id: components["schemas"]["Id"];

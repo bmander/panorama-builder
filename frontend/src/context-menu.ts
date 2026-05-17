@@ -6,7 +6,10 @@ export interface ContextMenuItem {
 }
 
 export interface ContextMenu {
-  open(x: number, y: number, items: readonly ContextMenuItem[], header?: string): void;
+  open(
+    x: number, y: number, items: readonly ContextMenuItem[],
+    header?: string, info?: readonly string[],
+  ): void;
   close(): void;
 }
 
@@ -18,13 +21,26 @@ export function createContextMenu(): ContextMenu {
     el.replaceChildren();
   }
 
-  function open(x: number, y: number, items: readonly ContextMenuItem[], header?: string): void {
+  function open(
+    x: number, y: number, items: readonly ContextMenuItem[],
+    header?: string, info?: readonly string[],
+  ): void {
     el.replaceChildren();
     if (header !== undefined) {
       const h = document.createElement('div');
       h.className = 'header';
       h.textContent = header;
       el.appendChild(h);
+    }
+    if (info !== undefined && info.length > 0) {
+      const wrap = document.createElement('div');
+      wrap.className = 'info';
+      for (const line of info) {
+        const row = document.createElement('div');
+        row.textContent = line;
+        wrap.appendChild(row);
+      }
+      el.appendChild(wrap);
     }
     for (const item of items) {
       const btn = document.createElement('button');
