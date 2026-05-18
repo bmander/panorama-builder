@@ -1,29 +1,16 @@
-// Station route: the 360° photo viewer for a single station, with all the
-// scene composition and editor wiring that goes with it. Composes the smaller
-// station-fields, solve-actions, and station-navigation modules.
+// Composition root for the /world?sta=<id> route. Wires the route / scene /
+// sundial / data / panels / interactions controllers and the cross-cutting
+// event subscriptions, then kicks off the first hydrate.
 
 import type { ApiHydratedStation } from './api.js';
-import { attachDownload } from './ui.js';
-import { createCPConstraintModal } from './cp-constraint-modal.js';
-import { createCPSurfaceModal } from './cp-surface-modal.js';
 import { getElement } from './types.js';
-import { createSessionPanel } from './session-panel.js';
-import { createSettingsPanel } from './settings.js';
-import { createAdminModal } from './admin-modal.js';
-import { attachHamburgerMenu } from './hamburger-menu.js';
-import { createContextMenu } from './context-menu.js';
-import { createObservationModal } from './observation-modal.js';
-import { createPhotoHud } from './photo-hud.js';
-import { createUndoManager } from './undo.js';
-import { createStationNavigation } from './station-navigation.js';
-import { createStationFields } from './station-fields.js';
-import { attachSolveActions } from './solve-actions.js';
-import type { SolveActions } from './solve-actions.js';
 import { createStationScene } from './station/scene.js';
 import { createStationRouteState } from './station/route-state.js';
 import { createStationDataController } from './station/data-controller.js';
 import { createStationInteractions } from './station/interactions.js';
 import { createSundialController } from './station/sundial-controller.js';
+import { createStationPanels } from './station/panels.js';
+import { wireStationEvents } from './station/wiring.js';
 
 export interface MountStationPageOptions {
   initialStationId: string;
@@ -33,21 +20,83 @@ export interface MountStationPageOptions {
 
 export async function mountStationPage(opts: MountStationPageOptions): Promise<void> {
   const route = createStationRouteState(opts);
-  const getCurrentStationId = (): string => route.getStationId();
-
-  // --- Viewer + scene singletons -----------------------------------------
-
   const scene = createStationScene({ container: document.body });
-  const {
-    viewer, overlays, worldCamera,
-    terrain, sky, sunMarker,
-    cpSurfacesRenderer,
-    baker, hud,
-    sundialLine, previewLine,
-  } = scene;
 
-  // Fan out pose changes to every camera-anchored consumer except terrain.
-  // Subscribed below; fires automatically on every worldCamera mutation.
+  const sundial = createSundialController({
+    getControlPoint: (id) => scene.overlays.controlPoints.getById(id),
+    getCapturedAtYear: () => {
+      const at = panels.stationFields.getCapturedAt();
+      if (!at) return null;
+      const y = new Date(at).getUTCFullYear();
+      return Number.isFinite(y) ? y : null;
+    },
+  });
+
+  const data = createStationDataController({
+    scene, route,
+    getCapturedAt: () => panels.stationFields.getCapturedAt(),
+    hydrateStationFields: (s) => { panels.stationFields.hydrate(s); },
+    refreshSunDirection: () => { panels.settings.refreshSunDirection(); },
+    getSelectedStationId: () => interactions.getSelectedStationId(),
+    onRefresh: () => { pushPose(); },
+  });
+
+  const panels = createStationPanels({
+    scene, data, route, sundial,
+    onCpConstraintMutated: () => { interactions.clearConstraintSelection(); },
+    onCpConstraintClose: () => { interactions.clearConstraintSelection(); },
+    onCpSurfaceMutated: () => { interactions.clearSurfaceSelection(); },
+    onCpSurfaceClose: () => { interactions.clearSurfaceSelection(); },
+    loadStation,
+  });
+
+  const interactions = createStationInteractions({
+    scene, data, route, sundial,
+    contextMenu: panels.contextMenu,
+    observationModal: panels.observationModal,
+    photoHud: panels.photoHud,
+    undoManager: panels.undoManager,
+    stationNavigation: panels.stationNavigation,
+    openConstraintCreate: (a, b) => { panels.cpConstraintModal.openCreate(a, b); },
+    openConstraintEdit: (c) => { panels.cpConstraintModal.openEdit(c); },
+    openSurfaceEdit: (id) => { panels.cpSurfaceModal.open(id); },
+  });
+
+  wireStationEvents({ scene, data, route, sundial, pushPose, applyStation });
+
+  scene.viewer.setCanvasVisible(true);
+  scene.hud.setVisible(true);
+  getElement('params-panel').hidden = false;
+  // Start the rAF loop before hydrate so the grid sky paints immediately and
+  // each terrain ring / photo texture appears as it arrives, instead of the
+  // canvas staying black until every parallel fetch resolves.
+  scene.viewer.start();
+
+  await data.load(route.getStationId(), undefined, () => {
+    scene.overlays.photos.setSelected(null);
+    scene.overlays.measurements.setSelected(null);
+    panels.admin.setVisible(true);
+    // URL-supplied focus deep-link. URL camera params (applied just after
+    // this hook returns) take precedence so bookmarks restore exactly.
+    const focusedCpId = route.getFocusedCpId();
+    const focusImageMeasurementId = route.consumeFocusImageMeasurementId();
+    if (focusedCpId) {
+      if (!data.focusCameraOnControlPoint(focusedCpId)) {
+        console.warn('focus control point not resolvable:', focusedCpId);
+      }
+    } else if (focusImageMeasurementId && !data.focusCameraOnImageMeasurement(focusImageMeasurementId)) {
+      console.warn('focus image measurement not found:', focusImageMeasurementId);
+    }
+  });
+
+  scene.hud.refresh();
+  panels.photoHud.refresh();
+
+  // Hoisted helpers — referenced from the controller construction above. They
+  // close over the outer consts (scene, data, route, sundial, interactions,
+  // panels); JS hoists the function declarations so the references resolve,
+  // and the closures only fire after every const has been initialized.
+
   function pushPose(): void {
     scene.applyPose({
       cpMarkers: data.getCpMarkers(),
@@ -66,181 +115,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       sundialShadow: sundial.getShadowLocation(),
     });
   }
-  worldCamera.subscribe(pushPose);
 
-  const data = createStationDataController({
-    scene, route,
-    getCapturedAt: () => stationFields.getCapturedAt(),
-    hydrateStationFields: (s) => { stationFields.hydrate(s); },
-    refreshSunDirection: () => { settings.refreshSunDirection(); },
-    getSelectedStationId: () => interactions.getSelectedStationId(),
-    onRefresh: () => { pushPose(); },
-  });
-  const { sync } = data;
-
-  // attachSolveActions runs much later in this function; the widget's Solve
-  // button isn't reachable until then, so the late binding is safe.
-  let solveActions: SolveActions | null = null;
-  createSessionPanel(getElement('session-host'), {
-    onSolve: () => { solveActions?.open(); },
-  });
-
-  const settings = createSettingsPanel({
-    viewer, terrain, sunMarker, sky,
-    getCameraLocation: () => worldCamera.getPose().stationAnchor,
-    onShowAllCPsChange: value => { data.setShowAllCPs(value); },
-    onCpMaxDistanceChange: meters => { data.setCpMaxDistanceM(meters); },
-    onSurfaceOpacityChange: opacity => { cpSurfacesRenderer.setOpacity(opacity); },
-  });
-
-  const admin = createAdminModal({ getCurrentStationId });
-
-  const cpConstraintModal = createCPConstraintModal({
-    getControlPoints: () => overlays.controlPoints.list(),
-    onMutated: () => {
-      interactions.clearConstraintSelection();
-      void data.reloadCPConstraints();
-    },
-    onClose: () => { interactions.clearConstraintSelection(); },
-  });
-
-  const cpSurfaceModal = createCPSurfaceModal({
-    onMutated: () => {
-      interactions.clearSurfaceSelection();
-      void data.reloadCPSurfaces();
-    },
-    onClose: () => { interactions.clearSurfaceSelection(); },
-  });
-
-  const sundial = createSundialController({
-    getControlPoint: (id) => overlays.controlPoints.getById(id),
-    getCapturedAtYear: () => {
-      const at = stationFields.getCapturedAt();
-      if (!at) return null;
-      const y = new Date(at).getUTCFullYear();
-      return Number.isFinite(y) ? y : null;
-    },
-  });
-  sundial.onPicksChange(() => { pushPose(); });
-
-  attachHamburgerMenu();
-
-  // Coarse-pointer viewports start collapsed to reclaim vertical space.
-  {
-    const panel = getElement('params-panel');
-    const toggle = getElement<HTMLButtonElement>('params-toggle');
-    function setCollapsed(collapsed: boolean): void {
-      panel.classList.toggle('collapsed', collapsed);
-      toggle.setAttribute('aria-expanded', String(!collapsed));
-      toggle.textContent = collapsed ? '▸' : '▾';
-    }
-    setCollapsed(matchMedia('(pointer: coarse)').matches);
-    toggle.addEventListener('click', () => {
-      setCollapsed(!panel.classList.contains('collapsed'));
-    });
-  }
-
-  overlays.setCallbacks({
-    onMutate: () => {
-      viewer.requestRender();
-      baker.markDirty();
-      data.refreshControlPointColumns();
-      sync.flush();
-    },
-    onSelectionChange: () => {
-      viewer.requestRender();
-      data.refreshControlPointColumns();
-    },
-    onLightMutate: () => {
-      viewer.requestRender();
-      baker.markDirty();
-      sync.flush();
-    },
-  });
-
-  // --- Input wiring + modals ---------------------------------------------
-
-  const contextMenu = createContextMenu();
-  const undoManager = createUndoManager({
-    overlays, sync,
-    reportError: (label, err) => { sync.reportError(label, err); },
-  });
-  const photoHud = createPhotoHud({ overlays, sync, undoManager });
-  const observationModal = createObservationModal({
-    getControlPoints: () => overlays.controlPoints.list(),
-    onPickExisting: (overlay, u, v, controlPointId) => {
-      void data.handlers.onMatchImageMeasurement(overlay, u, v, controlPointId);
-    },
-    onCreateAndObserve: (overlay, u, v, description) =>
-      data.handlers.onCreateCPAndObserve(overlay, u, v, description),
-  });
-
-  // --- Station fields, solve, navigation ---------------------------------
-
-  const stationFields = createStationFields({
-    getCurrentStationId,
-    onAltitudeChanged: (alt) => {
-      // Re-anchor the station altitude. setStationAnchor also resets the
-      // live camera to the anchor — if shift-wheel had drifted location or
-      // altitude, the form edit snaps the camera back to the station.
-      const pose = worldCamera.getPose();
-      if (!pose.stationAnchor) return;
-      worldCamera.setStationAnchor({ location: pose.stationAnchor, altitudeMSL: alt });
-      scene.pushTerrainFromPose();
-    },
-    onLocationChanged: (loc) => {
-      const pose = worldCamera.getPose();
-      // Form events for a station that has no anchor yet shouldn't be
-      // possible (the form is bound only after hydrate sets the anchor),
-      // but be explicit rather than silently anchor at sea level.
-      if (pose.stationAltitudeMSL === null) return;
-      data.applyCameraLocation(loc, pose.stationAltitudeMSL);
-    },
-  });
-
-  solveActions = attachSolveActions({
-    rehydrate: () => data.rehydrateAfterSolve(),
-    reportError: (label, err) => { sync.reportError(label, err); },
-  });
-
-  const stationNavigation = createStationNavigation({
-    viewer, terrain,
-    cpColumns: scene.cpColumns,
-    photoPreviews: scene.photoPreviews,
-    worldCamera,
-    getCurrentStationId,
-    getStationName: () => stationFields.getNameAndAlt()?.name ?? null,
-    getOtherStations: () => data.getOtherStations(),
-    setOtherStations: (s) => { data.setOtherStations(s); },
-    loadStation: (newId, prefetched) => loadStation(newId, prefetched),
-  });
-
-  const interactions = createStationInteractions({
-    scene, data, route, sundial,
-    contextMenu, observationModal,
-    photoHud, undoManager, stationNavigation,
-    openConstraintCreate: (a, b) => { cpConstraintModal.openCreate(a, b); },
-    openConstraintEdit: (c) => { cpConstraintModal.openEdit(c); },
-    openSurfaceEdit: (id) => { cpSurfaceModal.open(id); },
-  });
-
-  attachDownload({ baker });
-
-  // --- Hydrate + bootstrap -----------------------------------------------
-
-  // Reset interactions + sundial bits on station swap; data.clear() handles
-  // the heavy lifting (sync reset, overlay teardown, list resets, observation
-  // cache, worldCamera).
-  function clearStationData(): void {
-    data.clear();
-    interactions.clearAll();
-    sundial.reset();
-    sundialLine.visible = false;
-    previewLine.visible = false;
-  }
-
-  // Swap to `newId` in place. Caller is responsible for the URL: fly /
-  // station-clicks should pushState first; popstate just calls this.
   async function applyStation(newId: string, prefetched?: ApiHydratedStation): Promise<void> {
     if (newId === route.getStationId()) return;
     route.clearFocusedCpId();
@@ -254,37 +129,11 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     await applyStation(newId, prefetched);
   }
 
-  route.onPopState(sta => {
-    if (!sta) return;
-    if (sta !== route.getStationId()) void applyStation(sta);
-    else data.applyCameraFromURL();
-  });
-
-  viewer.setCanvasVisible(true);
-  hud.setVisible(true);
-  getElement('params-panel').hidden = false;
-  // Start the rAF loop before hydrate so the grid sky paints immediately and
-  // each terrain ring / photo texture appears as it arrives, instead of the
-  // canvas staying black until every parallel fetch resolves.
-  viewer.start();
-
-  await data.load(route.getStationId(), undefined, () => {
-    overlays.photos.setSelected(null);
-    overlays.measurements.setSelected(null);
-    admin.setVisible(true);
-    // URL-supplied focus deep-link. URL camera params (applied just after
-    // this hook returns) take precedence so bookmarks restore exactly.
-    const focusedCpId = route.getFocusedCpId();
-    const focusImageMeasurementId = route.consumeFocusImageMeasurementId();
-    if (focusedCpId) {
-      if (!data.focusCameraOnControlPoint(focusedCpId)) {
-        console.warn('focus control point not resolvable:', focusedCpId);
-      }
-    } else if (focusImageMeasurementId && !data.focusCameraOnImageMeasurement(focusImageMeasurementId)) {
-      console.warn('focus image measurement not found:', focusImageMeasurementId);
-    }
-  });
-
-  hud.refresh();
-  photoHud.refresh();
+  function clearStationData(): void {
+    data.clear();
+    interactions.clearAll();
+    sundial.reset();
+    scene.sundialLine.visible = false;
+    scene.previewLine.visible = false;
+  }
 }

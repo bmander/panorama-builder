@@ -1,0 +1,192 @@
+// All panel + modal construction for the station view: session panel,
+// settings, admin, CP-constraint / CP-surface modals, context menu,
+// observation modal, photo HUD, undo manager, station fields, station
+// navigation, solve actions. Also wires the hamburger menu, the
+// PNG-download anchor, and the params-panel collapse block.
+//
+// Panel callbacks that need to reach back into interactions (modal onClose
+// handlers, mostly) arrive as opts.onX hooks; station-page.ts supplies them
+// as closures over the (later-declared) interactions binding.
+
+import type { ApiHydratedStation } from '../api.js';
+import { attachDownload } from '../ui.js';
+import { createCPConstraintModal } from '../cp-constraint-modal.js';
+import type { CPConstraintModal } from '../cp-constraint-modal.js';
+import { createCPSurfaceModal } from '../cp-surface-modal.js';
+import type { CPSurfaceModal } from '../cp-surface-modal.js';
+import { getElement } from '../types.js';
+import { createSessionPanel } from '../session-panel.js';
+import type { SessionPanel } from '../session-panel.js';
+import { createSettingsPanel } from '../settings.js';
+import type { SettingsPanel } from '../settings.js';
+import { createAdminModal } from '../admin-modal.js';
+import type { AdminModal } from '../admin-modal.js';
+import { attachHamburgerMenu } from '../hamburger-menu.js';
+import { createContextMenu } from '../context-menu.js';
+import type { ContextMenu } from '../context-menu.js';
+import { createObservationModal } from '../observation-modal.js';
+import type { ObservationModal } from '../observation-modal.js';
+import { createPhotoHud } from '../photo-hud.js';
+import type { PhotoHud } from '../photo-hud.js';
+import { createUndoManager } from '../undo.js';
+import type { UndoManager } from '../undo.js';
+import { createStationNavigation } from '../station-navigation.js';
+import type { StationNavigation } from '../station-navigation.js';
+import { createStationFields } from '../station-fields.js';
+import type { StationFieldsHandle } from '../station-fields.js';
+import { attachSolveActions } from '../solve-actions.js';
+import type { StationScene } from './scene.js';
+import type { StationDataController } from './data-controller.js';
+import type { StationRouteState } from './route-state.js';
+import type { SundialController } from './sundial-controller.js';
+
+export interface StationPanels {
+  readonly sessionPanel: SessionPanel;
+  readonly settings: SettingsPanel;
+  readonly admin: AdminModal;
+  readonly cpConstraintModal: CPConstraintModal;
+  readonly cpSurfaceModal: CPSurfaceModal;
+  readonly contextMenu: ContextMenu;
+  readonly observationModal: ObservationModal;
+  readonly photoHud: PhotoHud;
+  readonly undoManager: UndoManager;
+  readonly stationFields: StationFieldsHandle;
+  readonly stationNavigation: StationNavigation;
+}
+
+export interface CreateStationPanelsOptions {
+  readonly scene: StationScene;
+  readonly data: StationDataController;
+  readonly route: StationRouteState;
+  readonly sundial: SundialController;
+  // Modal onClose / onMutated selection-clear hooks. Lazy: station-page.ts
+  // passes closures over the (later-declared) interactions binding.
+  readonly onCpConstraintMutated: () => void;
+  readonly onCpConstraintClose: () => void;
+  readonly onCpSurfaceMutated: () => void;
+  readonly onCpSurfaceClose: () => void;
+  // Forward-ref to the wiring's loadStation orchestration helper. Used by
+  // station-navigation's fly-to flow.
+  readonly loadStation: (id: string, prefetched?: ApiHydratedStation) => Promise<void>;
+}
+
+export function createStationPanels(opts: CreateStationPanelsOptions): StationPanels {
+  const { scene, data, route, sundial } = opts;
+  const { viewer, overlays, worldCamera, terrain, sky, sunMarker, baker, cpSurfacesRenderer } = scene;
+  const { sync } = data;
+
+  // attachSolveActions runs further down; the SessionPanel's Solve button
+  // isn't reachable until then, so the late binding is safe.
+  let solveActions: { open: () => void } | null = null;
+  const sessionPanel = createSessionPanel(getElement('session-host'), {
+    onSolve: () => { solveActions?.open(); },
+  });
+
+  const settings = createSettingsPanel({
+    viewer, terrain, sunMarker, sky,
+    getCameraLocation: () => worldCamera.getPose().stationAnchor,
+    onShowAllCPsChange: value => { data.setShowAllCPs(value); },
+    onCpMaxDistanceChange: meters => { data.setCpMaxDistanceM(meters); },
+    onSurfaceOpacityChange: opacity => { cpSurfacesRenderer.setOpacity(opacity); },
+  });
+
+  const admin = createAdminModal({ getCurrentStationId: () => route.getStationId() });
+
+  const cpConstraintModal = createCPConstraintModal({
+    getControlPoints: () => overlays.controlPoints.list(),
+    onMutated: () => {
+      opts.onCpConstraintMutated();
+      void data.reloadCPConstraints();
+    },
+    onClose: () => { opts.onCpConstraintClose(); },
+  });
+
+  const cpSurfaceModal = createCPSurfaceModal({
+    onMutated: () => {
+      opts.onCpSurfaceMutated();
+      void data.reloadCPSurfaces();
+    },
+    onClose: () => { opts.onCpSurfaceClose(); },
+  });
+
+  attachHamburgerMenu();
+
+  // Coarse-pointer viewports start collapsed to reclaim vertical space.
+  {
+    const panel = getElement('params-panel');
+    const toggle = getElement<HTMLButtonElement>('params-toggle');
+    function setCollapsed(collapsed: boolean): void {
+      panel.classList.toggle('collapsed', collapsed);
+      toggle.setAttribute('aria-expanded', String(!collapsed));
+      toggle.textContent = collapsed ? '▸' : '▾';
+    }
+    setCollapsed(matchMedia('(pointer: coarse)').matches);
+    toggle.addEventListener('click', () => {
+      setCollapsed(!panel.classList.contains('collapsed'));
+    });
+  }
+
+  const contextMenu = createContextMenu();
+  const undoManager = createUndoManager({
+    overlays, sync,
+    reportError: (label, err) => { sync.reportError(label, err); },
+  });
+  const photoHud = createPhotoHud({ overlays, sync, undoManager });
+  const observationModal = createObservationModal({
+    getControlPoints: () => overlays.controlPoints.list(),
+    onPickExisting: (overlay, u, v, controlPointId) => {
+      void data.handlers.onMatchImageMeasurement(overlay, u, v, controlPointId);
+    },
+    onCreateAndObserve: (overlay, u, v, description) =>
+      data.handlers.onCreateCPAndObserve(overlay, u, v, description),
+  });
+
+  const stationFields = createStationFields({
+    getCurrentStationId: () => route.getStationId(),
+    onAltitudeChanged: (alt) => {
+      // Re-anchor the station altitude. setStationAnchor also resets the
+      // live camera to the anchor — if shift-wheel had drifted location or
+      // altitude, the form edit snaps the camera back to the station.
+      const pose = worldCamera.getPose();
+      if (!pose.stationAnchor) return;
+      worldCamera.setStationAnchor({ location: pose.stationAnchor, altitudeMSL: alt });
+      scene.pushTerrainFromPose();
+    },
+    onLocationChanged: (loc) => {
+      const pose = worldCamera.getPose();
+      if (pose.stationAltitudeMSL === null) return;
+      data.applyCameraLocation(loc, pose.stationAltitudeMSL);
+    },
+  });
+
+  solveActions = attachSolveActions({
+    rehydrate: () => data.rehydrateAfterSolve(),
+    reportError: (label, err) => { sync.reportError(label, err); },
+  });
+
+  const stationNavigation = createStationNavigation({
+    viewer, terrain,
+    cpColumns: scene.cpColumns,
+    photoPreviews: scene.photoPreviews,
+    worldCamera,
+    getCurrentStationId: () => route.getStationId(),
+    getStationName: () => stationFields.getNameAndAlt()?.name ?? null,
+    getOtherStations: () => data.getOtherStations(),
+    setOtherStations: (s) => { data.setOtherStations(s); },
+    loadStation: opts.loadStation,
+  });
+
+  attachDownload({ baker });
+
+  // Silence "sundial unused" — sundial is part of the options for callers
+  // that need cross-checks, but panels doesn't read it directly.
+  void sundial;
+
+  return {
+    sessionPanel, settings, admin,
+    cpConstraintModal, cpSurfaceModal,
+    contextMenu, observationModal,
+    photoHud, undoManager,
+    stationFields, stationNavigation,
+  };
+}
