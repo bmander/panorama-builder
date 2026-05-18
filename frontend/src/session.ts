@@ -1,8 +1,6 @@
 // Session lifecycle: abandon, merge, refreshState. The storage primitives
 // (current id, ensureStarted, onChange) live in session-store.ts; this
-// module is a thin orchestrator over the store and api.ts. Splitting these
-// is what lets api.ts depend on sessionStore without forming a cycle —
-// session.ts is now a one-way consumer of api.ts.
+// module is a thin orchestrator over the store and api.ts.
 
 import * as api from './api.js';
 import { sessionStore } from './session-store.js';

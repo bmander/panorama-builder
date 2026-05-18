@@ -1,12 +1,11 @@
 // Owns the active session id: localStorage persistence, lazy single-flight
 // creation, and change subscription. Leaf module — depends only on
 // request-client.ts and the generated types — so api.ts and session.ts can
-// both depend on it without forming the load-time cycle they used to have
-// when api imported sessionManager and session imported api.
+// both depend on it without forming a load-time cycle.
 //
 // The 'panorama:session' localStorage key is defined here exactly once;
-// session-pending.ts reads through this module rather than mirroring the
-// key by hand as it used to.
+// session-pending.ts reads through this module rather than holding its own
+// copy of the key.
 
 import { apiRequest } from './request-client.js';
 import type { components } from './api-types.gen.js';

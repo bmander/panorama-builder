@@ -1,7 +1,6 @@
 // Low-level fetch + JSON + error wrapping for the backend at /api/*. Pure
-// leaf module: no imports from session or api modules, so it sits below
-// both in the dependency graph and breaks the load-time cycle that used to
-// run api ↔ session.
+// leaf module — no imports from session or api modules — so it can sit
+// below both in the dependency graph.
 
 const API = '/api';
 
@@ -27,28 +26,27 @@ function buildInit(method: string, opts?: RequestOpts): RequestInit {
   return init;
 }
 
-export async function apiRequest<T>(method: string, path: string, opts?: RequestOpts): Promise<T> {
+async function fetchOk(method: string, path: string, opts?: RequestOpts): Promise<Response> {
   const res = await fetch(apiUrl(path), buildInit(method, opts));
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`${method} ${path} → ${res.status.toString()} ${text}`);
   }
+  return res;
+}
+
+export async function apiRequest<T>(method: string, path: string, opts?: RequestOpts): Promise<T> {
+  const res = await fetchOk(method, path, opts);
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
 export async function apiRequestVoid(method: string, path: string, opts?: RequestOpts): Promise<void> {
-  const res = await fetch(apiUrl(path), buildInit(method, opts));
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`${method} ${path} → ${res.status.toString()} ${text}`);
-  }
+  await fetchOk(method, path, opts);
 }
 
-// Raw fetch escape hatch for endpoints with custom status handling
-// (mergeSession 409/422, revertCommit 409), SSE solve streams, or blob bodies.
-// Callers assemble their own RequestInit (headers, body, signal) and parse
-// the Response themselves.
+// Raw fetch escape hatch for callers that need custom status handling,
+// streaming response bodies, or non-JSON request bodies.
 export function apiFetch(path: string, init: RequestInit): Promise<Response> {
   return fetch(apiUrl(path), init);
 }
