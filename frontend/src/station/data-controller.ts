@@ -1,0 +1,625 @@
+// Per-station data: sync manager, orchestration handlers, CP visibility
+// filter + cached marker / observation-ray / surface arrays, the global
+// CP-constraint and CP-surface lists, other-station hydrated camera data,
+// and the hydrate / clear / load lifecycle.
+//
+// External hooks: the controller receives callbacks for cross-controller
+// concerns that don't belong in data (panel-derived getCapturedAt,
+// stationFields.hydrate, settings.refreshSunDirection) and emits onRefresh
+// so the caller can re-apply pose when caches change.
+
+import * as THREE from 'three';
+import * as api from '../api.js';
+import type { ApiControlPoint, ApiHydratedStation } from '../api.js';
+import { cpLifespanFromApi, isExtantAt } from '../types.js';
+import type { CPConstraintView, CPSurfaceView, ControlPointView, LatLng } from '../types.js';
+import { dirFromAzAlt } from '../overlay.js';
+import { groundDistance, latLngToCameraRelativeMeters, vecToAzAlt } from '../geo.js';
+import { degToRad } from '../mathx.js';
+import { meanPhotoAzAlt } from '../station-navigation.js';
+import { createSyncManager } from '../sync.js';
+import type { SyncManager } from '../sync.js';
+import { createOrchestration } from '../handlers.js';
+import type { OrchestrationHandlers } from '../handlers.js';
+import type { ControlPointColumn } from '../map-poi-columns.js';
+import type { ObservationRay } from '../observation-rays.js';
+import type { StationMarker } from '../station-markers.js';
+import type { StationScene } from './scene.js';
+import type { StationRouteState } from './route-state.js';
+
+const FOCUS_FOV_DEG = 25;
+
+// Per-station cp_observation status, indexed by control_point_id. Drives
+// both the visibility filter (non-`observed` hides the marker) and POST vs
+// PUT routing in the CP context menu — a stale `observed` row from legacy
+// data would 409 on POST, so we PUT when an id is known. `id: null` is the
+// brief optimistic window between click and server ack.
+export interface CpObservationCache {
+  readonly id: string | null;
+  readonly status: api.ApiCpObservationStatus;
+}
+
+// Hydrated per-photo data for every other station. Populated once via a
+// batch of api.getStation calls; used to render frustum cones and to
+// build observation rays for the currently-selected camera.
+export interface OtherCameraMeasurement {
+  readonly id: string;
+  readonly u: number;
+  readonly v: number;
+  readonly controlPointId: string | null;
+}
+
+export interface OtherCamera {
+  readonly stationId: string;
+  readonly photoId: string;
+  readonly fromLat: number;
+  readonly fromLng: number;
+  readonly fromAlt: number;
+  readonly photoAz: number;
+  readonly photoTilt: number;
+  readonly photoRoll: number;
+  readonly sizeRad: number;
+  readonly aspect: number;
+  readonly measurements: readonly OtherCameraMeasurement[];
+}
+
+export interface StationDataController {
+  readonly sync: SyncManager;
+  readonly handlers: OrchestrationHandlers;
+
+  // Snapshot accessors — read by the pose-snapshot builder. Each returns the
+  // same array reference until the underlying data changes, so renderer
+  // fast-path equality checks fire.
+  getCpConstraints(): readonly CPConstraintView[];
+  getCpSurfaces(): readonly CPSurfaceView[];
+  getCpMarkers(): readonly ControlPointColumn[];
+  getVisibleCps(): readonly ControlPointView[];
+  getObservationRays(): readonly ObservationRay[];
+  getOtherStations(): readonly StationMarker[];
+  getOtherCameras(): readonly OtherCamera[];
+
+  // CP observation cache (mutated by the CP context-menu's postObservation
+  // closure in interactions).
+  getCpObservation(cpId: string): CpObservationCache | undefined;
+  setCpObservation(cpId: string, cache: CpObservationCache): void;
+  deleteCpObservation(cpId: string): void;
+
+  // Other-stations setter (used by station-navigation's fly post-update path).
+  setOtherStations(stations: readonly StationMarker[]): void;
+
+  // Visibility filter setters — settings panel writes these.
+  setShowAllCPs(v: boolean): void;
+  setCpMaxDistanceM(v: number | null): void;
+
+  // Operations
+  refreshControlPointColumns(): void;
+  reloadCPConstraints(): Promise<void>;
+  reloadCPSurfaces(): Promise<void>;
+  registerControlPoint(cp: ApiControlPoint): void;
+
+  // Single-shot camera anchor: sets station anchor + terrain + sun + flushes
+  // sync. The refreshSunDirection callback is supplied at construction.
+  applyCameraLocation(loc: LatLng, alt: number): void;
+
+  // Reads the URL camera params and pumps them into viewer + worldCamera.
+  // Called by load() after hydrate; popstate uses it directly on same-station
+  // back/forward to restore a bookmarked viewpoint without re-hydrating.
+  applyCameraFromURL(): void;
+
+  // Lifecycle
+  clear(): void;
+  // Hydrates the station, runs onPostHydrate (callers use this to focus the
+  // camera on a deep-linked CP/measurement before URL params override), then
+  // applies URL camera + markLoaded. Returns early without applying camera /
+  // markLoaded if the user navigated away during the hydrate fetch.
+  load(id: string, prefetched?: ApiHydratedStation, onPostHydrate?: () => void): Promise<void>;
+  rehydrateAfterSolve(): Promise<void>;
+
+  // Boot-time camera focus
+  focusCameraOnControlPoint(id: string): boolean;
+  focusCameraOnImageMeasurement(id: string): boolean;
+}
+
+export interface CreateStationDataControllerOptions {
+  readonly scene: StationScene;
+  readonly route: StationRouteState;
+  // captured_at value (panel-derived, drives the lifespan filter in
+  // getVisibleControlPoints).
+  readonly getCapturedAt: () => string | null;
+  // Called after the API station row lands; panel updates the form fields.
+  readonly hydrateStationFields: (s: api.ApiStation) => void;
+  // Re-runs the sun-direction setters from the panel.
+  readonly refreshSunDirection: () => void;
+  // Currently-selected other-station id, drives buildObservationRays.
+  readonly getSelectedStationId: () => string | null;
+  // Fires whenever a cache visible to the pose snapshot changes — caller
+  // typically re-runs the pose pump so renderers see fresh data.
+  readonly onRefresh: () => void;
+}
+
+// Reused empty array so the no-op guard inside observationRays.update
+// catches refreshes when nothing is selected (the common case).
+const EMPTY_RAYS: readonly ObservationRay[] = [];
+
+export function createStationDataController(opts: CreateStationDataControllerOptions): StationDataController {
+  const { scene, route, getCapturedAt, hydrateStationFields, refreshSunDirection, getSelectedStationId, onRefresh } = opts;
+  const { overlays, worldCamera, viewer } = scene;
+
+  const sync = createSyncManager({ overlays, getCurrentStationId: () => route.getStationId() });
+  const handlers = createOrchestration({
+    getCurrentStationId: () => route.getStationId(),
+    overlays,
+    sync,
+  });
+
+  // Loaded once at hydrate; mutated by reloadCPConstraints/Surfaces.
+  let cpConstraints: CPConstraintView[] = [];
+  let cpSurfaces: CPSurfaceView[] = [];
+
+  let otherStations: readonly StationMarker[] = [];
+  let otherCameras: readonly OtherCamera[] = [];
+
+  // CP visibility filter flags.
+  let showAllCPs = false;
+  let cpMaxDistanceM: number | null = null;
+
+  const cpObservationByCp = new Map<string, CpObservationCache>();
+
+  // Caches whose array reference identity drives the renderer fast paths;
+  // rebuilt only when underlying inputs change.
+  let cachedObservationRays: readonly ObservationRay[] = EMPTY_RAYS;
+  let cachedCpMarkers: readonly ControlPointColumn[] = [];
+  let cachedVisibleCps: readonly ControlPointView[] = [];
+
+  // CPs visible in the photo viewer. Same set drives column rendering and
+  // the matcher hit-test, so what you see is what you can click. Lifespan
+  // filter applies to non-observed CPs only.
+  function getVisibleControlPoints(): ControlPointView[] {
+    const capturedAt = getCapturedAt();
+    const capturedMs = capturedAt !== null ? new Date(capturedAt).getTime() : null;
+    const observed = new Set<string>();
+    for (const im of overlays.measurements.list()) {
+      if (im.controlPointId) observed.add(im.controlPointId);
+    }
+    const focusedCpId = route.getFocusedCpId();
+    const maxD = cpMaxDistanceM;
+    const camLoc = maxD !== null ? worldCamera.getPose().stationAnchor : null;
+    return overlays.controlPoints.list().filter(cp => {
+      if (cp.estLat === null || cp.estLng === null) return false;
+      const forced = cp.id === focusedCpId;
+      const isObserved = forced || observed.has(cp.id);
+      const obs = cpObservationByCp.get(cp.id);
+      if (!isObserved && obs && obs.status !== 'observed') return false;
+      if (!showAllCPs && !isObserved) return false;
+      if (capturedMs !== null && !isObserved && !isExtantAt(cp, capturedMs)) return false;
+      if (maxD !== null && camLoc && !isObserved
+          && groundDistance(camLoc, { lat: cp.estLat, lng: cp.estLng }) > maxD) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  function buildObservationRays(): readonly ObservationRay[] {
+    const sel = getSelectedStationId();
+    if (sel === null) return EMPTY_RAYS;
+    const out: ObservationRay[] = [];
+    for (const cam of otherCameras) {
+      if (cam.stationId !== sel) continue;
+      for (const im of cam.measurements) {
+        const cp = im.controlPointId ? overlays.controlPoints.getById(im.controlPointId) : null;
+        const estLat = cp?.estLat ?? null;
+        const estLng = cp?.estLng ?? null;
+        if (estLat === null || estLng === null) {
+          out.push({
+            kind: 'null',
+            fromLat: cam.fromLat, fromLng: cam.fromLng, fromAlt: cam.fromAlt,
+            photoAz: cam.photoAz, photoTilt: cam.photoTilt, photoRoll: cam.photoRoll,
+            sizeRad: cam.sizeRad, aspect: cam.aspect,
+            u: im.u, v: im.v,
+          });
+          continue;
+        }
+        out.push({
+          kind: 'located',
+          fromLat: cam.fromLat, fromLng: cam.fromLng, fromAlt: cam.fromAlt,
+          toLat: estLat, toLng: estLng, toAlt: cp?.estAlt ?? null,
+        });
+      }
+    }
+    return out;
+  }
+
+  function refreshControlPointColumns(): void {
+    const cps = getVisibleControlPoints();
+    const handlesByCpId = new Map<string, THREE.Object3D[]>();
+    for (const im of overlays.measurements.list()) {
+      if (!im.controlPointId) continue;
+      const arr = handlesByCpId.get(im.controlPointId);
+      if (arr) arr.push(im.handle);
+      else handlesByCpId.set(im.controlPointId, [im.handle]);
+    }
+    cachedCpMarkers = cps.map(cp => ({
+      id: cp.id,
+      anchor: { lat: cp.estLat!, lng: cp.estLng! },
+      altitude: cp.estAlt,
+      selected: cp.selected,
+      observations: handlesByCpId.get(cp.id) ?? [],
+    }));
+    cachedVisibleCps = cps;
+    cachedObservationRays = buildObservationRays();
+    // CP locations may have changed — a CP gaining or losing a lat/lng
+    // flips the orphan-visibility branch for its POIs.
+    overlays.measurements.refreshVisibility();
+    onRefresh();
+  }
+
+  function registerControlPoint(cp: ApiControlPoint): void {
+    if (overlays.controlPoints.getById(cp.id) !== null) return;
+    overlays.controlPoints.add(cp.id, {
+      description: cp.description, estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,
+      ...cpLifespanFromApi(cp),
+    });
+    sync.registerControlPoint(cp.id, {
+      description: cp.description, est_lat: cp.est_lat, est_lng: cp.est_lng, est_alt: cp.est_alt,
+    });
+  }
+
+  function syncControlPoint(cp: ApiControlPoint): void {
+    sync.registerControlPoint(cp.id, {
+      description: cp.description, est_lat: cp.est_lat, est_lng: cp.est_lng, est_alt: cp.est_alt,
+    });
+    if (overlays.controlPoints.getById(cp.id) === null) {
+      overlays.controlPoints.add(cp.id, {
+        description: cp.description, estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,
+        ...cpLifespanFromApi(cp),
+      });
+      return;
+    }
+    overlays.withBatch(() => {
+      overlays.controlPoints.setDescription(cp.id, cp.description);
+      overlays.controlPoints.setEst(cp.id, {
+        lat: cp.est_lat, lng: cp.est_lng, alt: cp.est_alt,
+      });
+      overlays.controlPoints.setLifespan(cp.id, cpLifespanFromApi(cp));
+    });
+  }
+
+  function mapApiCPConstraint(r: api.ApiCPConstraint): CPConstraintView {
+    return { id: r.id, cpAId: r.cp_a_id, cpBId: r.cp_b_id, type: r.constraint_type };
+  }
+
+  async function reloadCPConstraints(): Promise<void> {
+    try {
+      cpConstraints = (await api.listCPConstraints()).map(mapApiCPConstraint);
+    } catch (err) {
+      console.error('list cp constraints failed:', err);
+      cpConstraints = [];
+    }
+    refreshControlPointColumns();
+  }
+
+  function mapApiCPSurface(r: api.ApiCPSurface): CPSurfaceView {
+    const ids = [r.cp_1_id, r.cp_2_id, r.cp_3_id];
+    if (r.cp_4_id) ids.push(r.cp_4_id);
+    return { id: r.id, cpIds: ids };
+  }
+
+  async function reloadCPSurfaces(): Promise<void> {
+    try {
+      cpSurfaces = (await api.listCPSurfaces()).map(mapApiCPSurface);
+    } catch (err) {
+      console.error('list cp surfaces failed:', err);
+      cpSurfaces = [];
+    }
+    refreshControlPointColumns();
+  }
+
+  function applyCameraLocation(loc: LatLng, alt: number): void {
+    worldCamera.setStationAnchor({ location: loc, altitudeMSL: alt });
+    scene.pushTerrainFromPose();
+    refreshSunDirection();
+    sync.flush();
+  }
+
+  function applyCameraFromURL(): void {
+    const snap = route.readCameraFromURL();
+    if (snap.azDeg !== null && snap.altDeg !== null) {
+      viewer.setAzAlt(degToRad(snap.azDeg), degToRad(snap.altDeg));
+    }
+    if (snap.fovDeg !== null) viewer.setFov(snap.fovDeg);
+    if (snap.live) {
+      worldCamera.setLiveCamera({
+        location: { lat: snap.live.lat, lng: snap.live.lng },
+        altitudeMSL: snap.live.altitudeMSL,
+      });
+    }
+    viewer.requestRender();
+  }
+
+  const focusScratch = new THREE.Vector3();
+  function focusCameraOnImageMeasurement(id: string): boolean {
+    const handle = overlays.measurements.getById(id);
+    if (!handle) return false;
+    handle.getWorldPosition(focusScratch);
+    const { az, alt } = vecToAzAlt(focusScratch.x, focusScratch.y, focusScratch.z);
+    viewer.setAzAlt(az, alt);
+    viewer.setFov(FOCUS_FOV_DEG);
+    overlays.measurements.setSelected(handle);
+    return true;
+  }
+
+  function focusCameraOnControlPoint(id: string): boolean {
+    const cp = overlays.controlPoints.getById(id);
+    if (cp?.estLat == null || cp.estLng == null || cp.estAlt == null) return false;
+    const pose = worldCamera.getPose();
+    if (!pose.location) return false;
+    const { x, z } = latLngToCameraRelativeMeters({ lat: cp.estLat, lng: cp.estLng }, pose.location);
+    const y = cp.estAlt - pose.altitudeMSL;
+    const { az, alt } = vecToAzAlt(x, y, z);
+    viewer.setAzAlt(az, alt);
+    viewer.setFov(FOCUS_FOV_DEG);
+    return true;
+  }
+
+  function clear(): void {
+    // Reset sync FIRST. The overlay teardown below removes every photo /
+    // measurement / CP, each of which queues a notify; the batch's
+    // onMutate then runs sync.flush, and a still-loaded sync would diff
+    // the empty overlay state against its baseline and DELETE the
+    // backend rows for the station we're leaving.
+    sync.reset();
+    overlays.withBatch(() => {
+      for (const o of [...overlays.photos.list()]) {
+        if (!(o instanceof THREE.Group)) continue;
+        overlays.photos.setSelected(o);
+        overlays.photos.deleteSelected();
+      }
+      for (const cp of [...overlays.controlPoints.list()]) {
+        overlays.controlPoints.remove(cp.id);
+      }
+    });
+    otherStations = [];
+    otherCameras = [];
+    cpConstraints = [];
+    cpSurfaces = [];
+    cpObservationByCp.clear();
+    worldCamera.clear();
+  }
+
+  async function hydrateFromAPI(id: string, prefetched?: ApiHydratedStation): Promise<void> {
+    let data: ApiHydratedStation;
+    if (prefetched) {
+      data = prefetched;
+    } else {
+      try {
+        data = await api.getStation(id);
+      } catch (err) {
+        console.error('hydrate failed:', err);
+        alert('Could not load this station.');
+        return;
+      }
+      if (id !== route.getStationId()) return;  // user navigated away during fetch
+    }
+    const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
+    // Anchor pose up front so subsequent reads see current values. Terrain
+    // setLocation is deferred to the end of hydrate so DEM/imagery tile
+    // fetches queue behind photos + markers.
+    worldCamera.setStationAnchor({ location: loc, altitudeMSL: data.station.alt });
+    refreshSunDirection();
+    sync.flush();
+    hydrateStationFields(data.station);
+
+    // Center the viewport on the mean of the station's photo directions.
+    const meanOrient = meanPhotoAzAlt(data.photos);
+    if (meanOrient) viewer.setAzAlt(meanOrient.az, meanOrient.alt);
+
+    const loader = new THREE.TextureLoader();
+    overlays.withBatch(() => {
+      for (const p of data.photos) {
+        const dir = dirFromAzAlt(p.photo_az, p.photo_tilt);
+        const o = overlays.photos.addPending(p.aspect, dir, { id: p.id });
+        overlays.photos.applyPose(o, {
+          photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
+          sizeRad: p.size_rad, aspect: p.aspect, camLat: loc.lat, camLng: loc.lng,
+          k1: p.dist_k1, k2: p.dist_k2,
+        });
+        overlays.photos.setOpacity(o, p.opacity);
+        overlays.photos.setLocks(o, {
+          lockPhotoAz: p.lock_photo_az, lockPhotoTilt: p.lock_photo_tilt,
+          lockPhotoRoll: p.lock_photo_roll, lockSizeRad: p.lock_size_rad,
+          lockDistK1: p.lock_dist_k1, lockDistK2: p.lock_dist_k2,
+        });
+        overlays.photos.setSigmas(o, {
+          sigmaPhotoAz: p.sigma_photo_az ?? null,
+          sigmaPhotoTilt: p.sigma_photo_tilt ?? null,
+          sigmaPhotoRoll: p.sigma_photo_roll ?? null,
+          sigmaSizeRad: p.sigma_size_rad ?? null,
+          sigmaDistK1: p.sigma_dist_k1 ?? null,
+          sigmaDistK2: p.sigma_dist_k2 ?? null,
+        });
+        sync.registerPhoto(p.id, {
+          aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,
+          photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
+          dist_k1: p.dist_k1, dist_k2: p.dist_k2,
+        });
+        const fullUrl = api.photoBlobUrl(p);
+        const previewUrl = api.photoPreviewUrl(p);
+        const setTex = (tex: THREE.Texture): void => { overlays.photos.setTexture(o, tex); };
+        const onFullErr = (err: unknown): void => { console.error(`photo ${p.id} load failed:`, err); };
+        const loadFull = (): void => { loader.load(fullUrl, setTex, undefined, onFullErr); };
+        if (previewUrl) {
+          loader.load(previewUrl, tex => { setTex(tex); loadFull(); }, undefined, loadFull);
+        } else {
+          loadFull();
+        }
+      }
+
+      for (const cp of data.control_points) {
+        registerControlPoint(cp);
+      }
+
+      for (const im of data.image_measurements) {
+        const overlay = overlays.photos.getById(im.photo_id);
+        if (!overlay) continue;
+        overlays.measurements.add(overlay, im.u, im.v, {
+          id: im.id,
+          controlPointId: im.control_point_id,
+        });
+        sync.registerImageMeasurement(im.id, { u: im.u, v: im.v, control_point_id: im.control_point_id });
+      }
+
+      for (const o of data.cp_observations) {
+        cpObservationByCp.set(o.control_point_id, { id: o.id, status: o.status });
+      }
+    });
+
+    const [cpsRes, stationsRes, consRes, surfRes] = await Promise.allSettled([
+      api.listControlPoints(),
+      api.listStations(),
+      api.listCPConstraints(),
+      api.listCPSurfaces(),
+    ]);
+    if (id !== route.getStationId()) return;
+    overlays.withBatch(() => {
+      if (cpsRes.status === 'fulfilled') {
+        for (const cp of cpsRes.value) registerControlPoint(cp);
+      } else {
+        console.error('list control points failed:', cpsRes.reason);
+      }
+    });
+    if (consRes.status === 'fulfilled') {
+      cpConstraints = consRes.value.map(mapApiCPConstraint);
+    } else {
+      console.error('list cp constraints failed:', consRes.reason);
+      cpConstraints = [];
+    }
+    if (surfRes.status === 'fulfilled') {
+      cpSurfaces = surfRes.value.map(mapApiCPSurface);
+    } else {
+      console.error('list cp surfaces failed:', surfRes.reason);
+      cpSurfaces = [];
+    }
+    if (stationsRes.status === 'fulfilled') {
+      otherStations = stationsRes.value
+        .filter(st => st.id !== id)
+        .map(st => ({ id: st.id, name: st.name, anchor: { lat: st.lat, lng: st.lng }, altitude: st.alt }));
+      refreshControlPointColumns();
+      void Promise.all(otherStations.map(s => api.getStation(s.id)))
+        .then(hydrated => {
+          if (id !== route.getStationId()) return;
+          const cams: OtherCamera[] = [];
+          for (const d of hydrated) {
+            const measByPhotoId = new Map<string, OtherCameraMeasurement[]>();
+            for (const im of d.image_measurements) {
+              const arr = measByPhotoId.get(im.photo_id) ?? [];
+              arr.push({ id: im.id, u: im.u, v: im.v, controlPointId: im.control_point_id });
+              measByPhotoId.set(im.photo_id, arr);
+            }
+            for (const p of d.photos) {
+              cams.push({
+                stationId: d.station.id,
+                photoId: p.id,
+                fromLat: d.station.lat, fromLng: d.station.lng, fromAlt: d.station.alt,
+                photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
+                sizeRad: p.size_rad, aspect: p.aspect,
+                measurements: measByPhotoId.get(p.id) ?? [],
+              });
+            }
+          }
+          otherCameras = cams;
+          refreshControlPointColumns();
+        })
+        .catch((err: unknown) => { console.error('fetch other-station photos failed:', err); });
+    } else {
+      console.error('list stations failed:', stationsRes.reason);
+    }
+
+    // Terrain last so its tile flood queues behind every other fetch above.
+    scene.pushTerrainFromPose();
+  }
+
+  async function rehydrateAfterSolve(): Promise<void> {
+    const data = await api.getStation(route.getStationId());
+    hydrateStationFields(data.station);
+    overlays.withBatch(() => {
+      const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
+      applyCameraLocation(loc, data.station.alt);
+      for (const p of data.photos) {
+        const o = overlays.photos.getById(p.id);
+        if (!o) continue;
+        overlays.photos.applyPose(o, {
+          photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
+          sizeRad: p.size_rad, aspect: p.aspect, camLat: data.station.lat, camLng: data.station.lng,
+          k1: p.dist_k1, k2: p.dist_k2,
+        });
+        overlays.photos.setLocks(o, {
+          lockPhotoAz: p.lock_photo_az, lockPhotoTilt: p.lock_photo_tilt,
+          lockPhotoRoll: p.lock_photo_roll, lockSizeRad: p.lock_size_rad,
+          lockDistK1: p.lock_dist_k1, lockDistK2: p.lock_dist_k2,
+        });
+        overlays.photos.setSigmas(o, {
+          sigmaPhotoAz: p.sigma_photo_az ?? null,
+          sigmaPhotoTilt: p.sigma_photo_tilt ?? null,
+          sigmaPhotoRoll: p.sigma_photo_roll ?? null,
+          sigmaSizeRad: p.sigma_size_rad ?? null,
+          sigmaDistK1: p.sigma_dist_k1 ?? null,
+          sigmaDistK2: p.sigma_dist_k2 ?? null,
+        });
+        sync.registerPhoto(p.id, {
+          aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,
+          photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
+          dist_k1: p.dist_k1, dist_k2: p.dist_k2,
+        });
+      }
+      for (const cp of data.control_points) {
+        syncControlPoint(cp);
+      }
+    });
+  }
+
+  async function load(id: string, prefetched?: ApiHydratedStation, onPostHydrate?: () => void): Promise<void> {
+    await hydrateFromAPI(id, prefetched);
+    if (id !== route.getStationId()) return;
+    if (onPostHydrate) onPostHydrate();
+    applyCameraFromURL();
+    sync.markLoaded();
+  }
+
+  return {
+    sync,
+    handlers,
+    getCpConstraints: () => cpConstraints,
+    getCpSurfaces: () => cpSurfaces,
+    getCpMarkers: () => cachedCpMarkers,
+    getVisibleCps: () => cachedVisibleCps,
+    getObservationRays: () => cachedObservationRays,
+    getOtherStations: () => otherStations,
+    getOtherCameras: () => otherCameras,
+    getCpObservation: (cpId) => cpObservationByCp.get(cpId),
+    setCpObservation: (cpId, cache) => { cpObservationByCp.set(cpId, cache); },
+    deleteCpObservation: (cpId) => { cpObservationByCp.delete(cpId); },
+    setOtherStations: (s) => { otherStations = [...s]; },
+    setShowAllCPs: (v) => {
+      if (v === showAllCPs) return;
+      showAllCPs = v;
+      refreshControlPointColumns();
+    },
+    setCpMaxDistanceM: (v) => {
+      if (v === cpMaxDistanceM) return;
+      cpMaxDistanceM = v;
+      refreshControlPointColumns();
+    },
+    refreshControlPointColumns,
+    reloadCPConstraints,
+    reloadCPSurfaces,
+    registerControlPoint,
+    applyCameraLocation,
+    applyCameraFromURL,
+    clear,
+    load,
+    rehydrateAfterSolve,
+    focusCameraOnControlPoint,
+    focusCameraOnImageMeasurement,
+  };
+}

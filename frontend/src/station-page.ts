@@ -4,34 +4,27 @@
 
 import * as THREE from 'three';
 import * as api from './api.js';
-import type { ApiControlPoint, ApiHydratedStation } from './api.js';
+import type { ApiHydratedStation } from './api.js';
 import { dirFromAzAlt } from './overlay.js';
 import { attachInput } from './input.js';
 import type { PhotoBodyHit } from './input.js';
 import { attachDownload } from './ui.js';
 import { findHitColumn } from './map-poi-columns.js';
-import type { ControlPointColumn } from './map-poi-columns.js';
-import type { ObservationRay } from './observation-rays.js';
 import { createCPConstraintModal } from './cp-constraint-modal.js';
 import { createCPSurfaceModal } from './cp-surface-modal.js';
 import { createSundialModal } from './sundial-modal.js';
 import type { SundialPickField } from './sundial-modal.js';
-import type { StationMarker } from './station-markers.js';
 import { findHitDot } from './dot-layer.js';
 import type { Dot } from './dot-layer.js';
 import {
-  cpHref, cpLabel, cpLifespanFromApi, formatLifespanLines, getElement,
-  isExtantAt,
+  cpHref, cpLabel, formatLifespanLines, getElement,
   poiData,
 } from './types.js';
-import { groundDistance, latLngToCameraRelativeMeters, tangentMetersToLatLng, vecToAzAlt } from './geo.js';
+import { latLngToCameraRelativeMeters, tangentMetersToLatLng } from './geo.js';
 import { vertexToLatLngAlt } from './camera-anchored.js';
-import { degToRad, radToDeg } from './mathx.js';
-import type { CPConstraintView, CPSurfaceView, ControlPointView, LatLng } from './types.js';
-import { createSyncManager } from './sync.js';
+import { radToDeg } from './mathx.js';
 import { createSessionPanel } from './session-panel.js';
 import { createSettingsPanel } from './settings.js';
-import { createOrchestration } from './handlers.js';
 import { createAdminModal } from './admin-modal.js';
 import { attachHamburgerMenu } from './hamburger-menu.js';
 import { createContextMenu } from './context-menu.js';
@@ -39,13 +32,14 @@ import type { ContextMenuItem } from './context-menu.js';
 import { createObservationModal } from './observation-modal.js';
 import { createPhotoHud } from './photo-hud.js';
 import { createUndoManager } from './undo.js';
-import { createStationNavigation, meanPhotoAzAlt } from './station-navigation.js';
+import { createStationNavigation } from './station-navigation.js';
 import { createStationFields } from './station-fields.js';
 import { attachSolveActions } from './solve-actions.js';
 import type { SolveActions } from './solve-actions.js';
 import { locEq } from './world-camera.js';
 import { createStationScene } from './station/scene.js';
 import { createStationRouteState } from './station/route-state.js';
+import { createStationDataController } from './station/data-controller.js';
 
 export interface MountStationPageOptions {
   initialStationId: string;
@@ -56,7 +50,6 @@ export interface MountStationPageOptions {
 const SHIFT_WHEEL_LOG_PER_PX = 0.005;
 const COLUMN_NDC_HIT_RADIUS = 0.01;
 const STATION_DOT_HIT_PX = 10;
-const FOCUS_FOV_DEG = 25;
 
 export async function mountStationPage(opts: MountStationPageOptions): Promise<void> {
   const route = createStationRouteState(opts);
@@ -73,182 +66,26 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     sundialLine, previewLine, previewPositions,
   } = scene;
 
-  // Loaded once at hydrate; mutated by the modal's onMutated callback.
-  let cpConstraints: CPConstraintView[] = [];
+  // Selection state (slice 4 will own this).
   let selectedConstraintId: string | null = null;
-  // Shift-clicked constraint ids. Stored as an immutable snapshot so the
-  // renderer's reference-equality early-return correctly fires a rebuild
-  // when the set's contents change. Replaced (not mutated) on every toggle.
   let multiSelectedConstraintIds: ReadonlySet<string> = new Set();
-  let cpSurfaces: CPSurfaceView[] = [];
   let selectedSurfaceId: string | null = null;
-  let otherStations: StationMarker[] = [];
-  let otherCameras: OtherCamera[] = [];
   let selectedStationId: string | null = null;
-
-  // --- Cross-cutting refreshers ------------------------------------------
-
-  // When true, the photo viewer renders every located CP as a marker, not
-  // just those observed by this station. Toggled from the settings panel.
-  let showAllCPs = false;
-  // null = no distance cap. Observed CPs are direct evidence and always show.
-  let cpMaxDistanceM: number | null = null;
-  // Per-station cp_observation status, indexed by control_point_id. Drives
-  // both the visibility filter (non-`observed` hides the marker) and POST vs
-  // PUT routing in the CP context menu — a stale `observed` row from legacy
-  // data would 409 on POST, so we PUT when an id is known. `id: null` is the
-  // brief optimistic window between click and server ack.
-  interface CpObservationCache {
-    readonly id: string | null;
-    readonly status: api.ApiCpObservationStatus;
-  }
-  const cpObservationByCp = new Map<string, CpObservationCache>();
-
-  // Hydrated per-photo data for every other station. Populated once via a
-  // batch of api.getStation calls; used to render frustum cones and to
-  // build observation rays for the currently-selected camera.
-  interface OtherCameraMeasurement {
-    readonly id: string;
-    readonly u: number;
-    readonly v: number;
-    readonly controlPointId: string | null;
-  }
-  interface OtherCamera {
-    readonly stationId: string;
-    readonly photoId: string;
-    readonly fromLat: number;
-    readonly fromLng: number;
-    readonly fromAlt: number;
-    readonly photoAz: number;
-    readonly photoTilt: number;
-    readonly photoRoll: number;
-    readonly sizeRad: number;
-    readonly aspect: number;
-    readonly measurements: readonly OtherCameraMeasurement[];
-  }
-
-  // CPs visible in the photo viewer. Same set drives column rendering and
-  // the matcher hit-test, so what you see is what you can click.
-  // Lifespan filter applies to non-observed CPs only: a CP that the
-  // photographer actually marked here is direct evidence it existed at the
-  // captured moment, and overrides any stale lifespan bound (e.g. a
-  // "started after THIS-date" hint set from a sibling station with the
-  // same captured_at).
-  function getVisibleControlPoints(): ControlPointView[] {
-    const capturedAt = stationFields.getCapturedAt();
-    const capturedMs = capturedAt !== null ? new Date(capturedAt).getTime() : null;
-    const observed = new Set<string>();
-    for (const im of overlays.measurements.list()) {
-      if (im.controlPointId) observed.add(im.controlPointId);
-    }
-    const maxD = cpMaxDistanceM;
-    const camLoc = maxD !== null ? worldCamera.getPose().stationAnchor : null;
-    return overlays.controlPoints.list().filter(cp => {
-      if (cp.estLat === null || cp.estLng === null) return false;
-      // A focus_cp deep-link forces the CP to show through every gate.
-      const forced = cp.id === route.getFocusedCpId();
-      const isObserved = forced || observed.has(cp.id);
-      // A negative cp_observation at this station (missing / cant_see) is the
-      // photographer's explicit "not here" — hide unless an image measurement
-      // contradicts it (observed wins) or a deep-link is forcing it visible.
-      const obs = cpObservationByCp.get(cp.id);
-      if (!isObserved && obs && obs.status !== 'observed') return false;
-      if (!showAllCPs && !isObserved) return false;
-      if (capturedMs !== null && !isObserved && !isExtantAt(cp, capturedMs)) return false;
-      if (maxD !== null && camLoc && !isObserved
-          && groundDistance(camLoc, { lat: cp.estLat, lng: cp.estLng }) > maxD) {
-        return false;
-      }
-      return true;
-    });
-  }
-
-  // Reused empty array so the no-op guard inside observationRays.update
-  // catches refreshes when nothing is selected (the common case).
-  const EMPTY_RAYS: readonly ObservationRay[] = [];
-  // Cached so onFlyFrame's per-frame call into observationRays.update
-  // sees a stable array reference and skips its rebuild path. Recomputed
-  // by refreshControlPointColumns whenever the underlying data changes.
-  let cachedObservationRays: readonly ObservationRay[] = EMPTY_RAYS;
-
-  // Built fresh when there's a selection; per-CP location and selected
-  // station id can both change between calls, and the ray count is small
-  // (~measurements on one station's photos) so per-call allocation is
-  // negligible.
-  function buildObservationRays(): readonly ObservationRay[] {
-    if (selectedStationId === null) return EMPTY_RAYS;
-    const out: ObservationRay[] = [];
-    for (const cam of otherCameras) {
-      if (cam.stationId !== selectedStationId) continue;
-      for (const im of cam.measurements) {
-        const cp = im.controlPointId ? overlays.controlPoints.getById(im.controlPointId) : null;
-        const estLat = cp?.estLat ?? null;
-        const estLng = cp?.estLng ?? null;
-        if (estLat === null || estLng === null) {
-          out.push({
-            kind: 'null',
-            fromLat: cam.fromLat, fromLng: cam.fromLng, fromAlt: cam.fromAlt,
-            photoAz: cam.photoAz, photoTilt: cam.photoTilt, photoRoll: cam.photoRoll,
-            sizeRad: cam.sizeRad, aspect: cam.aspect,
-            u: im.u, v: im.v,
-          });
-          continue;
-        }
-        out.push({
-          kind: 'located',
-          fromLat: cam.fromLat, fromLng: cam.fromLng, fromAlt: cam.fromAlt,
-          toLat: estLat, toLng: estLng, toAlt: cp?.estAlt ?? null,
-        });
-      }
-    }
-    return out;
-  }
-
-  // Cached so repushOverlayCameraAnchors hits the layers' applyTransform
-  // fast path on a camera-only update instead of recomputing markers.
-  let cachedCpMarkers: readonly ControlPointColumn[] = [];
-  let cachedVisibleCps: readonly ControlPointView[] = [];
-
-  function refreshControlPointColumns(): void {
-    const cps = getVisibleControlPoints();
-    const handlesByCpId = new Map<string, THREE.Object3D[]>();
-    for (const im of overlays.measurements.list()) {
-      if (!im.controlPointId) continue;
-      const arr = handlesByCpId.get(im.controlPointId);
-      if (arr) arr.push(im.handle);
-      else handlesByCpId.set(im.controlPointId, [im.handle]);
-    }
-    cachedCpMarkers = cps.map(cp => ({
-      id: cp.id,
-      anchor: { lat: cp.estLat!, lng: cp.estLng! },
-      altitude: cp.estAlt,
-      selected: cp.selected,
-      observations: handlesByCpId.get(cp.id) ?? [],
-    }));
-    cachedVisibleCps = cps;
-    cachedObservationRays = buildObservationRays();
-    // CP locations may have changed (sync, solve, edit) — a CP gaining or
-    // losing a lat/lng flips the orphan-visibility branch for its POIs.
-    overlays.measurements.refreshVisibility();
-    pushPose();
-  }
 
   // Fan out pose changes to every camera-anchored consumer except terrain.
   // Subscribed below; fires automatically on every worldCamera mutation.
-  // Terrain is pushed separately so hydrateFromAPI can defer the DEM/imagery
-  // tile flood to the end of its parallel-fetch block.
   function pushPose(): void {
     scene.applyPose({
-      cpMarkers: cachedCpMarkers,
-      visibleCps: cachedVisibleCps,
-      observationRays: cachedObservationRays,
-      otherStations,
-      otherCameras,
+      cpMarkers: data.getCpMarkers(),
+      visibleCps: data.getVisibleCps(),
+      observationRays: data.getObservationRays(),
+      otherStations: data.getOtherStations(),
+      otherCameras: data.getOtherCameras(),
       selectedStationId,
-      cpConstraints,
+      cpConstraints: data.getCpConstraints(),
       selectedConstraintId,
       multiSelectedConstraintIds,
-      cpSurfaces,
+      cpSurfaces: data.getCpSurfaces(),
       selectedSurfaceId,
       sundialMarkerDots,
       sundialGnomonCpId: sundialModal.getGnomonCpId(),
@@ -257,47 +94,15 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   }
   worldCamera.subscribe(pushPose);
 
-  function applyCameraLocation(loc: LatLng, alt: number): void {
-    worldCamera.setStationAnchor({ location: loc, altitudeMSL: alt });
-    scene.pushTerrainFromPose();
-    settings.refreshSunDirection();
-    sync.flush();
-  }
-
-  function registerControlPoint(cp: ApiControlPoint): void {
-    if (overlays.controlPoints.getById(cp.id) !== null) return;
-    overlays.controlPoints.add(cp.id, {
-      description: cp.description, estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,
-      ...cpLifespanFromApi(cp),
-    });
-    sync.registerControlPoint(cp.id, {
-      description: cp.description, est_lat: cp.est_lat, est_lng: cp.est_lng, est_alt: cp.est_alt,
-    });
-  }
-
-  function syncControlPoint(cp: ApiControlPoint): void {
-    sync.registerControlPoint(cp.id, {
-      description: cp.description, est_lat: cp.est_lat, est_lng: cp.est_lng, est_alt: cp.est_alt,
-    });
-    if (overlays.controlPoints.getById(cp.id) === null) {
-      overlays.controlPoints.add(cp.id, {
-        description: cp.description, estLat: cp.est_lat, estLng: cp.est_lng, estAlt: cp.est_alt,
-        ...cpLifespanFromApi(cp),
-      });
-      return;
-    }
-    overlays.withBatch(() => {
-      overlays.controlPoints.setDescription(cp.id, cp.description);
-      overlays.controlPoints.setEst(cp.id, {
-        lat: cp.est_lat, lng: cp.est_lng, alt: cp.est_alt,
-      });
-      overlays.controlPoints.setLifespan(cp.id, cpLifespanFromApi(cp));
-    });
-  }
-
-  // --- Sync, settings, handlers, admin -----------------------------------
-
-  const sync = createSyncManager({ overlays, getCurrentStationId });
+  const data = createStationDataController({
+    scene, route,
+    getCapturedAt: () => stationFields.getCapturedAt(),
+    hydrateStationFields: (s) => { stationFields.hydrate(s); },
+    refreshSunDirection: () => { settings.refreshSunDirection(); },
+    getSelectedStationId: () => selectedStationId,
+    onRefresh: () => { pushPose(); },
+  });
+  const { sync, handlers } = data;
 
   // attachSolveActions runs much later in this function; the widget's Solve
   // button isn't reachable until then, so the late binding is safe.
@@ -309,78 +114,36 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   const settings = createSettingsPanel({
     viewer, terrain, sunMarker, sky,
     getCameraLocation: () => worldCamera.getPose().stationAnchor,
-    onShowAllCPsChange: value => {
-      showAllCPs = value;
-      refreshControlPointColumns();
-    },
-    onCpMaxDistanceChange: meters => {
-      if (meters === cpMaxDistanceM) return;
-      cpMaxDistanceM = meters;
-      refreshControlPointColumns();
-    },
+    onShowAllCPsChange: value => { data.setShowAllCPs(value); },
+    onCpMaxDistanceChange: meters => { data.setCpMaxDistanceM(meters); },
     onSurfaceOpacityChange: opacity => { cpSurfacesRenderer.setOpacity(opacity); },
-  });
-
-  const handlers = createOrchestration({
-    getCurrentStationId,
-    overlays,
-    sync,
   });
 
   const admin = createAdminModal({ getCurrentStationId });
 
-  function mapApiCPConstraint(r: api.ApiCPConstraint): CPConstraintView {
-    return { id: r.id, cpAId: r.cp_a_id, cpBId: r.cp_b_id, type: r.constraint_type };
-  }
-  // Pulls every CP-CP constraint and rebuilds the in-scene lines. CPs are
-  // global so we don't filter by station; the constraint-lines factory drops
-  // any constraint whose endpoints aren't in `cps`.
-  async function reloadCPConstraints(): Promise<void> {
-    try {
-      cpConstraints = (await api.listCPConstraints()).map(mapApiCPConstraint);
-    } catch (err) {
-      console.error('list cp constraints failed:', err);
-      cpConstraints = [];
-    }
-    refreshControlPointColumns();
-  }
   const cpConstraintModal = createCPConstraintModal({
     getControlPoints: () => overlays.controlPoints.list(),
     onMutated: () => {
       selectedConstraintId = null;
-      void reloadCPConstraints();
+      void data.reloadCPConstraints();
     },
     onClose: () => {
       if (selectedConstraintId !== null) {
         selectedConstraintId = null;
-        refreshControlPointColumns();
+        data.refreshControlPointColumns();
       }
     },
   });
 
-  function mapApiCPSurface(r: api.ApiCPSurface): CPSurfaceView {
-    const ids = [r.cp_1_id, r.cp_2_id, r.cp_3_id];
-    if (r.cp_4_id) ids.push(r.cp_4_id);
-    return { id: r.id, cpIds: ids };
-  }
-  async function reloadCPSurfaces(): Promise<void> {
-    try {
-      cpSurfaces = (await api.listCPSurfaces()).map(mapApiCPSurface);
-    } catch (err) {
-      console.error('list cp surfaces failed:', err);
-      cpSurfaces = [];
-    }
-    refreshControlPointColumns();
-  }
   const cpSurfaceModal = createCPSurfaceModal({
     onMutated: () => {
       selectedSurfaceId = null;
-      void reloadCPSurfaces();
+      void data.reloadCPSurfaces();
     },
     onClose: () => {
       if (selectedSurfaceId !== null) {
         selectedSurfaceId = null;
-        refreshControlPointColumns();
+        data.refreshControlPointColumns();
       }
     },
   });
@@ -444,7 +207,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     // Only the constraint-line color changes; skip the heavier marker /
     // observation refresh in refreshControlPointColumns.
     const pose = worldCamera.getPose();
-    cpConstraintLines.update(pose.location, pose.altitudeMSL, cachedVisibleCps, cpConstraints, selectedConstraintId, multiSelectedConstraintIds);
+    cpConstraintLines.update(pose.location, pose.altitudeMSL, data.getVisibleCps(), data.getCpConstraints(), selectedConstraintId, multiSelectedConstraintIds);
     viewer.requestRender();
   }
 
@@ -463,8 +226,9 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   getElement<HTMLButtonElement>('constraint-add-surface-btn').addEventListener('click', () => {
     if (multiSelectedConstraintIds.size !== 2) return;
     const [id1, id2] = [...multiSelectedConstraintIds];
-    const c1 = cpConstraints.find(k => k.id === id1);
-    const c2 = cpConstraints.find(k => k.id === id2);
+    const constraints = data.getCpConstraints();
+    const c1 = constraints.find(k => k.id === id1);
+    const c2 = constraints.find(k => k.id === id2);
     if (!c1 || !c2) return;
     const a1 = c1.cpAId, a2 = c1.cpBId, b1 = c2.cpAId, b2 = c2.cpBId;
     const set1 = new Set([a1, a2]);
@@ -487,7 +251,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     }
     void api.createCPSurface(body).then(() => {
       clearMultiSelectedConstraints();
-      void reloadCPSurfaces();
+      void data.reloadCPSurfaces();
     }).catch((err: unknown) => {
       console.error('create cp surface failed:', err);
       alert('Could not create surface — see console.');
@@ -501,12 +265,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     onMutate: () => {
       viewer.requestRender();
       baker.markDirty();
-      refreshControlPointColumns();
+      data.refreshControlPointColumns();
       sync.flush();
     },
     onSelectionChange: () => {
       viewer.requestRender();
-      refreshControlPointColumns();
+      data.refreshControlPointColumns();
     },
     onLightMutate: () => {
       viewer.requestRender();
@@ -591,9 +355,9 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     if (!stationObserves) {
       const observingStationId = getCurrentStationId();
       const postObservation = (status: api.ApiCpObservationStatus, reason?: api.ApiCpObservationReason): void => {
-        const prior = cpObservationByCp.get(cpId);
-        cpObservationByCp.set(cpId, { id: prior?.id ?? null, status });
-        refreshControlPointColumns();
+        const prior = data.getCpObservation(cpId);
+        data.setCpObservation(cpId, { id: prior?.id ?? null, status });
+        data.refreshControlPointColumns();
         const req: Promise<api.ApiCpObservation> = prior?.id
           ? api.updateCpObservation(prior.id, { status, reason: reason ?? null })
           : api.createCpObservation(observingStationId, {
@@ -601,12 +365,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
               status,
               reason: reason ?? null,
             });
-        req.then(o => { cpObservationByCp.set(cpId, { id: o.id, status: o.status }); })
+        req.then(o => { data.setCpObservation(cpId, { id: o.id, status: o.status }); })
           .catch((err: unknown) => {
             console.error('cp_observation upsert failed:', err);
-            if (prior) cpObservationByCp.set(cpId, prior);
-            else cpObservationByCp.delete(cpId);
-            refreshControlPointColumns();
+            if (prior) data.setCpObservation(cpId, prior);
+            else data.deleteCpObservation(cpId);
+            data.refreshControlPointColumns();
             alert('Update failed — see console.');
           });
       };
@@ -634,21 +398,6 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         ? { lat: pose.location.lat, lng: pose.location.lng, altitudeMSL: pose.altitudeMSL }
         : null,
     });
-  }
-
-  function applyCameraFromURL(): void {
-    const snap = route.readCameraFromURL();
-    if (snap.azDeg !== null && snap.altDeg !== null) {
-      viewer.setAzAlt(degToRad(snap.azDeg), degToRad(snap.altDeg));
-    }
-    if (snap.fovDeg !== null) viewer.setFov(snap.fovDeg);
-    if (snap.live) {
-      worldCamera.setLiveCamera({
-        location: { lat: snap.live.lat, lng: snap.live.lng },
-        altitudeMSL: snap.live.altitudeMSL,
-      });
-    }
-    viewer.requestRender();
   }
 
   attachInput({
@@ -687,7 +436,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       const pose = worldCamera.getPose();
       if (!pose.stationAnchor) return null;
       return findHitColumn(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, pose.stationAnchor,
-        pose.altitudeMSL, getVisibleControlPoints());
+        pose.altitudeMSL, data.getVisibleCps());
     },
     onHoveredColumnChange: id => { cpColumns.setHoveredMarker(id); },
     onPhotoBodyContextMenu: (overlay, u, v, sx, sy) => {
@@ -707,18 +456,19 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     },
     findStationAtNDC: ndc => {
       const pose = worldCamera.getPose();
-      if (!pose.stationAnchor || otherStations.length === 0) return null;
+      const others = data.getOtherStations();
+      if (!pose.stationAnchor || others.length === 0) return null;
       const canvas = viewer.renderer.domElement;
       return findHitDot(ndc, STATION_DOT_HIT_PX,
         canvas.clientWidth, canvas.clientHeight, viewer.camera, pose.stationAnchor,
-        pose.altitudeMSL, otherStations);
+        pose.altitudeMSL, others);
     },
     onStationClick: (id, sx, sy) => {
       if (selectedStationId !== id) {
         selectedStationId = id;
-        refreshControlPointColumns();
+        data.refreshControlPointColumns();
       }
-      const st = otherStations.find(s => s.id === id);
+      const st = data.getOtherStations().find(s => s.id === id);
       const header = st?.name ?? `Untitled ${id.slice(0, 6)}`;
       contextMenu.open(sx, sy, [
         { label: 'Go to camera →', onClick: () => { void stationNavigation.flyToStation(id); } },
@@ -727,7 +477,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     onDeselectStation: () => {
       if (selectedStationId === null) return;
       selectedStationId = null;
-      refreshControlPointColumns();
+      data.refreshControlPointColumns();
     },
     onCPClick: (cpId, sx, sy, body) => {
       if (activePicker === 'gnomon') {
@@ -745,10 +495,10 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       }
       // Plain click clears any multi-select and opens the edit modal.
       clearMultiSelectedConstraints();
-      const constraint = cpConstraints.find(k => k.id === constraintId);
+      const constraint = data.getCpConstraints().find(k => k.id === constraintId);
       if (!constraint) return;
       selectedConstraintId = constraintId;
-      refreshControlPointColumns();
+      data.refreshControlPointColumns();
       cpConstraintModal.openEdit(constraint);
     },
     findSurfaceAtNDC: ndc => cpSurfacesRenderer.findHit(ndc, viewer.camera),
@@ -762,7 +512,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         return;
       }
       selectedSurfaceId = surfaceId;
-      refreshControlPointColumns();
+      data.refreshControlPointColumns();
       cpSurfaceModal.open(surfaceId);
     },
     onCreateCPConstraint: (cpAId, cpBId) => { cpConstraintModal.openCreate(cpAId, cpBId); },
@@ -818,51 +568,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       // possible (the form is bound only after hydrate sets the anchor),
       // but be explicit rather than silently anchor at sea level.
       if (pose.stationAltitudeMSL === null) return;
-      applyCameraLocation(loc, pose.stationAltitudeMSL);
+      data.applyCameraLocation(loc, pose.stationAltitudeMSL);
     },
   });
 
-  async function rehydrateAfterSolve(): Promise<void> {
-    const data = await api.getStation(route.getStationId());
-    stationFields.hydrate(data.station);
-    overlays.withBatch(() => {
-      const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
-      applyCameraLocation(loc, data.station.alt);
-      for (const p of data.photos) {
-        const o = overlays.photos.getById(p.id);
-        if (!o) continue;
-        overlays.photos.applyPose(o, {
-          photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
-          sizeRad: p.size_rad, aspect: p.aspect, camLat: data.station.lat, camLng: data.station.lng,
-          k1: p.dist_k1, k2: p.dist_k2,
-        });
-        overlays.photos.setLocks(o, {
-          lockPhotoAz: p.lock_photo_az, lockPhotoTilt: p.lock_photo_tilt,
-          lockPhotoRoll: p.lock_photo_roll, lockSizeRad: p.lock_size_rad,
-          lockDistK1: p.lock_dist_k1, lockDistK2: p.lock_dist_k2,
-        });
-        overlays.photos.setSigmas(o, {
-          sigmaPhotoAz: p.sigma_photo_az ?? null,
-          sigmaPhotoTilt: p.sigma_photo_tilt ?? null,
-          sigmaPhotoRoll: p.sigma_photo_roll ?? null,
-          sigmaSizeRad: p.sigma_size_rad ?? null,
-          sigmaDistK1: p.sigma_dist_k1 ?? null,
-          sigmaDistK2: p.sigma_dist_k2 ?? null,
-        });
-        sync.registerPhoto(p.id, {
-          aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,
-          photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
-          dist_k1: p.dist_k1, dist_k2: p.dist_k2,
-        });
-      }
-      for (const cp of data.control_points) {
-        syncControlPoint(cp);
-      }
-    });
-  }
-
   solveActions = attachSolveActions({
-    rehydrate: rehydrateAfterSolve,
+    rehydrate: () => data.rehydrateAfterSolve(),
     reportError: (label, err) => { sync.reportError(label, err); },
   });
 
@@ -871,49 +582,25 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     worldCamera,
     getCurrentStationId,
     getStationName: () => stationFields.getNameAndAlt()?.name ?? null,
-    getOtherStations: () => otherStations,
-    setOtherStations: (s) => { otherStations = [...s]; },
-    loadStation,
+    getOtherStations: () => data.getOtherStations(),
+    setOtherStations: (s) => { data.setOtherStations(s); },
+    loadStation: (newId, prefetched) => loadStation(newId, prefetched),
   });
 
   // --- Hydrate + bootstrap -----------------------------------------------
 
-  // Reset all per-station state so the next hydrateFromAPI starts fresh.
+  // Reset interactions + sundial bits on station swap; data.clear() handles
+  // the heavy lifting (sync reset, overlay teardown, list resets, observation
+  // cache, worldCamera).
   function clearStationData(): void {
-    // Reset sync FIRST. The overlay teardown below removes every photo /
-    // measurement / CP, each of which queues a notify; the batch's
-    // onMutate then runs sync.flush, and a still-loaded sync would diff
-    // the empty overlay state against its baseline and DELETE the
-    // backend rows for the station we're leaving. Resetting sync flips
-    // `loaded` to false so flush short-circuits before issuing any
-    // network call.
-    sync.reset();
-    overlays.withBatch(() => {
-      // deleteSelected disposes textures, removes from overlaysGroup, and
-      // strips child measurements via disposePoisOn. Snapshot first since
-      // the loop mutates overlaysGroup.children.
-      for (const o of [...overlays.photos.list()]) {
-        if (!(o instanceof THREE.Group)) continue;
-        overlays.photos.setSelected(o);
-        overlays.photos.deleteSelected();
-      }
-      for (const cp of [...overlays.controlPoints.list()]) {
-        overlays.controlPoints.remove(cp.id);
-      }
-    });
-    otherStations = [];
-    otherCameras = [];
+    data.clear();
     selectedStationId = null;
-    cpConstraints = [];
     selectedConstraintId = null;
     clearMultiSelectedConstraints();
-    cpSurfaces = [];
     selectedSurfaceId = null;
-    cpObservationByCp.clear();
     sundialModal.reset();
     sundialMarkerDots = [];
     sundialLine.visible = false;
-    worldCamera.clear();
     previewLine.visible = false;
   }
 
@@ -924,10 +611,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     route.clearFocusedCpId();
     route.setStationId(newId);
     clearStationData();
-    await hydrateFromAPI(newId, prefetched);
-    if (newId !== route.getStationId()) return;  // another loadStation took over
-    applyCameraFromURL();
-    sync.markLoaded();
+    await data.load(newId, prefetched);
   }
 
   async function loadStation(newId: string, prefetched?: ApiHydratedStation): Promise<void> {
@@ -938,196 +622,8 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   route.onPopState(sta => {
     if (!sta) return;
     if (sta !== route.getStationId()) void applyStation(sta);
-    else applyCameraFromURL();
+    else data.applyCameraFromURL();
   });
-
-  async function hydrateFromAPI(id: string, prefetched?: ApiHydratedStation): Promise<void> {
-    let data: ApiHydratedStation;
-    if (prefetched) {
-      data = prefetched;
-    } else {
-      try {
-        data = await api.getStation(id);
-      } catch (err) {
-        console.error('hydrate failed:', err);
-        alert('Could not load this station.');
-        return;
-      }
-      if (id !== route.getStationId()) return;  // user navigated away during fetch
-    }
-    const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
-    // Anchor pose up front so subsequent reads see current values. Terrain
-    // setLocation is deferred to the end of hydrate so DEM/imagery tile
-    // fetches queue behind photos + markers.
-    worldCamera.setStationAnchor({ location: loc, altitudeMSL: data.station.alt });
-    settings.refreshSunDirection();
-    sync.flush();
-    stationFields.hydrate(data.station);
-
-    // Center the viewport on the mean of the station's photo directions.
-    // Matches the orientation the fly-between animation lands at, so a fly
-    // followed by the post-fly reload doesn't snap-rotate. A URL-supplied
-    // ?focus=<im> deep-link overrides this below.
-    const meanOrient = meanPhotoAzAlt(data.photos);
-    if (meanOrient) viewer.setAzAlt(meanOrient.az, meanOrient.alt);
-
-    // Place each photo synchronously with a placeholder; blob fetches
-    // ride on the network ahead of terrain tiles (see end of hydrate).
-    const loader = new THREE.TextureLoader();
-    overlays.withBatch(() => {
-      for (const p of data.photos) {
-        const dir = dirFromAzAlt(p.photo_az, p.photo_tilt);
-        const o = overlays.photos.addPending(p.aspect, dir, { id: p.id });
-        overlays.photos.applyPose(o, {
-          photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
-          sizeRad: p.size_rad, aspect: p.aspect, camLat: loc.lat, camLng: loc.lng,
-          k1: p.dist_k1, k2: p.dist_k2,
-        });
-        overlays.photos.setOpacity(o, p.opacity);
-        overlays.photos.setLocks(o, {
-          lockPhotoAz: p.lock_photo_az, lockPhotoTilt: p.lock_photo_tilt,
-          lockPhotoRoll: p.lock_photo_roll, lockSizeRad: p.lock_size_rad,
-          lockDistK1: p.lock_dist_k1, lockDistK2: p.lock_dist_k2,
-        });
-        overlays.photos.setSigmas(o, {
-          sigmaPhotoAz: p.sigma_photo_az ?? null,
-          sigmaPhotoTilt: p.sigma_photo_tilt ?? null,
-          sigmaPhotoRoll: p.sigma_photo_roll ?? null,
-          sigmaSizeRad: p.sigma_size_rad ?? null,
-          sigmaDistK1: p.sigma_dist_k1 ?? null,
-          sigmaDistK2: p.sigma_dist_k2 ?? null,
-        });
-        sync.registerPhoto(p.id, {
-          aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,
-          photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
-          dist_k1: p.dist_k1, dist_k2: p.dist_k2,
-        });
-        const fullUrl = api.photoBlobUrl(p);
-        const previewUrl = api.photoPreviewUrl(p);
-        const setTex = (tex: THREE.Texture): void => { overlays.photos.setTexture(o, tex); };
-        const onFullErr = (err: unknown): void => { console.error(`photo ${p.id} load failed:`, err); };
-        const loadFull = (): void => { loader.load(fullUrl, setTex, undefined, onFullErr); };
-        if (previewUrl) {
-          loader.load(previewUrl, tex => { setTex(tex); loadFull(); }, undefined, loadFull);
-        } else {
-          loadFull();
-        }
-      }
-
-      // Control points first so subsequent measurement adds reference an existing CP entry.
-      for (const cp of data.control_points) {
-        registerControlPoint(cp);
-      }
-
-      for (const im of data.image_measurements) {
-        const overlay = overlays.photos.getById(im.photo_id);
-        if (!overlay) continue;
-        overlays.measurements.add(overlay, im.u, im.v, {
-          id: im.id,
-          controlPointId: im.control_point_id,
-        });
-        sync.registerImageMeasurement(im.id, { u: im.u, v: im.v, control_point_id: im.control_point_id });
-      }
-
-      for (const o of data.cp_observations) {
-        cpObservationByCp.set(o.control_point_id, { id: o.id, status: o.status });
-      }
-    });
-
-    // Independent fetches — kick off in parallel so hydrate latency isn't
-    // gated on the slower of the two. Constraints are global; piggy-back here
-    // so they're available the moment the world view paints.
-    const [cpsRes, stationsRes, consRes, surfRes] = await Promise.allSettled([
-      api.listControlPoints(),
-      api.listStations(),
-      api.listCPConstraints(),
-      api.listCPSurfaces(),
-    ]);
-    if (id !== route.getStationId()) return;  // user navigated away during fetch
-    overlays.withBatch(() => {
-      if (cpsRes.status === 'fulfilled') {
-        for (const cp of cpsRes.value) registerControlPoint(cp);
-      } else {
-        console.error('list control points failed:', cpsRes.reason);
-      }
-    });
-    if (consRes.status === 'fulfilled') {
-      cpConstraints = consRes.value.map(mapApiCPConstraint);
-    } else {
-      console.error('list cp constraints failed:', consRes.reason);
-      cpConstraints = [];
-    }
-    if (surfRes.status === 'fulfilled') {
-      cpSurfaces = surfRes.value.map(mapApiCPSurface);
-    } else {
-      console.error('list cp surfaces failed:', surfRes.reason);
-      cpSurfaces = [];
-    }
-    if (stationsRes.status === 'fulfilled') {
-      // Skip the current station: a dot at (0,0,0) just sits on top of the camera.
-      otherStations = stationsRes.value
-        .filter(st => st.id !== id)
-        .map(st => ({ id: st.id, name: st.name, anchor: { lat: st.lat, lng: st.lng }, altitude: st.alt }));
-      refreshControlPointColumns();
-      // Non-blocking: dots already render without the per-photo data.
-      void Promise.all(otherStations.map(s => api.getStation(s.id)))
-        .then(hydrated => {
-          if (id !== route.getStationId()) return;  // user navigated away
-          const cams: OtherCamera[] = [];
-          for (const d of hydrated) {
-            const measByPhotoId = new Map<string, OtherCameraMeasurement[]>();
-            for (const im of d.image_measurements) {
-              const arr = measByPhotoId.get(im.photo_id) ?? [];
-              arr.push({ id: im.id, u: im.u, v: im.v, controlPointId: im.control_point_id });
-              measByPhotoId.set(im.photo_id, arr);
-            }
-            for (const p of d.photos) {
-              cams.push({
-                stationId: d.station.id,
-                photoId: p.id,
-                fromLat: d.station.lat, fromLng: d.station.lng, fromAlt: d.station.alt,
-                photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
-                sizeRad: p.size_rad, aspect: p.aspect,
-                measurements: measByPhotoId.get(p.id) ?? [],
-              });
-            }
-          }
-          otherCameras = cams;
-          refreshControlPointColumns();
-        })
-        .catch((err: unknown) => { console.error('fetch other-station photos failed:', err); });
-    } else {
-      console.error('list stations failed:', stationsRes.reason);
-    }
-
-    // Terrain last so its tile flood queues behind every other fetch above.
-    scene.pushTerrainFromPose();
-  }
-
-  const focusScratch = new THREE.Vector3();
-  function focusCameraOnImageMeasurement(id: string): boolean {
-    const handle = overlays.measurements.getById(id);
-    if (!handle) return false;
-    handle.getWorldPosition(focusScratch);
-    const { az, alt } = vecToAzAlt(focusScratch.x, focusScratch.y, focusScratch.z);
-    viewer.setAzAlt(az, alt);
-    viewer.setFov(FOCUS_FOV_DEG);
-    overlays.measurements.setSelected(handle);
-    return true;
-  }
-
-  function focusCameraOnControlPoint(id: string): boolean {
-    const cp = overlays.controlPoints.getById(id);
-    if (cp?.estLat == null || cp.estLng == null || cp.estAlt == null) return false;
-    const pose = worldCamera.getPose();
-    if (!pose.location) return false;
-    const { x, z } = latLngToCameraRelativeMeters({ lat: cp.estLat, lng: cp.estLng }, pose.location);
-    const y = cp.estAlt - pose.altitudeMSL;
-    const { az, alt } = vecToAzAlt(x, y, z);
-    viewer.setAzAlt(az, alt);
-    viewer.setFov(FOCUS_FOV_DEG);
-    return true;
-  }
 
   viewer.setCanvasVisible(true);
   hud.setVisible(true);
@@ -1137,24 +633,23 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   // canvas staying black until every parallel fetch resolves.
   viewer.start();
 
-  await hydrateFromAPI(route.getStationId());
-  overlays.photos.setSelected(null);
-  overlays.measurements.setSelected(null);
-  admin.setVisible(true);
-  const focusedCpId = route.getFocusedCpId();
-  const focusImageMeasurementId = route.consumeFocusImageMeasurementId();
-  if (focusedCpId) {
-    if (!focusCameraOnControlPoint(focusedCpId)) {
-      console.warn('focus control point not resolvable:', focusedCpId);
+  await data.load(route.getStationId(), undefined, () => {
+    overlays.photos.setSelected(null);
+    overlays.measurements.setSelected(null);
+    admin.setVisible(true);
+    // URL-supplied focus deep-link. URL camera params (applied just after
+    // this hook returns) take precedence so bookmarks restore exactly.
+    const focusedCpId = route.getFocusedCpId();
+    const focusImageMeasurementId = route.consumeFocusImageMeasurementId();
+    if (focusedCpId) {
+      if (!data.focusCameraOnControlPoint(focusedCpId)) {
+        console.warn('focus control point not resolvable:', focusedCpId);
+      }
+    } else if (focusImageMeasurementId && !data.focusCameraOnImageMeasurement(focusImageMeasurementId)) {
+      console.warn('focus image measurement not found:', focusImageMeasurementId);
     }
-  } else if (focusImageMeasurementId && !focusCameraOnImageMeasurement(focusImageMeasurementId)) {
-    console.warn('focus image measurement not found:', focusImageMeasurementId);
-  }
-  // Explicit camera params in the URL override defaults + focus so bookmarks
-  // and back/forward restore the exact viewpoint.
-  applyCameraFromURL();
+  });
 
-  sync.markLoaded();
   hud.refresh();
   photoHud.refresh();
 }
