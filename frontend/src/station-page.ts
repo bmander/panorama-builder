@@ -2,14 +2,10 @@
 // scene composition and editor wiring that goes with it. Composes the smaller
 // station-fields, solve-actions, and station-navigation modules.
 
-import * as THREE from 'three';
 import type { ApiHydratedStation } from './api.js';
 import { attachDownload } from './ui.js';
 import { createCPConstraintModal } from './cp-constraint-modal.js';
 import { createCPSurfaceModal } from './cp-surface-modal.js';
-import { createSundialModal } from './sundial-modal.js';
-import type { SundialPickField } from './sundial-modal.js';
-import type { Dot } from './dot-layer.js';
 import { getElement } from './types.js';
 import { createSessionPanel } from './session-panel.js';
 import { createSettingsPanel } from './settings.js';
@@ -27,6 +23,7 @@ import { createStationScene } from './station/scene.js';
 import { createStationRouteState } from './station/route-state.js';
 import { createStationDataController } from './station/data-controller.js';
 import { createStationInteractions } from './station/interactions.js';
+import { createSundialController } from './station/sundial-controller.js';
 
 export interface MountStationPageOptions {
   initialStationId: string;
@@ -64,9 +61,9 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       multiSelectedConstraintIds: interactions.getMultiSelectedConstraintIds(),
       cpSurfaces: data.getCpSurfaces(),
       selectedSurfaceId: interactions.getSelectedSurfaceId(),
-      sundialMarkerDots,
-      sundialGnomonCpId: sundialModal.getGnomonCpId(),
-      sundialShadow: sundialModal.getShadowLocation(),
+      sundialMarkerDots: sundial.getMarkerDots(),
+      sundialGnomonCpId: sundial.getGnomonCpId(),
+      sundialShadow: sundial.getShadowLocation(),
     });
   }
   worldCamera.subscribe(pushPose);
@@ -115,16 +112,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     onClose: () => { interactions.clearSurfaceSelection(); },
   });
 
-  // Sundial visuals (dot layer + line) live in scene; this is the per-pick
-  // dot list that feeds them, plus the shadow-point color.
-  const SUNDIAL_SHADOW_COLOR = new THREE.Color(0xffaa44);
-  let sundialMarkerDots: readonly Dot[] = [];
-
-  // Sundial picker state: while non-null, the next CP marker click (or
-  // surface click) is routed to the modal instead of opening its default
-  // context menu / delete modal.
-  let activePicker: SundialPickField | null = null;
-  const sundialModal = createSundialModal({
+  const sundial = createSundialController({
     getControlPoint: (id) => overlays.controlPoints.getById(id),
     getCapturedAtYear: () => {
       const at = stationFields.getCapturedAt();
@@ -132,18 +120,8 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       const y = new Date(at).getUTCFullYear();
       return Number.isFinite(y) ? y : null;
     },
-    onPickStart: (field) => { activePicker = field; },
-    onPicksChange: () => {
-      const loc = sundialModal.getShadowLocation();
-      sundialMarkerDots = loc === null
-        ? []
-        : [{ anchor: loc.latlng, altitude: loc.altitude, color: SUNDIAL_SHADOW_COLOR }];
-      pushPose();
-    },
   });
-  getElement<HTMLButtonElement>('sun-dial-btn').addEventListener('click', () => {
-    sundialModal.open();
-  });
+  sundial.onPicksChange(() => { pushPose(); });
 
   attachHamburgerMenu();
 
@@ -238,14 +216,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   });
 
   const interactions = createStationInteractions({
-    scene, data, route,
-    contextMenu, observationModal, sundialModal,
+    scene, data, route, sundial,
+    contextMenu, observationModal,
     photoHud, undoManager, stationNavigation,
     openConstraintCreate: (a, b) => { cpConstraintModal.openCreate(a, b); },
     openConstraintEdit: (c) => { cpConstraintModal.openEdit(c); },
     openSurfaceEdit: (id) => { cpSurfaceModal.open(id); },
-    getActivePicker: () => activePicker,
-    setActivePicker: (p) => { activePicker = p; },
   });
 
   attachDownload({ baker });
@@ -258,8 +234,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   function clearStationData(): void {
     data.clear();
     interactions.clearAll();
-    sundialModal.reset();
-    sundialMarkerDots = [];
+    sundial.reset();
     sundialLine.visible = false;
     previewLine.visible = false;
   }

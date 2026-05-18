@@ -24,7 +24,6 @@ import { dirFromAzAlt } from '../overlay.js';
 import { locEq } from '../world-camera.js';
 import type { ContextMenu, ContextMenuItem } from '../context-menu.js';
 import type { ObservationModal } from '../observation-modal.js';
-import type { SundialModal, SundialPickField } from '../sundial-modal.js';
 import type { PhotoHud } from '../photo-hud.js';
 import type { UndoManager } from '../undo.js';
 import type { StationNavigation } from '../station-navigation.js';
@@ -32,6 +31,7 @@ import type { CPConstraintView } from '../types.js';
 import type { StationScene } from './scene.js';
 import type { StationDataController } from './data-controller.js';
 import type { StationRouteState } from './route-state.js';
+import type { SundialController } from './sundial-controller.js';
 
 const SHIFT_WHEEL_LOG_PER_PX = 0.005;
 const COLUMN_NDC_HIT_RADIUS = 0.01;
@@ -55,10 +55,10 @@ export interface CreateStationInteractionsOptions {
   readonly scene: StationScene;
   readonly data: StationDataController;
   readonly route: StationRouteState;
+  readonly sundial: SundialController;
   // Panel handles consumed at click time.
   readonly contextMenu: ContextMenu;
   readonly observationModal: ObservationModal;
-  readonly sundialModal: SundialModal;
   readonly photoHud: PhotoHud;
   readonly undoManager: UndoManager;
   readonly stationNavigation: StationNavigation;
@@ -69,9 +69,6 @@ export interface CreateStationInteractionsOptions {
   readonly openConstraintCreate: (cpAId: string, cpBId: string) => void;
   readonly openConstraintEdit: (c: CPConstraintView) => void;
   readonly openSurfaceEdit: (surfaceId: string) => void;
-  // Sundial picker state (slice 5 owns these).
-  readonly getActivePicker: () => SundialPickField | null;
-  readonly setActivePicker: (p: SundialPickField | null) => void;
 }
 
 // Modal-style file picker for menu actions ("Replace image…"). Resolves with
@@ -98,11 +95,10 @@ function pickImageFile(): Promise<File | null> {
 
 export function createStationInteractions(opts: CreateStationInteractionsOptions): StationInteractions {
   const {
-    scene, data, route,
-    contextMenu, observationModal, sundialModal,
+    scene, data, route, sundial,
+    contextMenu, observationModal,
     photoHud, undoManager, stationNavigation,
     openConstraintCreate, openConstraintEdit, openSurfaceEdit,
-    getActivePicker, setActivePicker,
   } = opts;
   const {
     viewer, overlays, worldCamera, terrain,
@@ -336,9 +332,8 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
       data.refreshControlPointColumns();
     },
     onCPClick: (cpId, sx, sy, body) => {
-      if (getActivePicker() === 'gnomon') {
-        setActivePicker(null);
-        sundialModal.onGnomonPicked(cpId);
+      if (sundial.getActivePicker() === 'gnomon') {
+        sundial.onGnomonPicked(cpId);
         return;
       }
       openCpContextMenu(cpId, sx, sy, body);
@@ -359,11 +354,10 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
     },
     findSurfaceAtNDC: ndc => cpSurfacesRenderer.findHit(ndc, viewer.camera),
     onSurfaceClick: (surfaceId, _sx, _sy, point) => {
-      if (getActivePicker() === 'shadow') {
-        setActivePicker(null);
+      if (sundial.getActivePicker() === 'shadow') {
         const pose = worldCamera.getPose();
         if (pose.location) {
-          sundialModal.onShadowPicked(surfaceId, vertexToLatLngAlt(point, pose.location, pose.altitudeMSL));
+          sundial.onShadowPicked(surfaceId, vertexToLatLngAlt(point, pose.location, pose.altitudeMSL));
         }
         return;
       }
