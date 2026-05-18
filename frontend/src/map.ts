@@ -433,12 +433,13 @@ export function createMapView({
       + `<label class="popup-lock-row"><input type="checkbox" class="popup-lock" data-lock="pos"${ck(lockPos)}> lock location</label>`
       + `<label class="popup-lock-row"><input type="checkbox" class="popup-lock" data-lock="alt"${ck(lockAlt)}> lock elevation</label>`;
   }
-  // 1-σ ellipse from the 2×2 horizontal-position covariance. The principal
+  // 2-σ ellipse from the 2×2 horizontal-position covariance. The principal
   // axis aligns with cov's larger eigenvector when present; with cov=0 it
   // degenerates to an axis-aligned ellipse. Severity bucket uses the
   // worst-axis σ so the colour scale matches the popup readout. Sampled as
   // a polygon because Leaflet lacks a native ellipse primitive.
   const ELLIPSE_SEGMENTS = 32;
+  const ELLIPSE_SIGMA = 2;
   function drawUncertaintyEllipse(
     latlng: LatLng,
     sigLat: number | null, sigLng: number | null, covLatLng: number | null,
@@ -453,8 +454,8 @@ export function createMapView({
     const mean = (vE + vN) / 2;
     const half = (vE - vN) / 2;
     const disc = Math.sqrt(half * half + cov * cov);
-    const major = Math.sqrt(Math.max(mean + disc, 0));
-    const minor = Math.sqrt(Math.max(mean - disc, 0));
+    const major = ELLIPSE_SIGMA * Math.sqrt(Math.max(mean + disc, 0));
+    const minor = ELLIPSE_SIGMA * Math.sqrt(Math.max(mean - disc, 0));
     const theta = 0.5 * Math.atan2(2 * cov, vE - vN);
     const cosT = Math.cos(theta), sinT = Math.sin(theta);
     const ring: L.LatLngTuple[] = [];
