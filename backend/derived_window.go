@@ -5,29 +5,27 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/bmander/panorama-builder/backend/stn"
 	"github.com/jackc/pgx/v5"
 )
 
 // derived_window.go materializes implicit lifespan bounds on control_points
 // AND capture-time bounds on stations from the observation graph.
 //
-// The model is a Simple Temporal Network (STN) of point variables:
-//   - station.captured_at     (one point per station)
-//   - cp.started_at, cp.ended_at (two points per CP)
-// constrained by observed cp_observation edges (s observed c) giving
-//   cp.started ≤ s.captured ≤ cp.ended.
+// The constraint model maps onto the bound-propagation engine in
+// backend/stn/:
+//   - Each CP contributes two interval variables (started_at, ended_at)
+//     plus a lifespan-validity Leq enforcing started ≤ ended.
+//   - Each station contributes one interval variable (captured_at).
+//   - Each `observed` cp_observation adds two Leqs encoding
+//     c.started ≤ s.captured ≤ c.ended.
+//   - Each `missing` cp_observation adds a Disjunction of two Leqs
+//     encoding s.captured ≤ c.started OR c.ended ≤ s.captured
+//     (Leq-relaxed strict inequalities, narrowed via dominated-branch
+//     pruning).
 //
-// Bound-propagation rules per observed edge (s, c):
-//   c.start_upper = min(c.start_upper, s.t_upper)
-//   c.end_lower   = max(c.end_lower,   s.t_lower)
-//   s.t_lower     = max(s.t_lower,     c.start_lower)
-//   s.t_upper     = min(s.t_upper,     c.end_upper)
-//
-// Iterated to quiescence via a worklist; for our scale (~200 CPs, ~40
-// stations, ~540 edges) it converges in microseconds. `missing`
-// observations stay on a single-pass heuristic during initialization (peek
-// at observed neighbors to disambiguate which side of the lifespan the
-// missing date sits on); they're DTP-hard in general, out of scope.
+// Time domain is int64 unix nanoseconds — converted from *time.Time at
+// the API boundary so the engine can stay generic over cmp.Ordered.
 //
 // Two callers invoke the same in-memory propagator:
 //   - propagateDatesInSession runs at solve time, reads main+overlay, and
@@ -46,184 +44,97 @@ type propagatedWindows struct {
 // propagateWindows runs the STN bound-propagation to quiescence on the
 // supplied graph state. Pure function — no I/O.
 func propagateWindows(cps []ControlPoint, stations []Station, obs []CpObservation) propagatedWindows {
-	type cpBounds struct {
-		startLo, startHi, endLo, endHi *time.Time
-		inconsistent                   bool
-	}
-	type stBounds struct {
-		lo, hi       *time.Time
-		inconsistent bool
-	}
-	cpState := make(map[string]*cpBounds, len(cps))
-	stState := make(map[string]*stBounds, len(stations))
-	stByID := make(map[string]*Station, len(stations))
-	for i := range stations {
-		stByID[stations[i].ID] = &stations[i]
-	}
+	solver := stn.New[int64]()
 
-	// Seed CP bounds from precise dates; station bounds from precise
-	// captured_at. Null inputs leave both bounds null (unbounded).
+	type cpVars struct{ start, end int }
+	cpV := make(map[string]cpVars, len(cps))
+	stV := make(map[string]int, len(stations))
+
+	// Seed each entity's variables from precise dates. Null inputs leave
+	// both bounds nil (unbounded).
 	for _, cp := range cps {
-		cpState[cp.ID] = &cpBounds{
-			startLo: cp.StartedAt, startHi: cp.StartedAt,
-			endLo: cp.EndedAt, endHi: cp.EndedAt,
-		}
+		sIdx := solver.AddVar()
+		eIdx := solver.AddVar()
+		cpV[cp.ID] = cpVars{sIdx, eIdx}
+		vars := solver.Variables()
+		vars[sIdx].Lo, vars[sIdx].Hi = toNanos(cp.StartedAt), toNanos(cp.StartedAt)
+		vars[eIdx].Lo, vars[eIdx].Hi = toNanos(cp.EndedAt), toNanos(cp.EndedAt)
+		solver.AddConstraint(stn.Leq[int64]{A: sIdx, B: eIdx})
 	}
 	for _, st := range stations {
-		stState[st.ID] = &stBounds{lo: st.CapturedAt, hi: st.CapturedAt}
+		tIdx := solver.AddVar()
+		stV[st.ID] = tIdx
+		vars := solver.Variables()
+		vars[tIdx].Lo, vars[tIdx].Hi = toNanos(st.CapturedAt), toNanos(st.CapturedAt)
 	}
 
-	// Build observed-edge adjacency. Missing observations bucketed for the
-	// disambiguation pass below.
-	cpToObservers := make(map[string][]string) // cp id → station ids observing it
-	stationToCPs := make(map[string][]string)  // station id → cp ids observed
-	cpToMissing := make(map[string][]string)   // cp id → station ids marking missing
+	// One constraint per observation.
 	for _, o := range obs {
-		switch o.Status {
-		case Observed:
-			cpToObservers[o.ControlPointID] = append(cpToObservers[o.ControlPointID], o.StationID)
-			stationToCPs[o.StationID] = append(stationToCPs[o.StationID], o.ControlPointID)
-		case Missing:
-			cpToMissing[o.ControlPointID] = append(cpToMissing[o.ControlPointID], o.StationID)
-		}
-	}
-
-	// Missing-disambiguation pass (heuristic, single sweep, uses raw
-	// station.captured_at for the neighbor check). Tightens CP-side
-	// start_lower / end_upper, flags inconsistent on contradictions.
-	for cpID, missStations := range cpToMissing {
-		cpb := cpState[cpID]
-		if cpb == nil {
+		ti, sOK := stV[o.StationID]
+		cv, cOK := cpV[o.ControlPointID]
+		if !sOK || !cOK {
 			continue
 		}
-		for _, sID := range missStations {
-			st := stByID[sID]
-			if st == nil || st.CapturedAt == nil {
-				continue
-			}
-			m := *st.CapturedAt
-			var hasLater, hasEarlier bool
-			for _, oSID := range cpToObservers[cpID] {
-				ost := stByID[oSID]
-				if ost == nil || ost.CapturedAt == nil {
-					continue
-				}
-				if ost.CapturedAt.After(m) {
-					hasLater = true
-				}
-				if ost.CapturedAt.Before(m) {
-					hasEarlier = true
-				}
-			}
-			if hasLater && hasEarlier {
-				cpb.inconsistent = true
-			}
-			if hasLater {
-				cpb.startLo = maxPtr(cpb.startLo, &m)
-			}
-			if hasEarlier {
-				cpb.endHi = minPtr(cpb.endHi, &m)
-			}
+		switch o.Status {
+		case Observed:
+			// c.started ≤ s.captured ≤ c.ended
+			solver.AddConstraint(stn.Leq[int64]{A: cv.start, B: ti})
+			solver.AddConstraint(stn.Leq[int64]{A: ti, B: cv.end})
+		case Missing:
+			// s.captured < c.started  OR  c.ended < s.captured  (Leq-relaxed)
+			solver.AddConstraint(stn.Disjunction[int64]{
+				Alts: []stn.Constraint[int64]{
+					stn.Leq[int64]{A: ti, B: cv.start},
+					stn.Leq[int64]{A: cv.end, B: ti},
+				},
+			})
 		}
 	}
 
-	// Worklist STN propagation on observed edges. Each entry is one
-	// entity whose bounds might have moved and need to be pushed.
-	type wlEntry struct {
-		isCP bool
-		id   string
-	}
-	worklist := make([]wlEntry, 0, len(cps)+len(stations))
-	for id := range cpState {
-		worklist = append(worklist, wlEntry{true, id})
-	}
-	for id := range stState {
-		worklist = append(worklist, wlEntry{false, id})
-	}
+	solver.Propagate()
 
-	for len(worklist) > 0 {
-		e := worklist[len(worklist)-1]
-		worklist = worklist[:len(worklist)-1]
-		if e.isCP {
-			cpb := cpState[e.id]
-			for _, sID := range cpToObservers[e.id] {
-				stb := stState[sID]
-				if stb == nil {
-					continue
-				}
-				// s.t_lower ≥ c.start_lower; s.t_upper ≤ c.end_upper
-				moved := false
-				if cpb.startLo != nil {
-					if nv := maxPtr(stb.lo, cpb.startLo); nv != stb.lo {
-						stb.lo = nv
-						moved = true
-					}
-				}
-				if cpb.endHi != nil {
-					if nv := minPtr(stb.hi, cpb.endHi); nv != stb.hi {
-						stb.hi = nv
-						moved = true
-					}
-				}
-				if moved {
-					worklist = append(worklist, wlEntry{false, sID})
-				}
-			}
-		} else {
-			stb := stState[e.id]
-			for _, cID := range stationToCPs[e.id] {
-				cpb := cpState[cID]
-				if cpb == nil {
-					continue
-				}
-				// c.start_upper ≤ s.t_upper; c.end_lower ≥ s.t_lower
-				moved := false
-				if stb.hi != nil {
-					if nv := minPtr(cpb.startHi, stb.hi); nv != cpb.startHi {
-						cpb.startHi = nv
-						moved = true
-					}
-				}
-				if stb.lo != nil {
-					if nv := maxPtr(cpb.endLo, stb.lo); nv != cpb.endLo {
-						cpb.endLo = nv
-						moved = true
-					}
-				}
-				if moved {
-					worklist = append(worklist, wlEntry{true, cID})
-				}
-			}
-		}
-	}
-
-	// Detect contradictions + assemble outputs.
+	// Read each variable's narrowed bounds back into the time-shaped output.
+	vars := solver.Variables()
 	out := propagatedWindows{
 		CPs:      make(map[string]DerivedWindow, len(cps)),
 		Stations: make(map[string]StationDerivedWindow, len(stations)),
 	}
-	for id, c := range cpState {
-		inc := c.inconsistent ||
-			(c.startLo != nil && c.startHi != nil && c.startLo.After(*c.startHi)) ||
-			(c.endLo != nil && c.endHi != nil && c.endLo.After(*c.endHi)) ||
-			(c.startLo != nil && c.endHi != nil && c.startLo.After(*c.endHi))
-		out.CPs[id] = DerivedWindow{
-			StartedAtLower: c.startLo,
-			StartedAtUpper: c.startHi,
-			EndedAtLower:   c.endLo,
-			EndedAtUpper:   c.endHi,
-			Inconsistent:   inc,
+	for _, cp := range cps {
+		v := cpV[cp.ID]
+		sv, ev := vars[v.start], vars[v.end]
+		out.CPs[cp.ID] = DerivedWindow{
+			StartedAtLower: fromNanos(sv.Lo),
+			StartedAtUpper: fromNanos(sv.Hi),
+			EndedAtLower:   fromNanos(ev.Lo),
+			EndedAtUpper:   fromNanos(ev.Hi),
+			Inconsistent:   sv.Inconsistent || ev.Inconsistent,
 		}
 	}
-	for id, s := range stState {
-		inc := s.inconsistent || (s.lo != nil && s.hi != nil && s.lo.After(*s.hi))
-		out.Stations[id] = StationDerivedWindow{
-			CapturedAtLower: s.lo,
-			CapturedAtUpper: s.hi,
-			Inconsistent:    inc,
+	for _, st := range stations {
+		tv := vars[stV[st.ID]]
+		out.Stations[st.ID] = StationDerivedWindow{
+			CapturedAtLower: fromNanos(tv.Lo),
+			CapturedAtUpper: fromNanos(tv.Hi),
+			Inconsistent:    tv.Inconsistent,
 		}
 	}
 	return out
+}
+
+func toNanos(t *time.Time) *int64 {
+	if t == nil {
+		return nil
+	}
+	n := t.UnixNano()
+	return &n
+}
+
+func fromNanos(p *int64) *time.Time {
+	if p == nil {
+		return nil
+	}
+	t := time.Unix(0, *p).UTC()
+	return &t
 }
 
 // isDateGraphEntity reports whether mutations to this entity type feed
@@ -468,30 +379,4 @@ func stationDerivedWindowEqual(a, b StationDerivedWindow) bool {
 	return a.Inconsistent == b.Inconsistent &&
 		timePtrEqual(a.CapturedAtLower, b.CapturedAtLower) &&
 		timePtrEqual(a.CapturedAtUpper, b.CapturedAtUpper)
-}
-
-func minPtr(a, b *time.Time) *time.Time {
-	if a == nil {
-		return b
-	}
-	if b == nil {
-		return a
-	}
-	if b.Before(*a) {
-		return b
-	}
-	return a
-}
-
-func maxPtr(a, b *time.Time) *time.Time {
-	if a == nil {
-		return b
-	}
-	if b == nil {
-		return a
-	}
-	if b.After(*a) {
-		return b
-	}
-	return a
 }
