@@ -63,10 +63,8 @@ export function createTimeFilter({ initialStart, initialEnd, onChange }: CreateT
   const readout = getElement('time-filter-year-readout');
   // The track + selected-range fill is drawn by the .time-filter-slider
   // container via --start-pct / --end-pct (see styles.css).
-  const trackHost = sliderStart.parentElement;
+  const trackHost = sliderStart.parentElement!;
 
-  // Default bounds until setBounds is called. Used so the slider stays
-  // interactable on an empty database.
   let minMs = Date.UTC(1855, 0, 1);
   let maxMs = Date.UTC(2026, 11, 31);
   let startMs = initialStart ? initialStart.getTime() : minMs;
@@ -96,13 +94,11 @@ export function createTimeFilter({ initialStart, initialEnd, onChange }: CreateT
     const yStart = new Date(startMs).getFullYear();
     const yEnd = new Date(endMs).getFullYear();
     readout.textContent = yStart === yEnd ? String(yStart) : `${yStart} – ${yEnd}`;
-    if (trackHost !== null) {
-      const span = maxMs - minMs || 1;
-      const startPct = ((startMs - minMs) / span) * 100;
-      const endPct = ((endMs - minMs) / span) * 100;
-      trackHost.style.setProperty('--start-pct', `${startPct}%`);
-      trackHost.style.setProperty('--end-pct', `${endPct}%`);
-    }
+    const span = maxMs - minMs || 1;
+    const startPct = ((startMs - minMs) / span) * 100;
+    const endPct = ((endMs - minMs) / span) * 100;
+    trackHost.style.setProperty('--start-pct', `${startPct}%`);
+    trackHost.style.setProperty('--end-pct', `${endPct}%`);
   }
 
   function emit(): void {
@@ -152,11 +148,8 @@ export function createTimeFilter({ initialStart, initialEnd, onChange }: CreateT
     setBounds({ minMs: newMin, maxMs: newMax }) {
       minMs = newMin;
       maxMs = newMax > newMin ? newMax : newMin;
-      // Pull handles into the new range.
-      if (startMs < minMs) startMs = minMs;
-      if (startMs > maxMs) startMs = maxMs;
-      if (endMs < minMs) endMs = minMs;
-      if (endMs > maxMs) endMs = maxMs;
+      startMs = Math.max(minMs, Math.min(startMs, maxMs));
+      endMs = Math.max(minMs, Math.min(endMs, maxMs));
       if (startMs > endMs) startMs = endMs;
       paint();
     },
