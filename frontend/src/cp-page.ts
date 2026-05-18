@@ -3,7 +3,8 @@ import { degToRad } from './mathx.js';
 import {
   appendSigmaMeters, appendSigmaScalar, cpLabel, fmtAlt, fmtSigmaMeters,
   formatImpreciseDate, formatLocalDateTime, getElement,
-  indexCpHref, makeListCell, stationHref, stationLabel,
+  indexCpHref, makeListCell, nullableIntervalOverlapsRange,
+  stationHref, stationLabel,
 } from './types.js';
 import {
   SIGMA_ALT_REFUSE_M, SIGMA_ALT_WARN_M,
@@ -516,6 +517,24 @@ function renderVisiblePhotoRow(
   return li;
 }
 
+// True iff the station's possible capture window has any overlap with
+// the CP's possible lifespan envelope [started_at_lower, ended_at_upper].
+// Used to hide candidates that can't have observed this CP on temporal
+// grounds — e.g., station captured after the CP was destroyed.
+function stationWindowOverlapsCpLifespan(
+  cp: api.ApiControlPoint,
+  p: api.ApiControlPointVisiblePhoto,
+): boolean {
+  const startLo = cp.derived_window.started_at_lower;
+  const endHi = cp.derived_window.ended_at_upper;
+  const startMs = startLo !== null ? Date.parse(startLo) : Number.NEGATIVE_INFINITY;
+  const endMs = endHi !== null ? Date.parse(endHi) : Number.POSITIVE_INFINITY;
+  return nullableIntervalOverlapsRange(
+    p.station_derived_window.captured_at_lower,
+    p.station_derived_window.captured_at_upper,
+    startMs, endMs);
+}
+
 function renderVisiblePhotosFromCtx(): void {
   if (visiblePhotosCtx === null) return;
   const { cp, payload, observationsByStation } = visiblePhotosCtx;
@@ -523,6 +542,7 @@ function renderVisiblePhotosFromCtx(): void {
   list.replaceChildren();
   list.appendChild(renderVisiblePhotosHeader());
   for (const p of sortVisiblePhotos(payload.photos)) {
+    if (!stationWindowOverlapsCpLifespan(cp, p)) continue;
     list.appendChild(renderVisiblePhotoRow(cp, p, observationsByStation.get(p.station_id)));
   }
 }
