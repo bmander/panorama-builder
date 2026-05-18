@@ -45,6 +45,7 @@ import { createSessionPanel } from './session-panel.js';
 import { createSettingsPanel } from './settings.js';
 import { createOrchestration } from './handlers.js';
 import { createAdminModal } from './admin-modal.js';
+import { attachHamburgerMenu } from './hamburger-menu.js';
 import { createContextMenu } from './context-menu.js';
 import type { ContextMenuItem } from './context-menu.js';
 import { createObservationModal } from './observation-modal.js';
@@ -611,31 +612,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     sundialModal.open();
   });
 
-  // Hamburger menu wraps the admin / display / sun-dial / download actions.
-  // Each item's click handler is wired elsewhere (admin-modal, settings,
-  // sundial, ui.attachDownload); this block only manages open/close.
-  {
-    const menuBtn = getElement<HTMLButtonElement>('menu-btn');
-    const dropdown = getElement('menu-dropdown');
-    function setMenuOpen(open: boolean): void {
-      dropdown.hidden = !open;
-      menuBtn.setAttribute('aria-expanded', String(open));
-    }
-    menuBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      setMenuOpen(dropdown.hidden);
-    });
-    dropdown.addEventListener('click', () => { setMenuOpen(false); });
-    document.addEventListener('click', e => {
-      if (dropdown.hidden) return;
-      const target = e.target as Node | null;
-      if (target && (dropdown.contains(target) || menuBtn.contains(target))) return;
-      setMenuOpen(false);
-    });
-    document.addEventListener('keydown', e => {
-      if (e.key === 'Escape' && !dropdown.hidden) setMenuOpen(false);
-    });
-  }
+  attachHamburgerMenu();
 
   // Coarse-pointer viewports start collapsed to reclaim vertical space.
   {

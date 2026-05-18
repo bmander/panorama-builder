@@ -12,6 +12,7 @@ import { createStartStationModal } from './start-station-modal.js';
 import { createObservationModal } from './observation-modal.js';
 import { createTimeFilter } from './time-filter.js';
 import { DEFAULT_SIZE_RAD } from './overlay.js';
+import { attachHamburgerMenu } from './hamburger-menu.js';
 import { nullCpRayBearingDeg } from './null-cp-rays.js';
 import { readAspectRatio } from './handlers.js';
 import {
@@ -106,6 +107,9 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   // filter so clicking a station marker surfaces every CP it touches, even
   // ones whose lifespan excludes the slider range.
   let previewObservedCpIds: ReadonlySet<string> = new Set();
+  // Master toggle: when off, the CP layer is empty except for preview
+  // overrides. Off by default — a freshly-loaded map shows stations only.
+  let showCps = false;
 
   function refreshIndexControlPoints(): void {
     const { startMs, endMs } = timeFilter.getRange();
@@ -114,7 +118,7 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
       if (cp.est_lat === null || cp.est_lng === null) continue;
       const observed = previewObservedCpIds.has(cp.id);
       const lifespan = cpLifespanFromApi(cp);
-      if (!observed && !lifespanOverlapsRange(lifespan, startMs, endMs)) continue;
+      if (!observed && (!showCps || !lifespanOverlapsRange(lifespan, startMs, endMs))) continue;
       dots.push({
         id: cp.id,
         latlng: { lat: cp.est_lat, lng: cp.est_lng },
@@ -383,6 +387,18 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     }
     cpsById.set(cp.id, cp);
   }
+
+  // The shared dropdown carries items for both routes; hide /world's.
+  for (const id of ['settings-btn', 'sun-dial-btn', 'download']) {
+    getElement(id).hidden = true;
+  }
+  getElement('index-show-cps-item').hidden = false;
+  const showCpsCheckbox = getElement<HTMLInputElement>('index-show-cps');
+  showCpsCheckbox.addEventListener('change', () => {
+    showCps = showCpsCheckbox.checked;
+    refreshIndexControlPoints();
+  });
+  attachHamburgerMenu();
 
   // Show the map container and instantiate Leaflet (the container must be
   // visible before L.map measures it, or tiles won't load at the right size).
