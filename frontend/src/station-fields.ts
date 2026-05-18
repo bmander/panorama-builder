@@ -11,8 +11,9 @@
 
 import * as api from './api.js';
 import {
-  createSigmaSpan, fmtSigmaMeters, formatEstimateRange, formatLocalDateTime,
-  getElement, sigmaSeverityClass, syncInputChecked, syncInputValue,
+  createInconsistencyDetails, createSigmaSpan, fmtSigmaMeters,
+  formatEstimateRange, formatLocalDateTime, getElement,
+  sigmaSeverityClass, syncInputChecked, syncInputValue,
   updateSigma, worstHorizontalSigma,
 } from './types.js';
 import type { LatLng } from './types.js';
@@ -104,21 +105,38 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
     renderCapturedAtEstimate();
   }
 
+  // Memoized so a hydrate from an unrelated PUT (lat/lng/etc) doesn't
+  // collapse an expanded reasons list or trigger a refetch.
+  let inconsistencyDetails: { stationId: string; el: HTMLDetailsElement } | null = null;
+
   function renderCapturedAtEstimate(): void {
     if (cache?.capturedAt !== null) {
       capturedAtEstEl.hidden = true;
-      capturedAtEstEl.textContent = '';
+      capturedAtEstEl.replaceChildren();
       return;
     }
     const est = formatEstimateRange(cache.derivedLower, cache.derivedUpper);
-    const inc = cache.derivationInconsistent ? ' (!) inconsistent observations' : '';
     if (est === null && !cache.derivationInconsistent) {
       capturedAtEstEl.hidden = true;
-      capturedAtEstEl.textContent = '';
+      capturedAtEstEl.replaceChildren();
       return;
     }
     capturedAtEstEl.hidden = false;
-    capturedAtEstEl.textContent = (est ?? '') + inc;
+    const children: Node[] = [];
+    if (est !== null) children.push(document.createTextNode(est + ' '));
+    if (cache.derivationInconsistent) {
+      const id = getCurrentStationId();
+      if (inconsistencyDetails?.stationId !== id) {
+        inconsistencyDetails = {
+          stationId: id,
+          el: createInconsistencyDetails(() => api.getStationInconsistencyReasons(id)),
+        };
+      }
+      children.push(inconsistencyDetails.el);
+    } else {
+      inconsistencyDetails = null;
+    }
+    capturedAtEstEl.replaceChildren(...children);
   }
 
   function render(): void {

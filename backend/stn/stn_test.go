@@ -148,6 +148,45 @@ func TestSolver_NoSpinOnQuiescent(t *testing.T) {
 	}
 }
 
+func TestSolver_BlameChainAttribution(t *testing.T) {
+	// Chain a → b → c. Seed a.Lo; propagate. The bound that ends up in
+	// c.Lo was last narrowed by Leq{b, c}, not Leq{a, b} — even though
+	// the value originated on a.
+	s := New[int64]()
+	a, b, c := s.AddVar(), s.AddVar(), s.AddVar()
+	s.Variables()[a].Lo = ip(7)
+	s.AddConstraint(Leq[int64]{A: a, B: b}) // index 0
+	s.AddConstraint(Leq[int64]{A: b, B: c}) // index 1
+	s.Propagate()
+	if !eqp(s.Variables()[c].Lo, ip(7)) {
+		t.Fatalf("c.Lo: got %v, want 7", s.Variables()[c].Lo)
+	}
+	if s.Variables()[c].LoBlame != 1 {
+		t.Errorf("c.LoBlame: got %d, want 1 (the b≤c Leq)", s.Variables()[c].LoBlame)
+	}
+	if s.Variables()[b].LoBlame != 0 {
+		t.Errorf("b.LoBlame: got %d, want 0 (the a≤b Leq)", s.Variables()[b].LoBlame)
+	}
+	if s.Variables()[a].LoBlame != -1 {
+		t.Errorf("a.LoBlame: got %d, want -1 (seeded, never narrowed)", s.Variables()[a].LoBlame)
+	}
+}
+
+func TestSolver_BlameInconsistency(t *testing.T) {
+	// Leq{a, b} with a.Lo > b.Hi flags both inconsistent; both
+	// InconsistentBlame fields should point at that constraint.
+	s := New[int64]()
+	a, b := s.AddVar(), s.AddVar()
+	s.Variables()[a].Lo, s.Variables()[a].Hi = ip(10), ip(10)
+	s.Variables()[b].Lo, s.Variables()[b].Hi = ip(5), ip(5)
+	s.AddConstraint(Leq[int64]{A: a, B: b}) // index 0
+	s.Propagate()
+	if s.Variables()[a].InconsistentBlame != 0 || s.Variables()[b].InconsistentBlame != 0 {
+		t.Errorf("InconsistentBlame: a=%d b=%d, want 0 for both",
+			s.Variables()[a].InconsistentBlame, s.Variables()[b].InconsistentBlame)
+	}
+}
+
 // --- Leq ---
 
 func TestLeq_BasicNarrowing(t *testing.T) {

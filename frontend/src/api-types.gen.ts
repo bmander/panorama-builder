@@ -806,6 +806,62 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/control-points/{id}/inconsistency-reasons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ControlPointId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Explain why this control point's derived window is inconsistent
+         * @description Returns the raw constraint contradictions that touch this CP's
+         *     lifespan variables and remain infeasible under the propagated
+         *     bounds. Each entry is a one-line description naming the involved
+         *     entities and the bound values that violate the inequality.
+         *
+         *     Returns an empty list (200) if the CP isn't currently inconsistent.
+         */
+        get: operations["getControlPointInconsistencyReasons"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stations/{id}/inconsistency-reasons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["StationId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Explain why this station's derived capture window is inconsistent
+         * @description Returns the raw constraint contradictions that touch this
+         *     station's capture-time variable and remain infeasible under the
+         *     propagated bounds. Each entry is a one-line description naming
+         *     the involved entities and the bound values that violate the
+         *     inequality.
+         *
+         *     Returns an empty list (200) if the station isn't currently
+         *     inconsistent.
+         */
+        get: operations["getStationInconsistencyReasons"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1118,6 +1174,31 @@ export interface components {
         };
         ControlPointVisiblePhotos: {
             photos: components["schemas"]["ControlPointVisiblePhoto"][];
+        };
+        /**
+         * @description One contradicting constraint touching the queried entity, with
+         *     attribution for each bound value it cites.
+         */
+        InconsistencyReason: {
+            /**
+             * @description One-line description of the violated constraint, naming the
+             *     involved entities and the bound values that fail the inequality.
+             */
+            text: string;
+            /**
+             * @description One entry per bound value cited in `text`, naming the
+             *     constraint (or precise-date seed) that last set that bound.
+             *     Lets the user identify the *other* observation contributing
+             *     to the contradiction, not just the violated one.
+             */
+            bound_sources: string[];
+        };
+        /**
+         * @description Response shape for `GET /{stations,control-points}/{id}/inconsistency-reasons`.
+         *     Empty list iff the entity isn't currently inconsistent.
+         */
+        InconsistencyReasons: {
+            reasons: components["schemas"]["InconsistencyReason"][];
         };
         /**
          * @description Goodness-of-fit summary for one CP. fit_rms_rad is the RMS angular
@@ -2944,6 +3025,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ControlPointVisiblePhotos"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getControlPointInconsistencyReasons: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ControlPointId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InconsistencyReasons"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getStationInconsistencyReasons: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["StationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InconsistencyReasons"];
                 };
             };
             404: components["responses"]["NotFound"];

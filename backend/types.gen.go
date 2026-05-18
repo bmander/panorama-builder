@@ -751,6 +751,26 @@ type ImageMeasurementUpdate struct {
 	V              *float64 `json:"v,omitempty"`
 }
 
+// InconsistencyReason One contradicting constraint touching the queried entity, with
+// attribution for each bound value it cites.
+type InconsistencyReason struct {
+	// BoundSources One entry per bound value cited in `text`, naming the
+	// constraint (or precise-date seed) that last set that bound.
+	// Lets the user identify the *other* observation contributing
+	// to the contradiction, not just the violated one.
+	BoundSources []string `json:"bound_sources"`
+
+	// Text One-line description of the violated constraint, naming the
+	// involved entities and the bound values that fail the inequality.
+	Text string `json:"text"`
+}
+
+// InconsistencyReasons Response shape for `GET /{stations,control-points}/{id}/inconsistency-reasons`.
+// Empty list iff the entity isn't currently inconsistent.
+type InconsistencyReasons struct {
+	Reasons []InconsistencyReason `json:"reasons"`
+}
+
 // MergeRequest defines model for MergeRequest.
 type MergeRequest struct {
 	// AllowUnderdetermined When false (default), merge refuses if any entity touched by the

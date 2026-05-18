@@ -171,6 +171,58 @@ export function isExtantAt(span: CPLifespan, ms: number): boolean {
   return lifespanOverlapsRange(span, ms, ms);
 }
 
+// Builds a "(!) inconsistent observations" expandable widget. Click expands
+// to lazy-fetch the contradicting constraints via the supplied fetcher
+// (typically api.getStationInconsistencyReasons / getControlPointInconsistencyReasons).
+// Returns the <details> element ready for caller-side insertion.
+export function createInconsistencyDetails(
+  fetchReasons: () => Promise<{ reasons: { text: string; bound_sources: string[] }[] }>,
+): HTMLDetailsElement {
+  const details = document.createElement('details');
+  details.className = 'inconsistency-detail';
+  const summary = document.createElement('summary');
+  summary.textContent = '(!) inconsistent observations';
+  const ul = document.createElement('ul');
+  ul.className = 'reasons';
+  details.append(summary, ul);
+
+  const lineItem = (text: string): HTMLLIElement => {
+    const li = document.createElement('li');
+    li.textContent = text;
+    return li;
+  };
+
+  let loaded = false;
+  details.addEventListener('toggle', () => {
+    if (!details.open || loaded) return;
+    loaded = true;
+    ul.replaceChildren(lineItem('loading…'));
+    fetchReasons().then(
+      ({ reasons }) => {
+        if (reasons.length === 0) {
+          ul.replaceChildren(lineItem('(no reasons returned)'));
+          return;
+        }
+        ul.replaceChildren(...reasons.map(r => {
+          const li = lineItem(r.text);
+          if (r.bound_sources.length > 0) {
+            const sub = document.createElement('ul');
+            sub.className = 'bound-sources';
+            sub.append(...r.bound_sources.map(lineItem));
+            li.append(sub);
+          }
+          return li;
+        }));
+      },
+      () => {
+        ul.replaceChildren(lineItem('(failed to load)'));
+        loaded = false; // allow retry on next expand
+      },
+    );
+  });
+  return details;
+}
+
 // Control point: a real-world landmark with a latent location, observed by
 // image measurements across photos / stations.
 export interface ControlPointView {

@@ -282,6 +282,13 @@ func (s *Server) listControlPointVisiblePhotos(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, out)
 }
 
+// getControlPointInconsistencyReasons returns the list of contradicting
+// constraints involving this CP under the current bounds. Honors
+// X-Session-Id so the answer matches what the user sees in the page.
+func (s *Server) getControlPointInconsistencyReasons(w http.ResponseWriter, r *http.Request) {
+	s.respondInconsistencyReasons(w, r, explainControlPointInconsistency)
+}
+
 type visiblePhotoWithDist struct {
 	photo ControlPointVisiblePhoto
 	distM float64

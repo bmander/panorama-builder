@@ -40,6 +40,7 @@ export type ApiControlPointVisiblePhoto = Schemas['ControlPointVisiblePhoto'];
 export type ApiStationDerivedWindow = Schemas['StationDerivedWindow'];
 export type ApiControlPointFits = Schemas['ControlPointFits'];
 export type ApiControlPointFit = Schemas['ControlPointFit'];
+export type ApiInconsistencyReasons = Schemas['InconsistencyReasons'];
 export type ApiCpObservation = Schemas['CpObservation'];
 export type ApiCpObservationCreate = Schemas['CpObservationCreate'];
 export type ApiCpObservationUpdate = Schemas['CpObservationUpdate'];
@@ -240,6 +241,18 @@ export function listControlPointObservations(id: string): Promise<ApiControlPoin
 export function listControlPointVisiblePhotos(id: string): Promise<ApiControlPointVisiblePhotos> {
   return request<ApiControlPointVisiblePhotos>(
     'GET', `/control-points/${encodeURIComponent(id)}/visible-photos`,
+  );
+}
+
+export function getControlPointInconsistencyReasons(id: string): Promise<ApiInconsistencyReasons> {
+  return request<ApiInconsistencyReasons>(
+    'GET', `/control-points/${encodeURIComponent(id)}/inconsistency-reasons`,
+  );
+}
+
+export function getStationInconsistencyReasons(id: string): Promise<ApiInconsistencyReasons> {
+  return request<ApiInconsistencyReasons>(
+    'GET', `/stations/${encodeURIComponent(id)}/inconsistency-reasons`,
   );
 }
 

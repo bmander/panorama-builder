@@ -19,6 +19,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/stations/{id}", s.getStation)
 	mux.HandleFunc("PUT /api/stations/{id}", s.putStation)
 	mux.HandleFunc("DELETE /api/stations/{id}", s.deleteStation)
+	mux.HandleFunc("GET /api/stations/{id}/inconsistency-reasons", s.getStationInconsistencyReasons)
 
 	mux.HandleFunc("POST /api/stations/{id}/photos", s.postPhoto)
 	mux.HandleFunc("GET /api/photos", s.listPhotos)
@@ -49,6 +50,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/control-points/{id}/observations", s.listControlPointObservations)
 	mux.HandleFunc("GET /api/control-points/{id}/visible-photos", s.listControlPointVisiblePhotos)
 	mux.HandleFunc("GET /api/control-points/{id}/cp-observations", s.listCpObservationsByControlPoint)
+	mux.HandleFunc("GET /api/control-points/{id}/inconsistency-reasons", s.getControlPointInconsistencyReasons)
 	mux.HandleFunc("GET /api/control-point-fits", s.listControlPointFits)
 
 	mux.HandleFunc("POST /api/stations/{id}/cp-observations", s.postCpObservation)

@@ -158,6 +158,14 @@ func (s *Server) deleteStation(w http.ResponseWriter, r *http.Request) {
 	s.deleteStationInSession(w, r, sess)
 }
 
+// getStationInconsistencyReasons returns the list of contradicting
+// constraints involving this station's capture-time variable under the
+// current bounds. Honors X-Session-Id so the answer matches what the
+// user sees in the page.
+func (s *Server) getStationInconsistencyReasons(w http.ResponseWriter, r *http.Request) {
+	s.respondInconsistencyReasons(w, r, explainStationInconsistency)
+}
+
 // --- Cascade-fetch helpers used by getStation. Defined here because they
 // belong with the hydrated read; they're also the only readers of these
 // rows that filter by station_id. ---

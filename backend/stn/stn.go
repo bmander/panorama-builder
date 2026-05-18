@@ -26,9 +26,15 @@ import "cmp"
 // never by mutating through the pointer. The engine relies on this so it
 // can alias bound pointers across variables that share the same value
 // without risking action-at-a-distance.
+//
+// LoBlame / HiBlame / InconsistentBlame hold the constraint index that
+// last narrowed the corresponding side (or flipped Inconsistent), or
+// -1 if the side was seeded and never moved. The engine, not the
+// constraint, writes these fields; constraints can ignore them.
 type Variable[T any] struct {
-	Lo, Hi       *T
-	Inconsistent bool
+	Lo, Hi                              *T
+	Inconsistent                        bool
+	LoBlame, HiBlame, InconsistentBlame int
 }
 
 // Constraint relates a fixed set of variables.
@@ -66,7 +72,11 @@ func New[T any]() *Solver[T] {
 
 // AddVar allocates a fresh variable and returns its stable index.
 func (s *Solver[T]) AddVar() int {
-	s.vars = append(s.vars, &Variable[T]{})
+	s.vars = append(s.vars, &Variable[T]{
+		LoBlame:           -1,
+		HiBlame:           -1,
+		InconsistentBlame: -1,
+	})
 	s.consByVar = append(s.consByVar, nil)
 	return len(s.vars) - 1
 }
@@ -94,7 +104,16 @@ func (s *Solver[T]) Variables() []*Variable[T] {
 	return s.vars
 }
 
-// Propagate runs the worklist to quiescence.
+// Constraints returns the registered constraints in addition order.
+// Useful after Propagate for post-mortem analysis (e.g., enumerating
+// constraints that remain infeasible under the propagated bounds).
+func (s *Solver[T]) Constraints() []Constraint[T] {
+	return s.cons
+}
+
+// Propagate runs the worklist to quiescence. After each Narrow call,
+// per-bound blame fields on changed variables are updated to point at
+// the constraint that did the narrowing.
 func (s *Solver[T]) Propagate() {
 	worklist := make([]int, len(s.cons))
 	inQueue := make([]bool, len(s.cons))
@@ -102,12 +121,41 @@ func (s *Solver[T]) Propagate() {
 		worklist[i] = i
 		inQueue[i] = true
 	}
+	// Reused across iterations to keep blame attribution allocation-free.
+	var preLo, preHi []*T
+	var preInc []bool
 	for len(worklist) > 0 {
 		ci := worklist[len(worklist)-1]
 		worklist = worklist[:len(worklist)-1]
 		inQueue[ci] = false
+
+		cVars := s.cons[ci].Variables()
+		preLo = grow(preLo, len(cVars))
+		preHi = grow(preHi, len(cVars))
+		preInc = growBool(preInc, len(cVars))
+		for i, vi := range cVars {
+			v := s.vars[vi]
+			preLo[i], preHi[i], preInc[i] = v.Lo, v.Hi, v.Inconsistent
+		}
+
 		changed := s.cons[ci].Narrow(s.vars)
 		for _, vi := range changed {
+			for j, cv := range cVars {
+				if cv != vi {
+					continue
+				}
+				v := s.vars[vi]
+				if v.Lo != preLo[j] {
+					v.LoBlame = ci
+				}
+				if v.Hi != preHi[j] {
+					v.HiBlame = ci
+				}
+				if v.Inconsistent && !preInc[j] {
+					v.InconsistentBlame = ci
+				}
+				break
+			}
 			for _, cj := range s.consByVar[vi] {
 				if cj == ci || inQueue[cj] {
 					continue
@@ -117,6 +165,22 @@ func (s *Solver[T]) Propagate() {
 			}
 		}
 	}
+}
+
+// grow returns a slice of length n, reusing the buffer when capacity
+// allows.
+func grow[T any](buf []T, n int) []T {
+	if cap(buf) >= n {
+		return buf[:n]
+	}
+	return make([]T, n)
+}
+
+func growBool(buf []bool, n int) []bool {
+	if cap(buf) >= n {
+		return buf[:n]
+	}
+	return make([]bool, n)
 }
 
 // Leq is the value-relation A ≤ B. Narrowing propagates:

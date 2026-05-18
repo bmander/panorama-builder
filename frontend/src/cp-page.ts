@@ -1,7 +1,8 @@
 import * as api from './api.js';
 import { degToRad } from './mathx.js';
 import {
-  appendSigmaMeters, appendSigmaScalar, cpLabel, fmtAlt, fmtSigmaMeters,
+  appendSigmaMeters, appendSigmaScalar, cpLabel,
+  createInconsistencyDetails, fmtAlt, fmtSigmaMeters,
   formatImpreciseDate, formatLocalDateTime, getElement,
   indexCpHref, makeListCell, nullableIntervalOverlapsRange,
   stationHref, stationLabel,
@@ -263,6 +264,28 @@ function parseLenientDateTime(raw: string): string | null {
   const d = new Date(yr, mo - 1, dy, hr, mn, sc);
   if (d.getFullYear() !== yr || d.getMonth() !== mo - 1 || d.getDate() !== dy) return null;
   return d.toISOString();
+}
+
+// Memoized so re-rendering the same CP preserves an expanded reasons list
+// across hydrates.
+let cpInconsistencyDetails: { cpId: string; el: HTMLDetailsElement } | null = null;
+
+function renderCpInconsistency(cp: api.ApiControlPoint): void {
+  const host = getElement('cp-inconsistency-host');
+  if (!cp.derived_window.inconsistent) {
+    host.hidden = true;
+    host.replaceChildren();
+    cpInconsistencyDetails = null;
+    return;
+  }
+  if (cpInconsistencyDetails?.cpId !== cp.id) {
+    cpInconsistencyDetails = {
+      cpId: cp.id,
+      el: createInconsistencyDetails(() => api.getControlPointInconsistencyReasons(cp.id)),
+    };
+  }
+  host.hidden = false;
+  host.replaceChildren(cpInconsistencyDetails.el);
 }
 
 function derivedBounds(cp: api.ApiControlPoint, field: DateField): readonly [string | null, string | null] {
@@ -702,6 +725,7 @@ async function main(): Promise<void> {
     () => { refreshStartedLabel(); refreshVisiblePhotos(); });
   attachDateEditor(cp, getElement('ended_at'), 'ended_at',
     () => { refreshEndedLabel(); refreshVisiblePhotos(); });
+  renderCpInconsistency(cp);
   attachLocationLockToggle(cp, 'lock-est-location');
   attachLockToggle(cp, 'lock-est-alt', 'lock_est_alt');
 

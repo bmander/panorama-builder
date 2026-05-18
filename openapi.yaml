@@ -1030,6 +1030,52 @@ paths:
               schema: { $ref: '#/components/schemas/ControlPointVisiblePhotos' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /control-points/{id}/inconsistency-reasons:
+    parameters:
+      - $ref: '#/components/parameters/ControlPointId'
+    get:
+      tags: [control-points]
+      summary: Explain why this control point's derived window is inconsistent
+      description: |
+        Returns the raw constraint contradictions that touch this CP's
+        lifespan variables and remain infeasible under the propagated
+        bounds. Each entry is a one-line description naming the involved
+        entities and the bound values that violate the inequality.
+
+        Returns an empty list (200) if the CP isn't currently inconsistent.
+      operationId: getControlPointInconsistencyReasons
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InconsistencyReasons' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /stations/{id}/inconsistency-reasons:
+    parameters:
+      - $ref: '#/components/parameters/StationId'
+    get:
+      tags: [stations]
+      summary: Explain why this station's derived capture window is inconsistent
+      description: |
+        Returns the raw constraint contradictions that touch this
+        station's capture-time variable and remain infeasible under the
+        propagated bounds. Each entry is a one-line description naming
+        the involved entities and the bound values that violate the
+        inequality.
+
+        Returns an empty list (200) if the station isn't currently
+        inconsistent.
+      operationId: getStationInconsistencyReasons
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InconsistencyReasons' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
   parameters:
     StationId:
@@ -1404,6 +1450,38 @@ components:
         photos:
           type: array
           items: { $ref: '#/components/schemas/ControlPointVisiblePhoto' }
+
+    InconsistencyReason:
+      type: object
+      description: |
+        One contradicting constraint touching the queried entity, with
+        attribution for each bound value it cites.
+      required: [text, bound_sources]
+      properties:
+        text:
+          type: string
+          description: |
+            One-line description of the violated constraint, naming the
+            involved entities and the bound values that fail the inequality.
+        bound_sources:
+          type: array
+          description: |
+            One entry per bound value cited in `text`, naming the
+            constraint (or precise-date seed) that last set that bound.
+            Lets the user identify the *other* observation contributing
+            to the contradiction, not just the violated one.
+          items: { type: string }
+
+    InconsistencyReasons:
+      type: object
+      description: |
+        Response shape for `GET /{stations,control-points}/{id}/inconsistency-reasons`.
+        Empty list iff the entity isn't currently inconsistent.
+      required: [reasons]
+      properties:
+        reasons:
+          type: array
+          items: { $ref: '#/components/schemas/InconsistencyReason' }
 
     ControlPointFit:
       type: object

@@ -76,6 +76,13 @@ label.menu-item { display: flex; align-items: center; gap: 6px; }
 }
 .settings-row.station-pos { gap: 4px 8px; flex-direction: row; flex-wrap: wrap; align-items: center; }
 .captured-at-est { font: 11px monospace; color: #aaa; }
+.inconsistency-detail { display: inline-block; font: 11px monospace; color: #d97706; vertical-align: top; }
+.inconsistency-detail > summary { cursor: pointer; user-select: none; }
+.inconsistency-detail[open] > summary { color: #b45309; }
+.inconsistency-detail .reasons { margin: 4px 0 4px 16px; padding: 0; list-style: disc; color: #ccc; }
+.inconsistency-detail .reasons li { margin: 2px 0; line-height: 1.4; }
+.inconsistency-detail .bound-sources { margin: 2px 0 4px 16px; padding: 0; list-style: '↳ '; color: #999; }
+.inconsistency-detail .bound-sources li { margin: 1px 0; line-height: 1.4; }
 .settings-group { display: flex; flex-direction: column; gap: 8px; }
 .settings-group > summary { cursor: pointer; user-select: none; color: #ccc; }
 .settings-group[open] > summary { color: #fff; }
