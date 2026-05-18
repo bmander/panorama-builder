@@ -2,7 +2,7 @@ import * as api from './api.js';
 import { degToRad } from './mathx.js';
 import {
   appendSigmaMeters, appendSigmaScalar, cpLabel, fmtAlt, fmtSigmaMeters,
-  formatEstimateRange, formatImpreciseDate, formatLocalDateTime, getElement,
+  formatImpreciseDate, formatLocalDateTime, getElement,
   indexCpHref, makeListCell, stationHref, stationLabel,
 } from './types.js';
 import {
@@ -264,10 +264,11 @@ function parseLenientDateTime(raw: string): string | null {
   return d.toISOString();
 }
 
-function formatDerivedEstimate(cp: api.ApiControlPoint, field: DateField): string | null {
+function derivedBounds(cp: api.ApiControlPoint, field: DateField): readonly [string | null, string | null] {
   const w = cp.derived_window;
-  if (field === 'started_at') return formatEstimateRange(w.started_at_lower, w.started_at_upper);
-  return formatEstimateRange(w.ended_at_lower, w.ended_at_upper);
+  return field === 'started_at'
+    ? [w.started_at_lower, w.started_at_upper]
+    : [w.ended_at_lower, w.ended_at_upper];
 }
 
 function attachDateEditor(
@@ -276,14 +277,9 @@ function attachDateEditor(
 ): void {
   host.title = 'Click to edit (e.g. 1886, 1886-06, 1886-06-15, 1886-06-15 14:30)';
   const renderText = (v: string | null): void => {
-    if (v !== null) {
-      host.classList.remove('empty');
-      host.textContent = new Date(v).toLocaleString();
-      return;
-    }
-    const est = formatDerivedEstimate(cp, field);
-    host.classList.toggle('empty', est === null);
-    host.textContent = est ?? 'click to set';
+    const [lower, upper] = derivedBounds(cp, field);
+    host.classList.toggle('empty', v === null);
+    host.textContent = formatImpreciseDate(v, lower, upper);
   };
   // Compare in user-visible (minute-precision local) form so a stored ISO
   // with non-zero seconds doesn't look "changed" on every blur.
