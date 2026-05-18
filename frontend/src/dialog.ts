@@ -1,9 +1,9 @@
-// Attaches pointer-driven drag-by-header to a floating dialog. On first
-// drag the panel switches from right/left-anchored CSS to left/top so
-// it locks to a viewport-relative point. Clamps the header to stay at
-// least 40px on-screen so the user can always grab it again.
+// Attaches pointer-driven drag-by-header to a floating dialog. Clamps
+// the header to stay at least 40px on-screen so the user can always
+// grab it again after dragging near an edge.
 
-export function attachDrag(header: HTMLElement, panel: HTMLElement): void {
+export function attachDrag(panel: HTMLElement): void {
+  const header = panel.querySelector<HTMLElement>('.modal-header')!;
   let pointerId: number | null = null;
   let dx = 0, dy = 0;
 

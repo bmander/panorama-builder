@@ -136,9 +136,8 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .modal-panel .modal-header { display: flex; align-items: center; justify-content: space-between;
                              font-weight: bold; }
 .modal-panel .modal-header .btn { padding: 2px 6px; }
+/* .modal-panel has display: flex, so [hidden] needs an explicit override. */
 .modal-panel[hidden] { display: none; }
-/* Non-modal hamburger-menu dialog: same chrome as a modal panel, free-
-   floating (no .modal backdrop), draggable by the header. */
 .modal-panel.floating { position: fixed; top: 56px; right: 8px; z-index: 1500;
                         max-height: calc(100vh - 72px); overflow-y: auto; }
 .modal-panel.floating .modal-header { cursor: grab; user-select: none; }

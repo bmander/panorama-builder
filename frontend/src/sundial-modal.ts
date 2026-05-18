@@ -62,7 +62,7 @@ export function createSundialModal(opts: CreateSundialModalOptions): SundialModa
   const clearGnomonBtn = getElement<HTMLButtonElement>('sundial-clear-gnomon');
   const clearShadowBtn = getElement<HTMLButtonElement>('sundial-clear-shadow');
   const resultEl = getElement('sundial-result');
-  attachDrag(panelEl.querySelector('.modal-header')!, panelEl);
+  attachDrag(panelEl);
 
   let gnomonCpId: string | null = null;
   let shadow: ShadowLocation | null = null;

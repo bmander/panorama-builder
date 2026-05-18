@@ -106,7 +106,7 @@ export function createSettingsPanel({
     settingsPanelEl.hidden = true;
     settingsBtnEl.setAttribute('aria-expanded', 'false');
   });
-  attachDrag(settingsPanelEl.querySelector('.modal-header')!, settingsPanelEl);
+  attachDrag(settingsPanelEl);
 
   hazeSliderEl.addEventListener('input', () => {
     viewer.setFogDensity(hazeSliderToDensity(parseFloat(hazeSliderEl.value)));
