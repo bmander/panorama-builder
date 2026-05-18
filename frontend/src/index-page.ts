@@ -107,6 +107,10 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   // filter so clicking a station marker surfaces every CP it touches, even
   // ones whose lifespan excludes the slider range.
   let previewObservedCpIds: ReadonlySet<string> = new Set();
+  // CP whose popup is currently open. Pinned into the visible layer so the
+  // marker stays drawn after the station-preview override that surfaced it
+  // is dropped.
+  let focusedCpId: string | null = null;
   // Master toggle: when off, the CP layer is empty except for preview
   // overrides. Off by default — a freshly-loaded map shows stations only.
   let showCps = false;
@@ -117,8 +121,9 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     for (const cp of cpsById.values()) {
       if (cp.est_lat === null || cp.est_lng === null) continue;
       const observed = previewObservedCpIds.has(cp.id);
+      const focused = focusedCpId === cp.id;
       const lifespan = cpLifespanFromApi(cp);
-      if (!observed && (!showCps || !lifespanOverlapsRange(lifespan, startMs, endMs))) continue;
+      if (!observed && !focused && (!showCps || !lifespanOverlapsRange(lifespan, startMs, endMs))) continue;
       dots.push({
         id: cp.id,
         latlng: { lat: cp.est_lat, lng: cp.est_lng },
@@ -461,6 +466,15 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     onStationPreviewClose: () => {
       if (previewObservedCpIds.size === 0) return;
       previewObservedCpIds = new Set();
+      // Defer to the next task: this callback fires from Leaflet's
+      // popup auto-close during the `preclick` phase of a click event,
+      // and rebuilding the CP layer synchronously removes the marker
+      // before its `click` can dispatch — making the CP unselectable.
+      setTimeout(refreshIndexControlPoints, 0);
+    },
+    onIndexControlPointFocus: (id) => {
+      if (focusedCpId === id) return;
+      focusedCpId = id;
       refreshIndexControlPoints();
     },
   });

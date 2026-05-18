@@ -128,6 +128,10 @@ export interface CreateMapViewOptions {
   // any means). Lets the index page drop "always-show-observed" overrides
   // it applied while the preview was active.
   onStationPreviewClose?: () => void;
+  // Fires when a CP popup opens (id) or closes (null). The index page uses
+  // this to pin the focused CP into the visible layer so the dot doesn't
+  // disappear when the station-preview override that put it there clears.
+  onIndexControlPointFocus?: (id: string | null) => void;
 }
 
 const DEFAULT_INDEX_VIEW: MapViewState = { lat: 47.607, lng: -122.335, zoom: 14 };
@@ -243,6 +247,7 @@ export function createMapView({
   initialView = DEFAULT_INDEX_VIEW,
   onViewChange,
   onStationPreviewClose,
+  onIndexControlPointFocus,
 }: CreateMapViewOptions): MapView {
   const layers: Record<string, L.Layer> = {
     'Sanborn 1884': histLayer(1884),
@@ -269,7 +274,7 @@ export function createMapView({
   // also delivers a state snapshot.
   map.on('moveend', () => { onViewChange?.(currentView()); });
 
-  const CONE_STYLE: L.PolylineOptions = { color: '#ffd84a', weight: 1, fillColor: '#ffd84a', fillOpacity: 0.18 };
+  const CONE_STYLE: L.PolylineOptions = { color: '#a050ff', weight: 1, fillColor: '#a050ff', fillOpacity: 0.18 };
   // Pixel size of the station divIcon and the SVG viewBox half-extent.
   const STATION_ICON_PX = 80;
   const STATION_ICON_R = 36; // wedge radius inside the SVG, in viewBox units
@@ -533,7 +538,11 @@ export function createMapView({
       .setContent(popupHtml)
       .openOn(map);
     const circle = drawUncertaintyEllipse(cp.latlng, cp.sigmaLat, cp.sigmaLng, cp.covLatLng);
-    if (circle) popup.on('remove', () => { map.removeLayer(circle); });
+    onIndexControlPointFocus?.(cp.id);
+    popup.on('remove', () => {
+      if (circle) map.removeLayer(circle);
+      onIndexControlPointFocus?.(null);
+    });
     wireGoButton(popup, '.move', () => {
       const dot = indexCpDots.get(cp.id);
       if (!dot) return;
