@@ -160,6 +160,10 @@ func (s *Server) deleteStationInSession(w http.ResponseWriter, r *http.Request, 
 		writeErrorFromDB(w, err)
 		return
 	}
+	if err := runPropagationInTx(ctx, tx, sess.ID); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
 	if err := tx.Commit(ctx); err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -646,6 +650,12 @@ func (s *Server) postImageMeasurementInSession(w http.ResponseWriter, r *http.Re
 		writeErrorFromDB(w, err)
 		return
 	}
+	if observedToCreate != nil {
+		if err := runPropagationInTx(ctx, tx, sess.ID); err != nil {
+			writeErrorFromDB(w, err)
+			return
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -876,6 +886,10 @@ func (s *Server) deleteControlPointInSession(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if err := recordOp(ctx, tx, sess.ID, entityControlPoint, id, "delete", jsonMust(cur), nil); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if err := runPropagationInTx(ctx, tx, sess.ID); err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}

@@ -326,6 +326,11 @@ func insertFreshOp(ctx context.Context, tx pgx.Tx, sessionID, entityType, entity
 
 // recordOpDirect appends without an existing tx. Convenience for handlers
 // that do exactly one op. Wraps in a one-shot tx.
+//
+// When the op touches a date-graph input the propagator runs in the
+// same tx so the overlay never reports stale derived bounds. By
+// induction over prior writes, non-date ops can't move any bound — so
+// we skip the overlay reload entirely on the hot path for those.
 func (s *Server) recordOpDirect(ctx context.Context, sessionID, entityType, entityID, op string, before, after []byte) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -334,6 +339,11 @@ func (s *Server) recordOpDirect(ctx context.Context, sessionID, entityType, enti
 	defer func() { _ = tx.Rollback(ctx) }()
 	if err := recordOp(ctx, tx, sessionID, entityType, entityID, op, before, after); err != nil {
 		return err
+	}
+	if isDateGraphEntity(entityType) {
+		if err := runPropagationInTx(ctx, tx, sessionID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }

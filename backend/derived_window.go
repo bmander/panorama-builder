@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -225,15 +226,25 @@ func propagateWindows(cps []ControlPoint, stations []Station, obs []CpObservatio
 	return out
 }
 
+// isDateGraphEntity reports whether mutations to this entity type feed
+// the STN propagator (precise dates, captured_at, cp_observation rows).
+// Other entity kinds (photo, image_measurement, cp_constraint, cp_surface)
+// don't contribute and can skip propagation outright.
+func isDateGraphEntity(entityType string) bool {
+	switch entityType {
+	case entityCPObservation, entityStation, entityControlPoint:
+		return true
+	}
+	return false
+}
+
 // anyOpAffectsDateGraph returns true when a session's ops include at least
-// one write that could change the propagation inputs (CP precise dates,
-// station captured_at, or cp_observation rows). Solver-only writebacks
-// touch est_*/σ and don't dirty the date graph, so we can skip the load
-// and the whole pass.
+// one write that could change the propagation inputs. Solver-only
+// writebacks touch est_*/σ and don't dirty the date graph, so we can
+// skip the load and the whole pass.
 func anyOpAffectsDateGraph(ops []journalOp) bool {
 	for _, op := range ops {
-		switch op.EntityType {
-		case entityCPObservation, entityStation, entityControlPoint:
+		if isDateGraphEntity(op.EntityType) {
 			return true
 		}
 	}
@@ -373,6 +384,21 @@ func propagateDatesInSession(ctx context.Context, tx pgx.Tx, sessionID string, o
 		if err := recordOp(ctx, tx, sessionID, entityStation, st.ID, "update", before, after); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// runPropagationInTx reloads the overlay from `tx` so the propagator
+// sees ops just written through the same tx — the pre-tx overlay would
+// either miss the new op (single-op handlers) or serialize stale
+// full-row JSON (solver writeback would silently overwrite est_*/σ).
+func runPropagationInTx(ctx context.Context, tx pgx.Tx, sessionID string) error {
+	overlay, err := loadSessionOverlay(ctx, tx, sessionID)
+	if err != nil {
+		return fmt.Errorf("reload overlay: %w", err)
+	}
+	if err := propagateDatesInSession(ctx, tx, sessionID, overlay); err != nil {
+		return fmt.Errorf("propagate dates: %w", err)
 	}
 	return nil
 }

@@ -396,19 +396,10 @@ func (s *Server) writebackChangesInSession(ctx context.Context, sessionID string
 			return err
 		}
 	}
-	// Propagate date bounds across the observation graph and journal any
-	// CP/station whose derived window changes — so the user sees the
-	// post-propagation state in the session overlay before merge. Reload
-	// the overlay from the writeback tx so propagateDatesInSession sees the
-	// solver's just-written est_*/σ rows; using the pre-writeback overlay
-	// would serialize stale full-row JSON and silently overwrite the
-	// solver's est_* on the post-coalesce after_json.
-	freshOverlay, err := loadSessionOverlay(ctx, tx, sessionID)
-	if err != nil {
-		return fmt.Errorf("reload overlay: %w", err)
-	}
-	if err := propagateDatesInSession(ctx, tx, sessionID, freshOverlay); err != nil {
-		return fmt.Errorf("propagate dates: %w", err)
+	// Propagate date bounds across the observation graph so the user
+	// sees the post-propagation state in the overlay before merge.
+	if err := runPropagationInTx(ctx, tx, sessionID); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }
