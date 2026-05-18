@@ -21,7 +21,7 @@ import { findHitDot } from './dot-layer.js';
 import type { Dot } from './dot-layer.js';
 import {
   cpHref, cpLabel, cpLifespanFromApi, formatLifespanLines, getElement,
-  indexStationHref, isExtantAt, parseStaFromURL, stationHref,
+  isExtantAt,
   poiData,
 } from './types.js';
 import { groundDistance, latLngToCameraRelativeMeters, tangentMetersToLatLng, vecToAzAlt } from './geo.js';
@@ -45,6 +45,7 @@ import { attachSolveActions } from './solve-actions.js';
 import type { SolveActions } from './solve-actions.js';
 import { locEq } from './world-camera.js';
 import { createStationScene } from './station/scene.js';
+import { createStationRouteState } from './station/route-state.js';
 
 export interface MountStationPageOptions {
   initialStationId: string;
@@ -57,31 +58,9 @@ const COLUMN_NDC_HIT_RADIUS = 0.01;
 const STATION_DOT_HIT_PX = 10;
 const FOCUS_FOV_DEG = 25;
 
-// `cam_la`/`cam_lo`/`cam_msl` are written only when the live camera has
-// detached from the station anchor (shift-wheel/fly), so typical URLs stay
-// short.
-const URL_AZ = 'az';
-const URL_ALT = 'alt';
-const URL_FOV = 'fov';
-const URL_CAM_LA = 'cam_la';
-const URL_CAM_LO = 'cam_lo';
-const URL_CAM_MSL = 'cam_msl';
-
 export async function mountStationPage(opts: MountStationPageOptions): Promise<void> {
-  const { initialStationId, focusImageMeasurementId } = opts;
-  // Mutable so the URL-driven CP focus relaxes the lifespan / show-all-CPs
-  // filter only while we're still on the station that owns this deep-link.
-  // Cleared whenever applyStation swaps to a different station id.
-  let focusedCpId = opts.focusControlPointId;
-  // Mutable so loadStation(newId) can swap which station this mount is
-  // bound to without recreating viewer / listeners / modals.
-  let stationId = initialStationId;
-  const getCurrentStationId = (): string => stationId;
-
-  function syncViewOnMapHref(): void {
-    getElement<HTMLAnchorElement>('view-on-map').href = indexStationHref(stationId);
-  }
-  syncViewOnMapHref();
+  const route = createStationRouteState(opts);
+  const getCurrentStationId = (): string => route.getStationId();
 
   // --- Viewer + scene singletons -----------------------------------------
 
@@ -167,7 +146,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     return overlays.controlPoints.list().filter(cp => {
       if (cp.estLat === null || cp.estLng === null) return false;
       // A focus_cp deep-link forces the CP to show through every gate.
-      const forced = cp.id === focusedCpId;
+      const forced = cp.id === route.getFocusedCpId();
       const isObserved = forced || observed.has(cp.id);
       // A negative cp_observation at this station (missing / cant_see) is the
       // photographer's explicit "not here" — hide unless an image measurement
@@ -643,47 +622,31 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   }
 
   function writeCameraToURL(): void {
-    const url = new URL(location.href);
-    const sp = url.searchParams;
     const { azimuth, altitude } = viewer.getAzAlt();
-    sp.set(URL_AZ, radToDeg(azimuth).toFixed(1));
-    sp.set(URL_ALT, radToDeg(altitude).toFixed(1));
-    sp.set(URL_FOV, viewer.camera.fov.toFixed(1));
     const pose = worldCamera.getPose();
     const anchored = locEq(pose.location, pose.stationAnchor)
       && pose.altitudeMSL === pose.stationAltitudeMSL;
-    if (!anchored && pose.location) {
-      sp.set(URL_CAM_LA, pose.location.lat.toFixed(6));
-      sp.set(URL_CAM_LO, pose.location.lng.toFixed(6));
-      sp.set(URL_CAM_MSL, pose.altitudeMSL.toFixed(2));
-    } else {
-      sp.delete(URL_CAM_LA);
-      sp.delete(URL_CAM_LO);
-      sp.delete(URL_CAM_MSL);
-    }
-    if (url.href === location.href) return;
-    history.replaceState(null, '', url);
-  }
-
-  function parseUrlFloat(sp: URLSearchParams, key: string, validate?: (v: number) => boolean): number | null {
-    const v = parseFloat(sp.get(key) ?? '');
-    if (!Number.isFinite(v)) return null;
-    if (validate && !validate(v)) return null;
-    return v;
+    route.writeCameraToURL({
+      azDeg: radToDeg(azimuth),
+      altDeg: radToDeg(altitude),
+      fovDeg: viewer.camera.fov,
+      live: !anchored && pose.location
+        ? { lat: pose.location.lat, lng: pose.location.lng, altitudeMSL: pose.altitudeMSL }
+        : null,
+    });
   }
 
   function applyCameraFromURL(): void {
-    const sp = new URLSearchParams(location.search);
-    const az = parseUrlFloat(sp, URL_AZ);
-    const alt = parseUrlFloat(sp, URL_ALT, v => Math.abs(v) <= 90);
-    if (az !== null && alt !== null) viewer.setAzAlt(degToRad(az), degToRad(alt));
-    const fov = parseUrlFloat(sp, URL_FOV, v => v > 0 && v < 180);
-    if (fov !== null) viewer.setFov(fov);
-    const camLat = parseUrlFloat(sp, URL_CAM_LA, v => Math.abs(v) <= 90);
-    const camLng = parseUrlFloat(sp, URL_CAM_LO, v => Math.abs(v) <= 180);
-    const camMsl = parseUrlFloat(sp, URL_CAM_MSL);
-    if (camLat !== null && camLng !== null && camMsl !== null) {
-      worldCamera.setLiveCamera({ location: { lat: camLat, lng: camLng }, altitudeMSL: camMsl });
+    const snap = route.readCameraFromURL();
+    if (snap.azDeg !== null && snap.altDeg !== null) {
+      viewer.setAzAlt(degToRad(snap.azDeg), degToRad(snap.altDeg));
+    }
+    if (snap.fovDeg !== null) viewer.setFov(snap.fovDeg);
+    if (snap.live) {
+      worldCamera.setLiveCamera({
+        location: { lat: snap.live.lat, lng: snap.live.lng },
+        altitudeMSL: snap.live.altitudeMSL,
+      });
     }
     viewer.requestRender();
   }
@@ -860,7 +823,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   });
 
   async function rehydrateAfterSolve(): Promise<void> {
-    const data = await api.getStation(stationId);
+    const data = await api.getStation(route.getStationId());
     stationFields.hydrate(data.station);
     overlays.withBatch(() => {
       const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
@@ -957,26 +920,24 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   // Swap to `newId` in place. Caller is responsible for the URL: fly /
   // station-clicks should pushState first; popstate just calls this.
   async function applyStation(newId: string, prefetched?: ApiHydratedStation): Promise<void> {
-    if (newId === stationId) return;
-    focusedCpId = null;
-    stationId = newId;
-    syncViewOnMapHref();
+    if (newId === route.getStationId()) return;
+    route.clearFocusedCpId();
+    route.setStationId(newId);
     clearStationData();
     await hydrateFromAPI(newId, prefetched);
-    if (newId !== stationId) return;  // another loadStation took over
+    if (newId !== route.getStationId()) return;  // another loadStation took over
     applyCameraFromURL();
     sync.markLoaded();
   }
 
   async function loadStation(newId: string, prefetched?: ApiHydratedStation): Promise<void> {
-    if (newId !== stationId) history.pushState(null, '', stationHref(newId));
+    if (newId !== route.getStationId()) route.pushStationToHistory(newId);
     await applyStation(newId, prefetched);
   }
 
-  addEventListener('popstate', () => {
-    const sta = parseStaFromURL();
+  route.onPopState(sta => {
     if (!sta) return;
-    if (sta !== stationId) void applyStation(sta);
+    if (sta !== route.getStationId()) void applyStation(sta);
     else applyCameraFromURL();
   });
 
@@ -992,7 +953,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         alert('Could not load this station.');
         return;
       }
-      if (id !== stationId) return;  // user navigated away during fetch
+      if (id !== route.getStationId()) return;  // user navigated away during fetch
     }
     const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
     // Anchor pose up front so subsequent reads see current values. Terrain
@@ -1082,7 +1043,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       api.listCPConstraints(),
       api.listCPSurfaces(),
     ]);
-    if (id !== stationId) return;  // user navigated away during fetch
+    if (id !== route.getStationId()) return;  // user navigated away during fetch
     overlays.withBatch(() => {
       if (cpsRes.status === 'fulfilled') {
         for (const cp of cpsRes.value) registerControlPoint(cp);
@@ -1111,7 +1072,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       // Non-blocking: dots already render without the per-photo data.
       void Promise.all(otherStations.map(s => api.getStation(s.id)))
         .then(hydrated => {
-          if (id !== stationId) return;  // user navigated away
+          if (id !== route.getStationId()) return;  // user navigated away
           const cams: OtherCamera[] = [];
           for (const d of hydrated) {
             const measByPhotoId = new Map<string, OtherCameraMeasurement[]>();
@@ -1176,10 +1137,12 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   // canvas staying black until every parallel fetch resolves.
   viewer.start();
 
-  await hydrateFromAPI(stationId);
+  await hydrateFromAPI(route.getStationId());
   overlays.photos.setSelected(null);
   overlays.measurements.setSelected(null);
   admin.setVisible(true);
+  const focusedCpId = route.getFocusedCpId();
+  const focusImageMeasurementId = route.consumeFocusImageMeasurementId();
   if (focusedCpId) {
     if (!focusCameraOnControlPoint(focusedCpId)) {
       console.warn('focus control point not resolvable:', focusedCpId);
