@@ -1,0 +1,429 @@
+// Selection state + input wiring for the station view. Owns selectedX state,
+// the multi-select constraint workflow, the CP context-menu builder + its
+// negative-visibility postObservation closure, and the full attachInput
+// callback bag.
+//
+// Modal-opening actions are passed in as callbacks so the modals can be
+// constructed AFTER interactions (their onClose handlers reach back via
+// interactions.clearConstraintSelection / clearSurfaceSelection). The sundial
+// picker state is read/written via callbacks — slice 5 lifts those into
+// sundial-controller.
+
+import * as api from '../api.js';
+import { attachInput } from '../input.js';
+import type { PhotoBodyHit } from '../input.js';
+import { findHitColumn } from '../map-poi-columns.js';
+import { findHitDot } from '../dot-layer.js';
+import {
+  cpHref, cpLabel, formatLifespanLines, getElement, poiData,
+} from '../types.js';
+import { latLngToCameraRelativeMeters, tangentMetersToLatLng } from '../geo.js';
+import { vertexToLatLngAlt } from '../camera-anchored.js';
+import { radToDeg } from '../mathx.js';
+import { dirFromAzAlt } from '../overlay.js';
+import { locEq } from '../world-camera.js';
+import type { ContextMenu, ContextMenuItem } from '../context-menu.js';
+import type { ObservationModal } from '../observation-modal.js';
+import type { SundialModal, SundialPickField } from '../sundial-modal.js';
+import type { PhotoHud } from '../photo-hud.js';
+import type { UndoManager } from '../undo.js';
+import type { StationNavigation } from '../station-navigation.js';
+import type { CPConstraintView } from '../types.js';
+import type { StationScene } from './scene.js';
+import type { StationDataController } from './data-controller.js';
+import type { StationRouteState } from './route-state.js';
+
+const SHIFT_WHEEL_LOG_PER_PX = 0.005;
+const COLUMN_NDC_HIT_RADIUS = 0.01;
+const STATION_DOT_HIT_PX = 10;
+
+export interface StationInteractions {
+  getSelectedStationId(): string | null;
+  getSelectedConstraintId(): string | null;
+  getMultiSelectedConstraintIds(): ReadonlySet<string>;
+  getSelectedSurfaceId(): string | null;
+  // Modal onClose hooks call these to drop the selection that was opened
+  // alongside the modal.
+  clearConstraintSelection(): void;
+  clearSurfaceSelection(): void;
+  clearMultiSelectedConstraints(): void;
+  // Station-swap clear path.
+  clearAll(): void;
+}
+
+export interface CreateStationInteractionsOptions {
+  readonly scene: StationScene;
+  readonly data: StationDataController;
+  readonly route: StationRouteState;
+  // Panel handles consumed at click time.
+  readonly contextMenu: ContextMenu;
+  readonly observationModal: ObservationModal;
+  readonly sundialModal: SundialModal;
+  readonly photoHud: PhotoHud;
+  readonly undoManager: UndoManager;
+  readonly stationNavigation: StationNavigation;
+  // Modal-open callbacks. The modals are constructed *after* interactions in
+  // station-page.ts (so their onClose handlers can call back into
+  // interactions.clearConstraintSelection / clearSurfaceSelection); we
+  // receive these as closures that resolve lazily.
+  readonly openConstraintCreate: (cpAId: string, cpBId: string) => void;
+  readonly openConstraintEdit: (c: CPConstraintView) => void;
+  readonly openSurfaceEdit: (surfaceId: string) => void;
+  // Sundial picker state (slice 5 owns these).
+  readonly getActivePicker: () => SundialPickField | null;
+  readonly setActivePicker: (p: SundialPickField | null) => void;
+}
+
+// Modal-style file picker for menu actions ("Replace image…"). Resolves with
+// the chosen File or null on cancel.
+function pickImageFile(): Promise<File | null> {
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.style.display = 'none';
+    let settled = false;
+    const finish = (file: File | null): void => {
+      if (settled) return;
+      settled = true;
+      input.remove();
+      resolve(file);
+    };
+    input.addEventListener('change', () => { finish(input.files?.[0] ?? null); });
+    input.addEventListener('cancel', () => { finish(null); });
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
+export function createStationInteractions(opts: CreateStationInteractionsOptions): StationInteractions {
+  const {
+    scene, data, route,
+    contextMenu, observationModal, sundialModal,
+    photoHud, undoManager, stationNavigation,
+    openConstraintCreate, openConstraintEdit, openSurfaceEdit,
+    getActivePicker, setActivePicker,
+  } = opts;
+  const {
+    viewer, overlays, worldCamera, terrain,
+    cpColumns, cpConstraintLines, cpSurfacesRenderer,
+    hud, previewLine, previewPositions,
+  } = scene;
+
+  let selectedConstraintId: string | null = null;
+  let multiSelectedConstraintIds: ReadonlySet<string> = new Set();
+  let selectedSurfaceId: string | null = null;
+  let selectedStationId: string | null = null;
+
+  function setMultiSelectedConstraintIds(next: ReadonlySet<string>): void {
+    multiSelectedConstraintIds = next;
+    const n = next.size;
+    const hudEl = getElement('constraint-multiselect-hud');
+    const countEl = getElement('constraint-multiselect-count');
+    const btnEl = getElement<HTMLButtonElement>('constraint-add-surface-btn');
+    hudEl.hidden = n === 0;
+    countEl.textContent = String(n);
+    btnEl.disabled = n !== 2;
+    // Only the constraint-line color changes; skip the heavier marker /
+    // observation refresh in refreshControlPointColumns.
+    const pose = worldCamera.getPose();
+    cpConstraintLines.update(pose.location, pose.altitudeMSL,
+      data.getVisibleCps(), data.getCpConstraints(),
+      selectedConstraintId, multiSelectedConstraintIds);
+    viewer.requestRender();
+  }
+
+  function toggleMultiSelectedConstraint(constraintId: string): void {
+    const next = new Set(multiSelectedConstraintIds);
+    if (next.has(constraintId)) next.delete(constraintId);
+    else next.add(constraintId);
+    setMultiSelectedConstraintIds(next);
+  }
+
+  function clearMultiSelectedConstraints(): void {
+    if (multiSelectedConstraintIds.size === 0) return;
+    setMultiSelectedConstraintIds(new Set());
+  }
+
+  getElement<HTMLButtonElement>('constraint-add-surface-btn').addEventListener('click', () => {
+    if (multiSelectedConstraintIds.size !== 2) return;
+    const [id1, id2] = [...multiSelectedConstraintIds];
+    const constraints = data.getCpConstraints();
+    const c1 = constraints.find(k => k.id === id1);
+    const c2 = constraints.find(k => k.id === id2);
+    if (!c1 || !c2) return;
+    const a1 = c1.cpAId, a2 = c1.cpBId, b1 = c2.cpAId, b2 = c2.cpBId;
+    const set1 = new Set([a1, a2]);
+    const sharedFromC2 = [b1, b2].filter(x => set1.has(x));
+    if (sharedFromC2.length === 2) {
+      alert('Constraints share both endpoints.');
+      return;
+    }
+    let body: api.ApiCPSurfaceCreate;
+    if (sharedFromC2.length === 1) {
+      const s = sharedFromC2[0]!;
+      const other1 = a1 === s ? a2 : a1;
+      const other2 = b1 === s ? b2 : b1;
+      body = { cp_1_id: s, cp_2_id: other1, cp_3_id: other2 };
+    } else {
+      // Cyclic order a1 → a2 → b2 → b1 puts each constraint on an opposite
+      // side of the quad, so the polygon never self-intersects regardless
+      // of which order the user shift-clicked.
+      body = { cp_1_id: a1, cp_2_id: a2, cp_3_id: b2, cp_4_id: b1 };
+    }
+    void api.createCPSurface(body).then(() => {
+      clearMultiSelectedConstraints();
+      void data.reloadCPSurfaces();
+    }).catch((err: unknown) => {
+      console.error('create cp surface failed:', err);
+      alert('Could not create surface — see console.');
+    });
+  });
+  getElement<HTMLButtonElement>('constraint-multiselect-clear').addEventListener('click', clearMultiSelectedConstraints);
+
+  // "Add observation here" is suppressed when this station already observes
+  // the CP (duplicates aren't useful) or when the click missed any photo
+  // body (no u/v anchor to attach the observation to).
+  function openCpContextMenu(
+    cpId: string, sx: number, sy: number, body: PhotoBodyHit | null,
+  ): void {
+    const cp = overlays.controlPoints.getById(cpId);
+    const header = cpLabel(cp?.description ?? '');
+    const info = cp ? formatLifespanLines(cp) : undefined;
+    const items: ContextMenuItem[] = [
+      { label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } },
+    ];
+    // Clicking the CP marker selects one of its measurements on this station
+    // so every observation reticule for the CP becomes visible at once.
+    const ownMeasurements = overlays.measurements.list()
+      .filter(im => im.controlPointId === cpId);
+    if (ownMeasurements.length > 0) {
+      overlays.measurements.setSelected(ownMeasurements[0]!.handle);
+    }
+    const stationObserves = ownMeasurements.length > 0;
+    if (!stationObserves && body) {
+      items.push({
+        label: 'Add observation here',
+        onClick: () => { void data.handlers.onMatchImageMeasurement(body.overlay, body.u, body.v, cpId); },
+      });
+    }
+    // Negative-visibility submenu — missing / can't see (with reason).
+    if (!stationObserves) {
+      const observingStationId = route.getStationId();
+      const postObservation = (status: api.ApiCpObservationStatus, reason?: api.ApiCpObservationReason): void => {
+        const prior = data.getCpObservation(cpId);
+        data.setCpObservation(cpId, { id: prior?.id ?? null, status });
+        data.refreshControlPointColumns();
+        const req: Promise<api.ApiCpObservation> = prior?.id
+          ? api.updateCpObservation(prior.id, { status, reason: reason ?? null })
+          : api.createCpObservation(observingStationId, {
+              control_point_id: cpId,
+              status,
+              reason: reason ?? null,
+            });
+        req.then(o => { data.setCpObservation(cpId, { id: o.id, status: o.status }); })
+          .catch((err: unknown) => {
+            console.error('cp_observation upsert failed:', err);
+            if (prior) data.setCpObservation(cpId, prior);
+            else data.deleteCpObservation(cpId);
+            data.refreshControlPointColumns();
+            alert('Update failed — see console.');
+          });
+      };
+      items.push(
+        { label: 'Mark missing', onClick: () => { postObservation('missing'); } },
+        { label: 'Can\'t see — occluded', onClick: () => { postObservation('cant_see', 'occluded'); } },
+        { label: 'Can\'t see — unclear', onClick: () => { postObservation('cant_see', 'unclear'); } },
+      );
+    }
+    // Nudge the menu right so the CP marker (and any reticules just
+    // revealed by the selection above) stays uncovered by the menu.
+    contextMenu.open(sx + 20, sy, items, header, info);
+  }
+
+  function writeCameraToURL(): void {
+    const { azimuth, altitude } = viewer.getAzAlt();
+    const pose = worldCamera.getPose();
+    const anchored = locEq(pose.location, pose.stationAnchor)
+      && pose.altitudeMSL === pose.stationAltitudeMSL;
+    route.writeCameraToURL({
+      azDeg: radToDeg(azimuth),
+      altDeg: radToDeg(altitude),
+      fovDeg: viewer.camera.fov,
+      live: !anchored && pose.location
+        ? { lat: pose.location.lat, lng: pose.location.lng, altitudeMSL: pose.altitudeMSL }
+        : null,
+    });
+  }
+
+  attachInput({
+    viewer,
+    overlays,
+    onChange: () => {
+      viewer.requestRender();
+      hud.refresh();
+      photoHud.refresh();
+      writeCameraToURL();
+    },
+    onPhotoDropped: (tex, blob, aspect, dir, revokeUrl) => {
+      void data.handlers.onPhotoDropped(tex, blob, aspect, dir, revokeUrl);
+    },
+    onShiftWheel: deltaPx => {
+      // Translate the camera forward (along its look direction) by a step
+      // that scales with the current altitude — far above a landscape, big
+      // strides; near the ground, fine. Wheel-up (deltaPx < 0) → forward.
+      const pose = worldCamera.getPose();
+      if (!pose.location) return;
+      const { azimuth, altitude } = viewer.getAzAlt();
+      // Step scale grows with the camera's height above ground, not its raw
+      // MSL — far inland stations would otherwise get enormous strides simply
+      // because their ground sits at high MSL.
+      const stepScale = Math.max(Math.abs(terrain.getCameraHeightAboveGround()), 1);
+      const step = -deltaPx * SHIFT_WHEEL_LOG_PER_PX * stepScale;
+      const look = dirFromAzAlt(azimuth, altitude);
+      worldCamera.setLiveCamera({
+        location: tangentMetersToLatLng(pose.location, step * look.x, step * look.z),
+        altitudeMSL: pose.altitudeMSL + step * look.y,
+      });
+      scene.pushTerrainFromPose();
+      writeCameraToURL();
+    },
+    findColumnAtNDC: ndc => {
+      const pose = worldCamera.getPose();
+      if (!pose.stationAnchor) return null;
+      return findHitColumn(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, pose.stationAnchor,
+        pose.altitudeMSL, data.getVisibleCps());
+    },
+    onHoveredColumnChange: id => { cpColumns.setHoveredMarker(id); },
+    onPhotoBodyContextMenu: (overlay, u, v, sx, sy) => {
+      contextMenu.open(sx, sy, [
+        { label: 'Add observation here', onClick: () => { observationModal.open(overlay, u, v); } },
+        { label: 'Replace image…', onClick: () => {
+          void pickImageFile().then(file => {
+            if (file) void data.handlers.onReplacePhoto(overlay, file);
+          });
+        } },
+      ]);
+    },
+    onImagePOIContextMenu: (poi, sx, sy) => {
+      const cpId = poiData(poi).controlPointId;
+      if (!cpId) return;
+      openCpContextMenu(cpId, sx, sy, null);
+    },
+    findStationAtNDC: ndc => {
+      const pose = worldCamera.getPose();
+      const others = data.getOtherStations();
+      if (!pose.stationAnchor || others.length === 0) return null;
+      const canvas = viewer.renderer.domElement;
+      return findHitDot(ndc, STATION_DOT_HIT_PX,
+        canvas.clientWidth, canvas.clientHeight, viewer.camera, pose.stationAnchor,
+        pose.altitudeMSL, others);
+    },
+    onStationClick: (id, sx, sy) => {
+      if (selectedStationId !== id) {
+        selectedStationId = id;
+        data.refreshControlPointColumns();
+      }
+      const st = data.getOtherStations().find(s => s.id === id);
+      const header = st?.name ?? `Untitled ${id.slice(0, 6)}`;
+      contextMenu.open(sx, sy, [
+        { label: 'Go to camera →', onClick: () => { void stationNavigation.flyToStation(id); } },
+      ], header);
+    },
+    onDeselectStation: () => {
+      if (selectedStationId === null) return;
+      selectedStationId = null;
+      data.refreshControlPointColumns();
+    },
+    onCPClick: (cpId, sx, sy, body) => {
+      if (getActivePicker() === 'gnomon') {
+        setActivePicker(null);
+        sundialModal.onGnomonPicked(cpId);
+        return;
+      }
+      openCpContextMenu(cpId, sx, sy, body);
+    },
+    findConstraintAtNDC: ndc => cpConstraintLines.findHit(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera),
+    onConstraintClick: (constraintId, _sx, _sy, shiftKey) => {
+      if (shiftKey) {
+        toggleMultiSelectedConstraint(constraintId);
+        return;
+      }
+      // Plain click clears any multi-select and opens the edit modal.
+      clearMultiSelectedConstraints();
+      const constraint = data.getCpConstraints().find(k => k.id === constraintId);
+      if (!constraint) return;
+      selectedConstraintId = constraintId;
+      data.refreshControlPointColumns();
+      openConstraintEdit(constraint);
+    },
+    findSurfaceAtNDC: ndc => cpSurfacesRenderer.findHit(ndc, viewer.camera),
+    onSurfaceClick: (surfaceId, _sx, _sy, point) => {
+      if (getActivePicker() === 'shadow') {
+        setActivePicker(null);
+        const pose = worldCamera.getPose();
+        if (pose.location) {
+          sundialModal.onShadowPicked(surfaceId, vertexToLatLngAlt(point, pose.location, pose.altitudeMSL));
+        }
+        return;
+      }
+      selectedSurfaceId = surfaceId;
+      data.refreshControlPointColumns();
+      openSurfaceEdit(surfaceId);
+    },
+    onCreateCPConstraint: (cpAId, cpBId) => { openConstraintCreate(cpAId, cpBId); },
+    onCPConstraintDrawPreview: (cpAId, cpBId) => {
+      const hide = (): void => {
+        if (previewLine.visible) {
+          previewLine.visible = false;
+          viewer.requestRender();
+        }
+      };
+      // Without both endpoints (or a camera fix) there's no meaningful 3D
+      // line to draw — bail. The line reappears as soon as the cursor
+      // re-enters another CP marker.
+      const pose = worldCamera.getPose();
+      if (!cpAId || !cpBId || !pose.stationAnchor) { hide(); return; }
+      const cps = overlays.controlPoints.list();
+      const a = cps.find(c => c.id === cpAId);
+      const b = cps.find(c => c.id === cpBId);
+      if (!a || !b) { hide(); return; }
+      if (a.estLat === null || a.estLng === null || a.estAlt === null) { hide(); return; }
+      if (b.estLat === null || b.estLng === null || b.estAlt === null) { hide(); return; }
+      const cameraMSL = pose.altitudeMSL;
+      const axz = latLngToCameraRelativeMeters({ lat: a.estLat, lng: a.estLng }, pose.stationAnchor);
+      const bxz = latLngToCameraRelativeMeters({ lat: b.estLat, lng: b.estLng }, pose.stationAnchor);
+      const arr = previewPositions.array as Float32Array;
+      arr[0] = axz.x; arr[1] = a.estAlt - cameraMSL; arr[2] = axz.z;
+      arr[3] = bxz.x; arr[4] = b.estAlt - cameraMSL; arr[5] = bxz.z;
+      previewPositions.needsUpdate = true;
+      previewLine.visible = true;
+      viewer.requestRender();
+    },
+    undoManager,
+  });
+
+  return {
+    getSelectedStationId: () => selectedStationId,
+    getSelectedConstraintId: () => selectedConstraintId,
+    getMultiSelectedConstraintIds: () => multiSelectedConstraintIds,
+    getSelectedSurfaceId: () => selectedSurfaceId,
+    clearConstraintSelection: () => {
+      if (selectedConstraintId === null) return;
+      selectedConstraintId = null;
+      data.refreshControlPointColumns();
+    },
+    clearSurfaceSelection: () => {
+      if (selectedSurfaceId === null) return;
+      selectedSurfaceId = null;
+      data.refreshControlPointColumns();
+    },
+    clearMultiSelectedConstraints,
+    clearAll: () => {
+      selectedStationId = null;
+      selectedConstraintId = null;
+      selectedSurfaceId = null;
+      clearMultiSelectedConstraints();
+    },
+  };
+}
