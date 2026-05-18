@@ -23,10 +23,13 @@
   </div>
   <div id="time-filter" hidden>
     <div class="time-filter-row">
-      <label for="time-filter-date">Show CPs extant on</label>
-      <input type="date" id="time-filter-date">
+      <label>From <input type="date" id="time-filter-start"></label>
+      <label>to <input type="date" id="time-filter-end"></label>
     </div>
-    <input type="range" id="time-filter-slider" step="1">
+    <div class="time-filter-slider">
+      <input type="range" id="time-filter-slider-start" step="1">
+      <input type="range" id="time-filter-slider-end" step="1">
+    </div>
     <div class="time-filter-year" id="time-filter-year-readout"></div>
   </div>
   <div id="cp-constraint-modal" class="modal" hidden>

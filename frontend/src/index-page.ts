@@ -14,9 +14,12 @@ import { createTimeFilter } from './time-filter.js';
 import { DEFAULT_SIZE_RAD } from './overlay.js';
 import { nullCpRayBearingDeg } from './null-cp-rays.js';
 import { readAspectRatio } from './handlers.js';
-import { cpLifespanFromApi, getElement, isExtantAt, stationHref } from './types.js';
+import {
+  cpLifespanFromApi, getElement, lifespanOverlapsRange,
+  nullableIntervalOverlapsRange, stationHref,
+} from './types.js';
 import { createSessionPanel } from './session-panel.js';
-import type { ControlPointView, LatLng } from './types.js';
+import type { Cone, ControlPointView, LatLng } from './types.js';
 
 export interface MountIndexPageOptions {
   focusIndexControlPointId: string | null;
@@ -27,11 +30,13 @@ export interface MountIndexPageOptions {
 const URL_LAT = 'la';
 const URL_LNG = 'lo';
 const URL_ZOOM = 'z';
-const URL_YEAR = 'y';
+const URL_YEAR_START = 'y0';
+const URL_YEAR_END = 'y1';
 
 interface UrlState {
   view: MapViewState | null;
-  year: number | null;
+  yearStart: number | null;
+  yearEnd: number | null;
 }
 
 function parseUrlState(): UrlState {
@@ -39,18 +44,24 @@ function parseUrlState(): UrlState {
   const lat = parseFloat(sp.get(URL_LAT) ?? '');
   const lng = parseFloat(sp.get(URL_LNG) ?? '');
   const zoom = parseFloat(sp.get(URL_ZOOM) ?? '');
-  const year = parseInt(sp.get(URL_YEAR) ?? '', 10);
+  const yearStart = parseInt(sp.get(URL_YEAR_START) ?? '', 10);
+  const yearEnd = parseInt(sp.get(URL_YEAR_END) ?? '', 10);
   const haveView =
     Number.isFinite(lat) && Math.abs(lat) <= 90 &&
     Number.isFinite(lng) && Math.abs(lng) <= 180 &&
     Number.isFinite(zoom) && zoom >= 0 && zoom <= 24;
   return {
     view: haveView ? { lat, lng, zoom } : null,
-    year: Number.isFinite(year) ? year : null,
+    yearStart: Number.isFinite(yearStart) ? yearStart : null,
+    yearEnd: Number.isFinite(yearEnd) ? yearEnd : null,
   };
 }
 
-function writeUrlState(patch: Partial<{ view: MapViewState; year: number }>): void {
+function writeUrlState(patch: Partial<{
+  view: MapViewState;
+  yearStart: number;
+  yearEnd: number;
+}>): void {
   const url = new URL(location.href);
   const sp = url.searchParams;
   const desired: [string, string][] = [];
@@ -59,14 +70,23 @@ function writeUrlState(patch: Partial<{ view: MapViewState; year: number }>): vo
     desired.push([URL_LNG, patch.view.lng.toFixed(5)]);
     desired.push([URL_ZOOM, String(patch.view.zoom)]);
   }
-  if (patch.year !== undefined) {
-    desired.push([URL_YEAR, String(patch.year)]);
+  if (patch.yearStart !== undefined) {
+    desired.push([URL_YEAR_START, String(patch.yearStart)]);
+  }
+  if (patch.yearEnd !== undefined) {
+    desired.push([URL_YEAR_END, String(patch.yearEnd)]);
   }
   const stale = desired.filter(([k, v]) => sp.get(k) !== v);
   if (stale.length === 0) return;
   for (const [k, v] of stale) sp.set(k, v);
   history.replaceState(null, '', url);
 }
+
+// Slider falls back to this when no entities have any dated bound yet.
+const FALLBACK_BOUNDS = {
+  minMs: Date.UTC(1855, 0, 1),
+  maxMs: Date.UTC(2026, 11, 31),
+};
 
 export function mountIndexPage(opts: MountIndexPageOptions): void {
   const { focusIndexControlPointId, focusIndexStationId } = opts;
@@ -75,19 +95,26 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   // The station route caches CPs in OverlayManager; index has no scene to
   // share with, so a flat Map is enough.
   const cpsById = new Map<string, ApiControlPoint>();
+  // Station cache so slider drags re-filter without refetching. Cones are
+  // pre-baked from the hydrated photos at fetch time.
+  interface CachedStation {
+    readonly station: ApiStation;
+    readonly cones: readonly Cone[];
+  }
+  const stationsById = new Map<string, CachedStation>();
   // CPs observed by the currently-previewed station. These bypass the time
   // filter so clicking a station marker surfaces every CP it touches, even
-  // ones whose lifespan excludes the slider date.
+  // ones whose lifespan excludes the slider range.
   let previewObservedCpIds: ReadonlySet<string> = new Set();
 
   function refreshIndexControlPoints(): void {
-    const filterMs = timeFilter.getTime().getTime();
+    const { startMs, endMs } = timeFilter.getRange();
     const dots = [];
     for (const cp of cpsById.values()) {
       if (cp.est_lat === null || cp.est_lng === null) continue;
       const observed = previewObservedCpIds.has(cp.id);
       const lifespan = cpLifespanFromApi(cp);
-      if (!observed && !isExtantAt(lifespan, filterMs)) continue;
+      if (!observed && !lifespanOverlapsRange(lifespan, startMs, endMs)) continue;
       dots.push({
         id: cp.id,
         latlng: { lat: cp.est_lat, lng: cp.est_lng },
@@ -105,6 +132,29 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     view.setIndexControlPoints(dots);
   }
 
+  function refreshStationMarkers(): void {
+    const { startMs, endMs } = timeFilter.getRange();
+    const markers = [];
+    for (const { station: st, cones } of stationsById.values()) {
+      const w = st.derived_window;
+      if (!nullableIntervalOverlapsRange(w.captured_at_lower, w.captured_at_upper, startMs, endMs)) continue;
+      markers.push({
+        id: st.id,
+        latlng: { lat: st.lat, lng: st.lng },
+        label: st.name ?? `Untitled ${st.id.slice(0, 6)}`,
+        alt: st.alt,
+        lockLat: st.lock_lat,
+        lockLng: st.lock_lng,
+        lockAlt: st.lock_alt,
+        sigmaLat: st.sigma_lat ?? null,
+        sigmaLng: st.sigma_lng ?? null,
+        covLatLng: st.cov_lat_lng ?? null,
+        cones,
+      });
+    }
+    view.setStationMarkers(markers);
+  }
+
   async function showIndexControlPoints(): Promise<void> {
     try {
       const cps = await api.listControlPoints();
@@ -116,7 +166,7 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     refreshIndexControlPoints();
   }
 
-  async function showStationMarkers(): Promise<void> {
+  async function loadStationMarkers(): Promise<void> {
     let stations: ApiStation[];
     try {
       stations = await api.listStations();
@@ -137,25 +187,37 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
         return null;
       }
     }));
-    view.setStationMarkers(stations.map((st, i) => {
+    stationsById.clear();
+    stations.forEach((st, i) => {
       const h = hydrated[i];
-      const cones = h
+      const cones: Cone[] = h
         ? h.photos.map(p => ({ azL: p.photo_az - p.size_rad / 2, azR: p.photo_az + p.size_rad / 2 }))
         : [];
-      return {
-        id: st.id,
-        latlng: { lat: st.lat, lng: st.lng },
-        label: st.name ?? `Untitled ${st.id.slice(0, 6)}`,
-        alt: st.alt,
-        lockLat: st.lock_lat,
-        lockLng: st.lock_lng,
-        lockAlt: st.lock_alt,
-        sigmaLat: st.sigma_lat ?? null,
-        sigmaLng: st.sigma_lng ?? null,
-        covLatLng: st.cov_lat_lng ?? null,
-        cones,
-      };
-    }));
+      stationsById.set(st.id, { station: st, cones });
+    });
+    refreshStationMarkers();
+  }
+
+  function applyDataBounds(): void {
+    const stamps: number[] = [];
+    const push = (s: string | null): void => {
+      if (s === null) return;
+      const t = new Date(s).getTime();
+      if (Number.isFinite(t)) stamps.push(t);
+    };
+    for (const cp of cpsById.values()) {
+      push(cp.derived_window.started_at_lower);
+      push(cp.derived_window.ended_at_upper);
+    }
+    for (const { station } of stationsById.values()) {
+      push(station.derived_window.captured_at_lower);
+      push(station.derived_window.captured_at_upper);
+    }
+    if (stamps.length === 0) {
+      timeFilter.setBounds(FALLBACK_BOUNDS);
+      return;
+    }
+    timeFilter.setBounds({ minMs: Math.min(...stamps), maxMs: Math.max(...stamps) });
   }
 
   async function moveControlPointTo(id: string, latlng: LatLng): Promise<void> {
@@ -182,7 +244,7 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     }
     // Always re-render: success snaps to the canonical server lat/lng (in case
     // of rounding); failure reverts the marker to the unchanged server value.
-    await showStationMarkers();
+    await loadStationMarkers();
   }
 
   async function updateStationLocks(id: string, patch: { lockPos?: boolean; lockAlt?: boolean }): Promise<void> {
@@ -196,7 +258,7 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
       alert('Update locks failed.');
     }
     // Re-render so the next popup open reads the canonical server value.
-    await showStationMarkers();
+    await loadStationMarkers();
   }
 
   async function updateControlPointLocks(id: string, patch: { lockPos?: boolean; lockAlt?: boolean }): Promise<void> {
@@ -326,17 +388,23 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   // visible before L.map measures it, or tiles won't load at the right size).
   getElement('map-wrap').classList.add('show');
   const urlState = parseUrlState();
-  const initialDate = new Date();
-  if (urlState.year !== null) initialDate.setFullYear(urlState.year);
+  const initialStart = urlState.yearStart !== null
+    ? new Date(Date.UTC(urlState.yearStart, 0, 1)) : undefined;
+  const initialEnd = urlState.yearEnd !== null
+    ? new Date(Date.UTC(urlState.yearEnd, 11, 31)) : undefined;
   const timeFilter = createTimeFilter({
-    initial: initialDate,
-    onChange: (t) => {
-      writeUrlState({ year: t.getFullYear() });
+    initialStart,
+    initialEnd,
+    onChange: ({ startMs, endMs }) => {
+      writeUrlState({
+        yearStart: new Date(startMs).getFullYear(),
+        yearEnd: new Date(endMs).getFullYear(),
+      });
       refreshIndexControlPoints();
+      refreshStationMarkers();
     },
   });
   timeFilter.setVisible(true);
-  writeUrlState({ year: timeFilter.getTime().getFullYear() });
   const startStationModal = createStartStationModal({
     onSubmit: input => onStartStationHere(input),
   });
@@ -382,16 +450,19 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   });
   const solveModal = createSolveModal({
     onComplete: () => {
-      void showStationMarkers();
-      void showIndexControlPoints();
+      void Promise.all([loadStationMarkers(), showIndexControlPoints()])
+        .then(applyDataBounds);
     },
   });
   const openJointSolve = (): void => {
     solveModal.open({ start: api.solveJointStream, title: 'Solve all (joint)' });
   };
   createSessionPanel(getElement('session-host'), { onSolve: openJointSolve });
-  const stationsReady = showStationMarkers();
+  const stationsReady = loadStationMarkers();
   const cpsReady = showIndexControlPoints();
+  // Push data-driven slider bounds in once both fetches resolve. The slider
+  // keeps the fallback bounds until then so it stays interactable during load.
+  void Promise.all([stationsReady, cpsReady]).then(applyDataBounds);
   if (focusIndexControlPointId) {
     // Wait for the CP layer to populate before panning, or the lookup misses.
     void cpsReady.then(() => {

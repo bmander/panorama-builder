@@ -146,19 +146,29 @@ export function formatLifespanLines(span: CPLifespan): readonly [string, string]
   ];
 }
 
-// True when the lifespan window *might* contain timestamp `ms` —
-// i.e., the derived bounds don't rule it out. Open-ended sides (null
-// bounds) pass the gate.
-export function isExtantAt(span: CPLifespan, ms: number): boolean {
-  if (span.derivedStartedAtLower !== null) {
-    const t = new Date(span.derivedStartedAtLower).getTime();
-    if (ms < t) return false;
-  }
-  if (span.derivedEndedAtUpper !== null) {
-    const t = new Date(span.derivedEndedAtUpper).getTime();
-    if (ms > t) return false;
-  }
+// True iff the nullable interval [lo, hi] intersects [startMs, endMs].
+// A null bound means "unbounded on that side" — open-ended intervals
+// always intersect.
+export function nullableIntervalOverlapsRange(
+  lo: string | null, hi: string | null,
+  startMs: number, endMs: number,
+): boolean {
+  if (lo !== null && new Date(lo).getTime() > endMs) return false;
+  if (hi !== null && new Date(hi).getTime() < startMs) return false;
   return true;
+}
+
+export function lifespanOverlapsRange(
+  span: CPLifespan, startMs: number, endMs: number,
+): boolean {
+  return nullableIntervalOverlapsRange(
+    span.derivedStartedAtLower, span.derivedEndedAtUpper, startMs, endMs);
+}
+
+// True when the lifespan window *might* contain timestamp `ms` — i.e.,
+// the derived bounds don't rule it out.
+export function isExtantAt(span: CPLifespan, ms: number): boolean {
+  return lifespanOverlapsRange(span, ms, ms);
 }
 
 // Control point: a real-world landmark with a latent location, observed by
