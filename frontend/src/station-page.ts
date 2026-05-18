@@ -5,39 +5,27 @@
 import * as THREE from 'three';
 import * as api from './api.js';
 import type { ApiControlPoint, ApiHydratedStation } from './api.js';
-import { createViewer, DEFAULT_FOV } from './viewer.js';
-import { createOverlayManager, dirFromAzAlt } from './overlay.js';
-import { createBaker } from './bake.js';
+import { dirFromAzAlt } from './overlay.js';
 import { attachInput } from './input.js';
 import type { PhotoBodyHit } from './input.js';
-import { createHud, attachDownload } from './ui.js';
-import { createTerrainView } from './terrain/index.js';
-import { createSunMarker } from './sun-marker.js';
-import { createSky } from './sky.js';
-import { createControlPointColumns, findHitColumn } from './map-poi-columns.js';
+import { attachDownload } from './ui.js';
+import { findHitColumn } from './map-poi-columns.js';
 import type { ControlPointColumn } from './map-poi-columns.js';
-import { createObservationRays } from './observation-rays.js';
 import type { ObservationRay } from './observation-rays.js';
-import { createCPConstraintLines } from './cp-constraint-lines.js';
 import { createCPConstraintModal } from './cp-constraint-modal.js';
-import { createCPSurfaces } from './cp-surfaces.js';
 import { createCPSurfaceModal } from './cp-surface-modal.js';
 import { createSundialModal } from './sundial-modal.js';
-import type { ShadowLocation, SundialPickField } from './sundial-modal.js';
-import { makeOverlayLine, makeOverlayLineMaterial } from './overlay-lines.js';
-import { createStationMarkers } from './station-markers.js';
+import type { SundialPickField } from './sundial-modal.js';
 import type { StationMarker } from './station-markers.js';
-import { createStationCones } from './station-cones.js';
-import { createPhotoPreviews } from './photo-previews.js';
-import { createDotLayer, findHitDot } from './dot-layer.js';
+import { findHitDot } from './dot-layer.js';
 import type { Dot } from './dot-layer.js';
 import {
   cpHref, cpLabel, cpLifespanFromApi, formatLifespanLines, getElement,
   indexStationHref, isExtantAt, parseStaFromURL, stationHref,
-  meshMat, overlayData, poiData,
+  poiData,
 } from './types.js';
 import { groundDistance, latLngToCameraRelativeMeters, tangentMetersToLatLng, vecToAzAlt } from './geo.js';
-import { controlPointVertex, latLngAltVertex, vertexToLatLngAlt } from './camera-anchored.js';
+import { vertexToLatLngAlt } from './camera-anchored.js';
 import { degToRad, radToDeg } from './mathx.js';
 import type { CPConstraintView, CPSurfaceView, ControlPointView, LatLng } from './types.js';
 import { createSyncManager } from './sync.js';
@@ -55,7 +43,8 @@ import { createStationNavigation, meanPhotoAzAlt } from './station-navigation.js
 import { createStationFields } from './station-fields.js';
 import { attachSolveActions } from './solve-actions.js';
 import type { SolveActions } from './solve-actions.js';
-import { createWorldCamera, locEq } from './world-camera.js';
+import { locEq } from './world-camera.js';
+import { createStationScene } from './station/scene.js';
 
 export interface MountStationPageOptions {
   initialStationId: string;
@@ -96,64 +85,15 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
 
   // --- Viewer + scene singletons -----------------------------------------
 
-  const halfFovTan = (fovDeg: number): number => Math.tan(degToRad(fovDeg) / 2);
-  const POI_FOV_REFERENCE_TAN = halfFovTan(DEFAULT_FOV);
-  const viewer = createViewer({
-    container: document.body,
-    onFovChange: fov => {
-      overlays.measurements.setFovScale(halfFovTan(fov) / POI_FOV_REFERENCE_TAN);
-    },
-  });
+  const scene = createStationScene({ container: document.body });
+  const {
+    viewer, overlays, worldCamera,
+    terrain, sky, sunMarker,
+    cpColumns, cpConstraintLines, cpSurfacesRenderer, photoPreviews,
+    baker, hud,
+    sundialLine, previewLine, previewPositions,
+  } = scene;
 
-  // Callbacks are attached below via setCallbacks once sync, baker, and the
-  // refreshers exist — see the construction-order note in overlay.ts.
-  const overlays = createOverlayManager({
-    overlaysGroup: viewer.overlaysGroup,
-    getAnisotropy: () => viewer.renderer.capabilities.getMaxAnisotropy(),
-  });
-
-  const sky = createSky({
-    scene: viewer.scene,
-    renderer: viewer.renderer,
-    requestRender: () => { viewer.requestRender(); },
-  });
-  const terrain = createTerrainView({
-    scene: viewer.scene,
-    requestRender: () => { viewer.requestRender(); },
-  });
-  const sunMarker = createSunMarker({
-    scene: viewer.scene,
-    requestRender: () => { viewer.requestRender(); },
-  });
-  const cpColumns = createControlPointColumns({
-    scene: viewer.scene,
-    requestRender: () => { viewer.requestRender(); },
-  });
-  const stationDots = createStationMarkers({
-    scene: viewer.scene,
-    requestRender: () => { viewer.requestRender(); },
-  });
-  const observationRays = createObservationRays({
-    scene: viewer.scene,
-    requestRender: () => { viewer.requestRender(); },
-  });
-  const stationCones = createStationCones({
-    scene: viewer.scene,
-    requestRender: () => { viewer.requestRender(); },
-  });
-  const photoPreviews = createPhotoPreviews({
-    scene: viewer.scene,
-    requestRender: () => { viewer.requestRender(); },
-    getAnisotropy: () => viewer.renderer.capabilities.getMaxAnisotropy(),
-  });
-  const cpConstraintLines = createCPConstraintLines({
-    scene: viewer.scene,
-    requestRender: () => { viewer.requestRender(); },
-  });
-  const cpSurfacesRenderer = createCPSurfaces({
-    scene: viewer.scene,
-    requestRender: () => { viewer.requestRender(); },
-  });
   // Loaded once at hydrate; mutated by the modal's onMutated callback.
   let cpConstraints: CPConstraintView[] = [];
   let selectedConstraintId: string | null = null;
@@ -163,62 +103,9 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   let multiSelectedConstraintIds: ReadonlySet<string> = new Set();
   let cpSurfaces: CPSurfaceView[] = [];
   let selectedSurfaceId: string | null = null;
-  // Preview line drawn during shift-click-drag. Updated in place rather than
-  // pushed through the constraint-lines layer so the per-pointermove update
-  // doesn't stomp the persisted lines.
-  const previewMat = makeOverlayLineMaterial(0xffffff);
-  const previewLine = makeOverlayLine([0, 0, 0, 0, 0, 0], previewMat);
-  previewLine.visible = false;
-  viewer.scene.add(previewLine);
-  const previewPositions = previewLine.geometry.getAttribute('position') as THREE.BufferAttribute;
   let otherStations: StationMarker[] = [];
   let otherCameras: OtherCamera[] = [];
   let selectedStationId: string | null = null;
-  const baker = createBaker({
-    renderer: viewer.renderer,
-    scene: viewer.scene,
-    setVisualsVisible: visible => {
-      overlays.setVisualsVisible(visible);
-      cpColumns.setVisible(visible);
-      stationDots.setVisible(visible);
-      observationRays.setVisible(visible);
-      stationCones.setVisible(visible);
-      cpConstraintLines.setVisible(visible);
-      cpSurfacesRenderer.setVisible(visible);
-      sundialMarker.setVisible(visible);
-      if (!visible) sundialLine.visible = false;
-      photoPreviews.setBakeHidden(!visible);
-      if (!visible) previewLine.visible = false;
-      // Suppress sky.regenProbe during the bake's CubeCamera render (it
-      // would compete for the renderer's render-target state). The sky
-      // quad in the main scene still renders into each cube face.
-      if (visible) sky.endBake(); else sky.beginBake();
-    },
-  });
-  const hud = createHud(() => {
-    const { azimuth, altitude } = viewer.getAzAlt();
-    const sel = overlays.photos.getSelected();
-    let selectedRadPerPixel: number | null = null;
-    if (sel) {
-      const data = overlayData(sel);
-      const img = meshMat(data.body).map?.image as
-        { naturalWidth?: number; width?: number } | null | undefined;
-      const px = img?.naturalWidth ?? img?.width ?? 0;
-      if (px > 0) selectedRadPerPixel = data.sizeRad / px;
-    }
-    return {
-      azimuth, altitude,
-      fov: viewer.camera.fov,
-      selectedSizeRad: sel ? overlayData(sel).sizeRad : null,
-      selectedRadPerPixel,
-      cameraMSL: worldCamera.getPose().altitudeMSL,
-      cameraHeightAboveGround: terrain.getCameraHeightAboveGround(),
-    };
-  });
-
-  // Single source of truth for camera location + MSL. Live (override) values
-  // diverge from the station anchor while shift-wheel or fly is active.
-  const worldCamera = createWorldCamera();
 
   // --- Cross-cutting refreshers ------------------------------------------
 
@@ -372,79 +259,28 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   // Terrain is pushed separately so hydrateFromAPI can defer the DEM/imagery
   // tile flood to the end of its parallel-fetch block.
   function pushPose(): void {
-    const pose = worldCamera.getPose();
-    cpColumns.update(pose.location, pose.altitudeMSL, cachedCpMarkers);
-    stationDots.update(pose.location, pose.altitudeMSL, otherStations);
-    stationCones.update(pose.location, pose.altitudeMSL, otherCameras, selectedStationId);
-    observationRays.update(pose.location, pose.altitudeMSL, cachedObservationRays);
-    cpConstraintLines.update(pose.location, pose.altitudeMSL, cachedVisibleCps, cpConstraints, selectedConstraintId, multiSelectedConstraintIds);
-    cpSurfacesRenderer.update(pose.location, pose.altitudeMSL, cachedVisibleCps, cpSurfaces, selectedSurfaceId);
-    sundialMarker.update(pose.location, pose.altitudeMSL, sundialMarkerDots);
-    updateSundialLine(pose.location, pose.altitudeMSL);
-    updateOverlaysGroupOffset();
-    hud.refresh();
+    scene.applyPose({
+      cpMarkers: cachedCpMarkers,
+      visibleCps: cachedVisibleCps,
+      observationRays: cachedObservationRays,
+      otherStations,
+      otherCameras,
+      selectedStationId,
+      cpConstraints,
+      selectedConstraintId,
+      multiSelectedConstraintIds,
+      cpSurfaces,
+      selectedSurfaceId,
+      sundialMarkerDots,
+      sundialGnomonCpId: sundialModal.getGnomonCpId(),
+      sundialShadow: sundialModal.getShadowLocation(),
+    });
   }
   worldCamera.subscribe(pushPose);
 
-  // Memo of the inputs that produced the current line geometry. Same-ref
-  // pushPose calls (camera + picks unchanged) become no-ops so we skip the
-  // BufferAttribute upload entirely.
-  let lastSundialCamLoc: LatLng | null = null;
-  let lastSundialCameraMSL = NaN;
-  let lastSundialCpId: string | null = null;
-  let lastSundialShadow: ShadowLocation | null = null;
-  function updateSundialLine(camLoc: LatLng | null, cameraMSL: number): void {
-    const cpId = sundialModal.getGnomonCpId();
-    const shadow = sundialModal.getShadowLocation();
-    if (camLoc === lastSundialCamLoc && cameraMSL === lastSundialCameraMSL
-      && cpId === lastSundialCpId && shadow === lastSundialShadow) return;
-    lastSundialCamLoc = camLoc;
-    lastSundialCameraMSL = cameraMSL;
-    lastSundialCpId = cpId;
-    lastSundialShadow = shadow;
-    if (camLoc === null || cpId === null || shadow === null) {
-      sundialLine.visible = false;
-      return;
-    }
-    const cp = overlays.controlPoints.getById(cpId);
-    const g = cp ? controlPointVertex(cp, camLoc, cameraMSL) : null;
-    if (g === null) {
-      sundialLine.visible = false;
-      return;
-    }
-    const s = latLngAltVertex(shadow.latlng, shadow.altitude, camLoc, cameraMSL);
-    const arr = sundialLinePos.array as Float32Array;
-    arr[0] = g.x; arr[1] = g.y; arr[2] = g.z;
-    arr[3] = s.x; arr[4] = s.y; arr[5] = s.z;
-    sundialLinePos.needsUpdate = true;
-    sundialLine.visible = true;
-  }
-
-  function pushTerrainFromPose(): void {
-    const pose = worldCamera.getPose();
-    if (pose.location) terrain.setLocation(pose.location);
-    terrain.setCameraMSL(pose.altitudeMSL);
-  }
-
-  // Photo overlays are rendered as a sphere around the camera at scene
-  // origin, so by default they follow the camera. While the camera is
-  // detached from the station (shift-wheel has displaced it), translate
-  // overlaysGroup so the photos stay at the station's true location and
-  // the user can fly past or around them.
-  function updateOverlaysGroupOffset(): void {
-    const pose = worldCamera.getPose();
-    if (!pose.stationAnchor || !pose.location || pose.stationAltitudeMSL === null
-        || (pose.location.lat === pose.stationAnchor.lat && pose.location.lng === pose.stationAnchor.lng)) {
-      viewer.overlaysGroup.position.set(0, 0, 0);
-      return;
-    }
-    const offset = latLngToCameraRelativeMeters(pose.stationAnchor, pose.location);
-    viewer.overlaysGroup.position.set(offset.x, pose.stationAltitudeMSL - pose.altitudeMSL, offset.z);
-  }
-
   function applyCameraLocation(loc: LatLng, alt: number): void {
     worldCamera.setStationAnchor({ location: loc, altitudeMSL: alt });
-    pushTerrainFromPose();
+    scene.pushTerrainFromPose();
     settings.refreshSunDirection();
     sync.flush();
   }
@@ -570,22 +406,10 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     },
   });
 
-  // Sundial visuals: a small dot at the picked shadow point + an orange line
-  // from the gnomon CP to the shadow. Both are camera-anchored; the line's
-  // endpoints get recomputed on every pose update (it's the cheap path —
-  // two `controlPointVertex`-style transforms per frame).
-  const SUNDIAL_COLOR_HEX = 0xffaa44;
-  const SUNDIAL_SHADOW_COLOR = new THREE.Color(SUNDIAL_COLOR_HEX);
-  const sundialMarker = createDotLayer({
-    scene: viewer.scene,
-    requestRender: () => { viewer.requestRender(); },
-  });
+  // Sundial visuals (dot layer + line) live in scene; this is the per-pick
+  // dot list that feeds them, plus the shadow-point color.
+  const SUNDIAL_SHADOW_COLOR = new THREE.Color(0xffaa44);
   let sundialMarkerDots: readonly Dot[] = [];
-  const sundialLineMat = makeOverlayLineMaterial(SUNDIAL_COLOR_HEX);
-  const sundialLine = makeOverlayLine([0, 0, 0, 0, 0, 0], sundialLineMat);
-  sundialLine.visible = false;
-  viewer.scene.add(sundialLine);
-  const sundialLinePos = sundialLine.geometry.getAttribute('position') as THREE.BufferAttribute;
 
   // Sundial picker state: while non-null, the next CP marker click (or
   // surface click) is routed to the modal instead of opening its default
@@ -893,7 +717,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
         location: tangentMetersToLatLng(pose.location, step * look.x, step * look.z),
         altitudeMSL: pose.altitudeMSL + step * look.y,
       });
-      pushTerrainFromPose();
+      scene.pushTerrainFromPose();
       writeCameraToURL();
     },
     findColumnAtNDC: ndc => {
@@ -1023,7 +847,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
       const pose = worldCamera.getPose();
       if (!pose.stationAnchor) return;
       worldCamera.setStationAnchor({ location: pose.stationAnchor, altitudeMSL: alt });
-      pushTerrainFromPose();
+      scene.pushTerrainFromPose();
     },
     onLocationChanged: (loc) => {
       const pose = worldCamera.getPose();
@@ -1316,7 +1140,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     }
 
     // Terrain last so its tile flood queues behind every other fetch above.
-    pushTerrainFromPose();
+    scene.pushTerrainFromPose();
   }
 
   const focusScratch = new THREE.Vector3();
