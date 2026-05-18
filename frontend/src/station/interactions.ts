@@ -1,13 +1,10 @@
 // Selection state + input wiring for the station view. Owns selectedX state,
-// the multi-select constraint workflow, the CP context-menu builder + its
-// negative-visibility postObservation closure, and the full attachInput
-// callback bag.
+// the multi-select constraint workflow, the CP context-menu builder, and
+// the full attachInput callback bag.
 //
-// Modal-opening actions are passed in as callbacks so the modals can be
-// constructed AFTER interactions (their onClose handlers reach back via
-// interactions.clearConstraintSelection / clearSurfaceSelection). The sundial
-// picker state is read/written via callbacks — slice 5 lifts those into
-// sundial-controller.
+// panels is held via closure — it's constructed *after* interactions in the
+// composition root so its modal onClose handlers can reach back into
+// interactions.clearXSelection.
 
 import * as api from '../api.js';
 import { attachInput } from '../input.js';
@@ -22,16 +19,12 @@ import { vertexToLatLngAlt } from '../camera-anchored.js';
 import { radToDeg } from '../mathx.js';
 import { dirFromAzAlt } from '../overlay.js';
 import { locEq } from '../world-camera.js';
-import type { ContextMenu, ContextMenuItem } from '../context-menu.js';
-import type { ObservationModal } from '../observation-modal.js';
-import type { PhotoHud } from '../photo-hud.js';
-import type { UndoManager } from '../undo.js';
-import type { StationNavigation } from '../station-navigation.js';
-import type { CPConstraintView } from '../types.js';
+import type { ContextMenuItem } from '../context-menu.js';
 import type { StationScene } from './scene.js';
 import type { StationDataController } from './data-controller.js';
 import type { StationRouteState } from './route-state.js';
 import type { SundialController } from './sundial-controller.js';
+import type { StationPanels } from './panels.js';
 
 const SHIFT_WHEEL_LOG_PER_PX = 0.005;
 const COLUMN_NDC_HIT_RADIUS = 0.01;
@@ -56,19 +49,10 @@ export interface CreateStationInteractionsOptions {
   readonly data: StationDataController;
   readonly route: StationRouteState;
   readonly sundial: SundialController;
-  // Panel handles consumed at click time.
-  readonly contextMenu: ContextMenu;
-  readonly observationModal: ObservationModal;
-  readonly photoHud: PhotoHud;
-  readonly undoManager: UndoManager;
-  readonly stationNavigation: StationNavigation;
-  // Modal-open callbacks. The modals are constructed *after* interactions in
-  // station-page.ts (so their onClose handlers can call back into
-  // interactions.clearConstraintSelection / clearSurfaceSelection); we
-  // receive these as closures that resolve lazily.
-  readonly openConstraintCreate: (cpAId: string, cpBId: string) => void;
-  readonly openConstraintEdit: (c: CPConstraintView) => void;
-  readonly openSurfaceEdit: (surfaceId: string) => void;
+  // panels is constructed *after* interactions in station-page.ts (so its
+  // modal onClose handlers can call back into interactions.clearXSelection);
+  // we receive it as a forward-ref binding via closure.
+  readonly panels: StationPanels;
 }
 
 // Modal-style file picker for menu actions ("Replace image…"). Resolves with
@@ -94,12 +78,7 @@ function pickImageFile(): Promise<File | null> {
 }
 
 export function createStationInteractions(opts: CreateStationInteractionsOptions): StationInteractions {
-  const {
-    scene, data, route, sundial,
-    contextMenu, observationModal,
-    photoHud, undoManager, stationNavigation,
-    openConstraintCreate, openConstraintEdit, openSurfaceEdit,
-  } = opts;
+  const { scene, data, route, sundial, panels } = opts;
   const {
     viewer, overlays, worldCamera, terrain,
     cpColumns, cpConstraintLines, cpSurfacesRenderer,
@@ -205,36 +184,15 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
     }
     // Negative-visibility submenu — missing / can't see (with reason).
     if (!stationObserves) {
-      const observingStationId = route.getStationId();
-      const postObservation = (status: api.ApiCpObservationStatus, reason?: api.ApiCpObservationReason): void => {
-        const prior = data.getCpObservation(cpId);
-        data.setCpObservation(cpId, { id: prior?.id ?? null, status });
-        data.refreshControlPointColumns();
-        const req: Promise<api.ApiCpObservation> = prior?.id
-          ? api.updateCpObservation(prior.id, { status, reason: reason ?? null })
-          : api.createCpObservation(observingStationId, {
-              control_point_id: cpId,
-              status,
-              reason: reason ?? null,
-            });
-        req.then(o => { data.setCpObservation(cpId, { id: o.id, status: o.status }); })
-          .catch((err: unknown) => {
-            console.error('cp_observation upsert failed:', err);
-            if (prior) data.setCpObservation(cpId, prior);
-            else data.deleteCpObservation(cpId);
-            data.refreshControlPointColumns();
-            alert('Update failed — see console.');
-          });
-      };
       items.push(
-        { label: 'Mark missing', onClick: () => { postObservation('missing'); } },
-        { label: 'Can\'t see — occluded', onClick: () => { postObservation('cant_see', 'occluded'); } },
-        { label: 'Can\'t see — unclear', onClick: () => { postObservation('cant_see', 'unclear'); } },
+        { label: 'Mark missing', onClick: () => { void data.postCpObservation(cpId, 'missing', null); } },
+        { label: 'Can\'t see — occluded', onClick: () => { void data.postCpObservation(cpId, 'cant_see', 'occluded'); } },
+        { label: 'Can\'t see — unclear', onClick: () => { void data.postCpObservation(cpId, 'cant_see', 'unclear'); } },
       );
     }
     // Nudge the menu right so the CP marker (and any reticules just
     // revealed by the selection above) stays uncovered by the menu.
-    contextMenu.open(sx + 20, sy, items, header, info);
+    panels.contextMenu.open(sx + 20, sy, items, header, info);
   }
 
   function writeCameraToURL(): void {
@@ -258,7 +216,7 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
     onChange: () => {
       viewer.requestRender();
       hud.refresh();
-      photoHud.refresh();
+      panels.photoHud.refresh();
       writeCameraToURL();
     },
     onPhotoDropped: (tex, blob, aspect, dir, revokeUrl) => {
@@ -292,8 +250,8 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
     },
     onHoveredColumnChange: id => { cpColumns.setHoveredMarker(id); },
     onPhotoBodyContextMenu: (overlay, u, v, sx, sy) => {
-      contextMenu.open(sx, sy, [
-        { label: 'Add observation here', onClick: () => { observationModal.open(overlay, u, v); } },
+      panels.contextMenu.open(sx, sy, [
+        { label: 'Add observation here', onClick: () => { panels.observationModal.open(overlay, u, v); } },
         { label: 'Replace image…', onClick: () => {
           void pickImageFile().then(file => {
             if (file) void data.handlers.onReplacePhoto(overlay, file);
@@ -322,8 +280,8 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
       }
       const st = data.getOtherStations().find(s => s.id === id);
       const header = st?.name ?? `Untitled ${id.slice(0, 6)}`;
-      contextMenu.open(sx, sy, [
-        { label: 'Go to camera →', onClick: () => { void stationNavigation.flyToStation(id); } },
+      panels.contextMenu.open(sx, sy, [
+        { label: 'Go to camera →', onClick: () => { void panels.stationNavigation.flyToStation(id); } },
       ], header);
     },
     onDeselectStation: () => {
@@ -350,7 +308,7 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
       if (!constraint) return;
       selectedConstraintId = constraintId;
       data.refreshControlPointColumns();
-      openConstraintEdit(constraint);
+      panels.openConstraintEdit(constraint);
     },
     findSurfaceAtNDC: ndc => cpSurfacesRenderer.findHit(ndc, viewer.camera),
     onSurfaceClick: (surfaceId, _sx, _sy, point) => {
@@ -363,9 +321,9 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
       }
       selectedSurfaceId = surfaceId;
       data.refreshControlPointColumns();
-      openSurfaceEdit(surfaceId);
+      panels.openSurfaceEdit(surfaceId);
     },
-    onCreateCPConstraint: (cpAId, cpBId) => { openConstraintCreate(cpAId, cpBId); },
+    onCreateCPConstraint: (cpAId, cpBId) => { panels.openConstraintCreate(cpAId, cpBId); },
     onCPConstraintDrawPreview: (cpAId, cpBId) => {
       const hide = (): void => {
         if (previewLine.visible) {
@@ -394,7 +352,7 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
       previewLine.visible = true;
       viewer.requestRender();
     },
-    undoManager,
+    undoManager: panels.undoManager,
   });
 
   return {

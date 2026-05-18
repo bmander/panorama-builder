@@ -78,11 +78,10 @@ export interface StationDataController {
   getOtherStations(): readonly StationMarker[];
   getOtherCameras(): readonly OtherCamera[];
 
-  // CP observation cache (mutated by the CP context-menu's postObservation
-  // closure in interactions).
-  getCpObservation(cpId: string): CpObservationCache | undefined;
-  setCpObservation(cpId: string, cache: CpObservationCache): void;
-  deleteCpObservation(cpId: string): void;
+  // CP observation upsert. Optimistically updates the local cache + refreshes
+  // visibility, then issues the POST/PUT (routed by whether a cp_observation
+  // row already exists at this station). Rolls back the cache on failure.
+  postCpObservation(cpId: string, status: api.ApiCpObservationStatus, reason: api.ApiCpObservationReason | null): Promise<void>;
 
   // Other-stations setter (used by station-navigation's fly post-update path).
   setOtherStations(stations: readonly StationMarker[]): void;
@@ -586,6 +585,32 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
     sync.markLoaded();
   }
 
+  async function postCpObservation(
+    cpId: string,
+    status: api.ApiCpObservationStatus,
+    reason: api.ApiCpObservationReason | null,
+  ): Promise<void> {
+    const prior = cpObservationByCp.get(cpId);
+    cpObservationByCp.set(cpId, { id: prior?.id ?? null, status });
+    refreshControlPointColumns();
+    try {
+      const o: api.ApiCpObservation = prior?.id
+        ? await api.updateCpObservation(prior.id, { status, reason })
+        : await api.createCpObservation(route.getStationId(), {
+            control_point_id: cpId,
+            status,
+            reason,
+          });
+      cpObservationByCp.set(cpId, { id: o.id, status: o.status });
+    } catch (err: unknown) {
+      console.error('cp_observation upsert failed:', err);
+      if (prior) cpObservationByCp.set(cpId, prior);
+      else cpObservationByCp.delete(cpId);
+      refreshControlPointColumns();
+      alert('Update failed — see console.');
+    }
+  }
+
   return {
     sync,
     handlers,
@@ -596,9 +621,7 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
     getObservationRays: () => cachedObservationRays,
     getOtherStations: () => otherStations,
     getOtherCameras: () => otherCameras,
-    getCpObservation: (cpId) => cpObservationByCp.get(cpId),
-    setCpObservation: (cpId, cache) => { cpObservationByCp.set(cpId, cache); },
-    deleteCpObservation: (cpId) => { cpObservationByCp.delete(cpId); },
+    postCpObservation,
     setOtherStations: (s) => { otherStations = [...s]; },
     setShowAllCPs: (v) => {
       if (v === showAllCPs) return;

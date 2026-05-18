@@ -42,7 +42,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   });
 
   const panels = createStationPanels({
-    scene, data, route, sundial,
+    scene, data, route,
     onCpConstraintMutated: () => { interactions.clearConstraintSelection(); },
     onCpConstraintClose: () => { interactions.clearConstraintSelection(); },
     onCpSurfaceMutated: () => { interactions.clearSurfaceSelection(); },
@@ -50,17 +50,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     loadStation,
   });
 
-  const interactions = createStationInteractions({
-    scene, data, route, sundial,
-    contextMenu: panels.contextMenu,
-    observationModal: panels.observationModal,
-    photoHud: panels.photoHud,
-    undoManager: panels.undoManager,
-    stationNavigation: panels.stationNavigation,
-    openConstraintCreate: (a, b) => { panels.cpConstraintModal.openCreate(a, b); },
-    openConstraintEdit: (c) => { panels.cpConstraintModal.openEdit(c); },
-    openSurfaceEdit: (id) => { panels.cpSurfaceModal.open(id); },
-  });
+  const interactions = createStationInteractions({ scene, data, route, sundial, panels });
 
   wireStationEvents({ scene, data, route, sundial, pushPose, applyStation });
 

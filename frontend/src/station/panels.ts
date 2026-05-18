@@ -11,10 +11,9 @@
 import type { ApiHydratedStation } from '../api.js';
 import { attachDownload } from '../ui.js';
 import { createCPConstraintModal } from '../cp-constraint-modal.js';
-import type { CPConstraintModal } from '../cp-constraint-modal.js';
 import { createCPSurfaceModal } from '../cp-surface-modal.js';
-import type { CPSurfaceModal } from '../cp-surface-modal.js';
 import { getElement } from '../types.js';
+import type { CPConstraintView } from '../types.js';
 import { createSessionPanel } from '../session-panel.js';
 import type { SessionPanel } from '../session-panel.js';
 import { createSettingsPanel } from '../settings.js';
@@ -38,48 +37,52 @@ import { attachSolveActions } from '../solve-actions.js';
 import type { StationScene } from './scene.js';
 import type { StationDataController } from './data-controller.js';
 import type { StationRouteState } from './route-state.js';
-import type { SundialController } from './sundial-controller.js';
 
 export interface StationPanels {
   readonly sessionPanel: SessionPanel;
   readonly settings: SettingsPanel;
   readonly admin: AdminModal;
-  readonly cpConstraintModal: CPConstraintModal;
-  readonly cpSurfaceModal: CPSurfaceModal;
   readonly contextMenu: ContextMenu;
   readonly observationModal: ObservationModal;
   readonly photoHud: PhotoHud;
   readonly undoManager: UndoManager;
   readonly stationFields: StationFieldsHandle;
   readonly stationNavigation: StationNavigation;
+  // Modal-open actions. The cp-constraint / cp-surface modals themselves are
+  // panel-internal — callers open them via these delegated methods so the
+  // modal handles don't leak into the public surface.
+  openConstraintCreate(cpAId: string, cpBId: string): void;
+  openConstraintEdit(c: CPConstraintView): void;
+  openSurfaceEdit(surfaceId: string): void;
 }
 
 export interface CreateStationPanelsOptions {
   readonly scene: StationScene;
   readonly data: StationDataController;
   readonly route: StationRouteState;
-  readonly sundial: SundialController;
   // Modal onClose / onMutated selection-clear hooks. Lazy: station-page.ts
   // passes closures over the (later-declared) interactions binding.
   readonly onCpConstraintMutated: () => void;
   readonly onCpConstraintClose: () => void;
   readonly onCpSurfaceMutated: () => void;
   readonly onCpSurfaceClose: () => void;
-  // Forward-ref to the wiring's loadStation orchestration helper. Used by
+  // Forward-ref to the composition root's loadStation helper. Used by
   // station-navigation's fly-to flow.
   readonly loadStation: (id: string, prefetched?: ApiHydratedStation) => Promise<void>;
 }
 
 export function createStationPanels(opts: CreateStationPanelsOptions): StationPanels {
-  const { scene, data, route, sundial } = opts;
+  const { scene, data, route } = opts;
   const { viewer, overlays, worldCamera, terrain, sky, sunMarker, baker, cpSurfacesRenderer } = scene;
   const { sync } = data;
 
-  // attachSolveActions runs further down; the SessionPanel's Solve button
-  // isn't reachable until then, so the late binding is safe.
-  let solveActions: { open: () => void } | null = null;
+  const solveActions = attachSolveActions({
+    rehydrate: () => data.rehydrateAfterSolve(),
+    reportError: (label, err) => { sync.reportError(label, err); },
+  });
+
   const sessionPanel = createSessionPanel(getElement('session-host'), {
-    onSolve: () => { solveActions?.open(); },
+    onSolve: () => { solveActions.open(); },
   });
 
   const settings = createSettingsPanel({
@@ -159,11 +162,6 @@ export function createStationPanels(opts: CreateStationPanelsOptions): StationPa
     },
   });
 
-  solveActions = attachSolveActions({
-    rehydrate: () => data.rehydrateAfterSolve(),
-    reportError: (label, err) => { sync.reportError(label, err); },
-  });
-
   const stationNavigation = createStationNavigation({
     viewer, terrain,
     cpColumns: scene.cpColumns,
@@ -178,15 +176,13 @@ export function createStationPanels(opts: CreateStationPanelsOptions): StationPa
 
   attachDownload({ baker });
 
-  // Silence "sundial unused" — sundial is part of the options for callers
-  // that need cross-checks, but panels doesn't read it directly.
-  void sundial;
-
   return {
     sessionPanel, settings, admin,
-    cpConstraintModal, cpSurfaceModal,
     contextMenu, observationModal,
     photoHud, undoManager,
     stationFields, stationNavigation,
+    openConstraintCreate: (a, b) => { cpConstraintModal.openCreate(a, b); },
+    openConstraintEdit: (c) => { cpConstraintModal.openEdit(c); },
+    openSurfaceEdit: (id) => { cpSurfaceModal.open(id); },
   };
 }
