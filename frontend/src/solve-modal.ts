@@ -10,7 +10,7 @@
 
 import { getElement } from './types.js';
 import * as api from './api.js';
-import { sessionManager } from './session.js';
+import { sessionStore } from './session-store.js';
 import { sessionPending } from './session-pending.js';
 
 // Caller-supplied bridge to a specific streaming endpoint.
@@ -283,7 +283,7 @@ export function createSolveModal(
         // Also surface the σ gate's verdict directly in the modal so the
         // user sees "found X problems" without having to dismiss it first.
         // Session-panel reads the same endpoint to populate its dropdown.
-        const sid = sessionManager.current();
+        const sid = sessionStore.current();
         if (sid !== null) {
           const lockedResult = result;
           api.getSessionRankDeficient(sid).then(axes => {

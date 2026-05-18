@@ -10,7 +10,8 @@
 
 import type { ApiEntityRef, RankDeficientAxis } from './api.js';
 import * as api from './api.js';
-import { sessionManager } from './session.js';
+import * as session from './session.js';
+import { sessionStore } from './session-store.js';
 import { sessionPending } from './session-pending.js';
 import { openSignOffModal } from './signoff-modal.js';
 import { fmtRef, getElement, renderDeficientAxesList } from './types.js';
@@ -92,7 +93,7 @@ export function createSessionPanel(
   // result. Keyed by (sessionId, solverChanges) so it doesn't refire on
   // unrelated render() ticks.
   async function refreshProblems(): Promise<void> {
-    const id = sessionManager.current();
+    const id = sessionStore.current();
     const { solverChanges } = sessionPending.get();
     const key = id === null ? '' : `${id}|${solverChanges ?? 'none'}`;
     if (key === lastFetchKey) return;
@@ -124,7 +125,7 @@ export function createSessionPanel(
   }
 
   function render(): void {
-    const sessionActive = sessionManager.current() !== null;
+    const sessionActive = sessionStore.current() !== null;
     const { userPending, solverChanges } = sessionPending.get();
     const hasWork = userPending > 0 || solverChanges !== null;
     if (!sessionActive || !hasWork) {
@@ -160,7 +161,7 @@ export function createSessionPanel(
       // the new document arrives so the modal can't be re-clicked.
       closeOnSuccess: false,
       submit: async req => {
-        await sessionManager.merge(req);
+        await session.merge(req);
         location.reload();
       },
       onConflict: err => { openConflictModal(err.conflicts); },
@@ -169,12 +170,12 @@ export function createSessionPanel(
 
   async function onAbandon(): Promise<void> {
     if (!confirm('Discard all session changes?')) return;
-    await sessionManager.abandon();
+    await session.abandon();
     location.reload();
   }
 
-  const offSession = sessionManager.onChange(() => {
-    if (sessionManager.current() === null) sessionPending.reset();
+  const offSession = sessionStore.onChange(() => {
+    if (sessionStore.current() === null) sessionPending.reset();
     render();
   });
   const offPending = sessionPending.onChange(render);
@@ -215,7 +216,7 @@ function openConflictModal(conflicts: ApiEntityRef[]): void {
     modal.addEventListener('click', e => { if (e.target === modal) modal.hidden = true; });
     abandonBtn.addEventListener('click', () => {
       modal.hidden = true;
-      sessionManager.abandon().then(() => { location.reload(); }, (err: unknown) => {
+      session.abandon().then(() => { location.reload(); }, (err: unknown) => {
         console.error('abandon after conflict failed:', err);
         location.reload();
       });

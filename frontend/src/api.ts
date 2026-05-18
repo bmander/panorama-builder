@@ -9,10 +9,9 @@
 
 import type { LatLng } from './types.js';
 import type { components } from './api-types.gen.js';
-import { sessionManager } from './session.js';
+import { apiRequest, apiRequestVoid, apiFetch, apiUrl } from './request-client.js';
+import { sessionStore } from './session-store.js';
 import { sessionPending } from './session-pending.js';
-
-const API = '/api';
 
 type Schemas = components['schemas'];
 
@@ -83,18 +82,9 @@ export class SessionConflictError extends Error {
 
 // --- Helpers ---
 
-// withSession adds the X-Session-Id header when a session is active.
-function withSession(init: RequestInit): RequestInit {
-  const sid = sessionManager.current();
-  if (sid === null) return init;
-  const headers = new Headers(init.headers);
-  headers.set('X-Session-Id', sid);
-  return { ...init, headers };
-}
-
 // Any non-GET request auto-starts a session before firing, so writes can't
 // silently land on main. The session/commit endpoints themselves are the
-// exception — otherwise createSession would recurse.
+// exception — otherwise creating a session would recurse.
 function pathManagesSession(path: string): boolean {
   return path.startsWith('/sessions') || path.startsWith('/commits');
 }
@@ -102,32 +92,27 @@ function pathManagesSession(path: string): boolean {
 async function ensureSessionForWrite(method: string, path: string): Promise<void> {
   if (method === 'GET') return;
   if (pathManagesSession(path)) return;
-  await sessionManager.ensureStarted();
+  await sessionStore.ensureStarted();
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   await ensureSessionForWrite(method, path);
-  const init: RequestInit = { method };
-  if (body !== undefined) {
-    init.headers = { 'Content-Type': 'application/json' };
-    init.body = JSON.stringify(body);
-  }
-  const res = await fetch(API + path, withSession(init));
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`${method} ${path} → ${res.status.toString()} ${text}`);
-  }
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+  return apiRequest<T>(method, path, { body, sessionId: sessionStore.current() });
 }
 
 async function requestVoid(method: string, path: string): Promise<void> {
   await ensureSessionForWrite(method, path);
-  const res = await fetch(API + path, withSession({ method }));
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`${method} ${path} → ${res.status.toString()} ${text}`);
-  }
+  return apiRequestVoid(method, path, { sessionId: sessionStore.current() });
+}
+
+// Adds X-Session-Id to a Headers object when a session is active. Used by
+// the raw-fetch endpoints below (blob upload, SSE streams) that don't go
+// through apiRequest.
+function sessionHeaders(headers?: HeadersInit): Headers {
+  const h = new Headers(headers);
+  const sid = sessionStore.current();
+  if (sid) h.set('X-Session-Id', sid);
+  return h;
 }
 
 // Tag a write that affects solver inputs so the session widget can count it.
@@ -182,13 +167,13 @@ export function deletePhoto(id: string): Promise<void> {
 }
 
 export async function uploadPhotoBlob(id: string, blob: Blob): Promise<void> {
-  await sessionManager.ensureStarted();
+  await sessionStore.ensureStarted();
   const path = `/photos/${encodeURIComponent(id)}/blob`;
-  const res = await fetch(API + path, withSession({
+  const res = await apiFetch(path, {
     method: 'PUT',
-    headers: { 'Content-Type': blob.type || 'image/jpeg' },
+    headers: sessionHeaders({ 'Content-Type': blob.type || 'image/jpeg' }),
     body: blob,
-  }));
+  });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`PUT ${path} → ${res.status.toString()} ${text}`);
@@ -203,15 +188,15 @@ const BLOB_PATH_RE = /^blobs\/([0-9a-f]{64})$/;
 // must supply blob_path so the hash URL is used.
 export function photoBlobUrl(photo: Pick<ApiPhoto, 'id' | 'blob_path'>): string {
   const m = photo.blob_path && BLOB_PATH_RE.exec(photo.blob_path);
-  if (m) return `${API}/blobs/${m[1]}`;
-  return `${API}/photos/${encodeURIComponent(photo.id)}/blob`;
+  if (m) return apiUrl(`/blobs/${m[1]}`);
+  return apiUrl(`/photos/${encodeURIComponent(photo.id)}/blob`);
 }
 
 // Returns null for legacy / session-pending rows without a hash-form
 // blob_path — callers must fall back to photoBlobUrl.
 export function photoPreviewUrl(photo: Pick<ApiPhoto, 'blob_path'>): string | null {
   const m = photo.blob_path && BLOB_PATH_RE.exec(photo.blob_path);
-  return m ? `${API}/blobs/${m[1]}/preview` : null;
+  return m ? apiUrl(`/blobs/${m[1]}/preview`) : null;
 }
 
 // --- Image measurements ---
@@ -365,11 +350,11 @@ async function solveStream(
   try {
     const init: RequestInit = {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: sessionHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(config),
     };
     if (signal) init.signal = signal;
-    res = await fetch(`${API}${path}`, withSession(init));
+    res = await apiFetch(path, init);
   } catch (err) {
     handleAbort(err);
     return;
@@ -420,7 +405,7 @@ export function solveJointStream(
 // solve is currently running (caller should treat as no-op). Shared across
 // solver modes since only one runs at a time.
 export async function solveStop(): Promise<void> {
-  const res = await fetch(`${API}/solve/stop`, withSession({ method: 'POST' }));
+  const res = await apiFetch('/solve/stop', { method: 'POST', headers: sessionHeaders() });
   if (!res.ok && res.status !== 404) {
     const text = await res.text().catch(() => '');
     throw new Error(`POST /solve/stop → ${res.status.toString()} ${text}`);
@@ -463,7 +448,7 @@ export async function mergeSession(id: string, body: ApiMergeRequest): Promise<A
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   };
-  const res = await fetch(`${API}/sessions/${encodeURIComponent(id)}/merge`, init);
+  const res = await apiFetch(`/sessions/${encodeURIComponent(id)}/merge`, init);
   if (res.status === 409) {
     const body = await res.json().catch(() => ({ error: 'conflict', conflicts: [] })) as {
       error: string; conflicts?: ApiEntityRef[];
@@ -503,7 +488,7 @@ export async function revertCommit(id: string, body: ApiRevertRequest): Promise<
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   };
-  const res = await fetch(`${API}/commits/${encodeURIComponent(id)}/revert`, init);
+  const res = await apiFetch(`/commits/${encodeURIComponent(id)}/revert`, init);
   if (res.status === 409) {
     const body = await res.json().catch(() => ({ error: 'conflict', conflicts: [] })) as {
       error: string; conflicts?: ApiEntityRef[];
@@ -516,4 +501,3 @@ export async function revertCommit(id: string, body: ApiRevertRequest): Promise<
   }
   return res.json() as Promise<ApiCommitRef>;
 }
-

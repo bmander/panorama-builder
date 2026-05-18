@@ -7,15 +7,10 @@
 // State is persisted in localStorage keyed by the active session id so the
 // counters survive a page refresh. When the session id changes (or clears)
 // the persisted snapshot is dropped.
-//
-// We read the session id from localStorage directly rather than importing
-// sessionManager — session.ts imports api.ts which imports this module, so
-// importing back would form a load-time cycle.
+
+import { sessionStore } from './session-store.js';
 
 const STORAGE_KEY = 'panorama:session-pending';
-// Mirror of session.ts STORAGE_KEY — kept in sync by hand to avoid the
-// circular import described above.
-const SESSION_KEY = 'panorama:session';
 
 interface PersistedState {
   sessionId: string;
@@ -34,10 +29,6 @@ export interface SessionPendingTracker {
   recordSolve(changes: number): void;
   reset(): void;
   onChange(handler: () => void): () => void;
-}
-
-function readSessionId(): string | null {
-  try { return localStorage.getItem(SESSION_KEY); } catch { return null; }
 }
 
 function readPersisted(): PersistedState | null {
@@ -63,7 +54,7 @@ function createSessionPendingTracker(): SessionPendingTracker {
 
   // Restore from a previous page-load if the session id still matches.
   const persisted = readPersisted();
-  const sid = readSessionId();
+  const sid = sessionStore.current();
   if (persisted !== null && sid !== null && persisted.sessionId === sid) {
     userPending = persisted.userPending;
     solverChanges = persisted.solverChanges;
@@ -73,7 +64,7 @@ function createSessionPendingTracker(): SessionPendingTracker {
   }
 
   function persist(): void {
-    const id = readSessionId();
+    const id = sessionStore.current();
     if (id === null) {
       writePersisted(null);
       return;

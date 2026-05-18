@@ -6,7 +6,7 @@
 
 import * as THREE from 'three';
 import * as api from './api.js';
-import { sessionManager } from './session.js';
+import { sessionStore } from './session-store.js';
 import { getElement, overlayData } from './types.js';
 import type { OverlayManager } from './overlay.js';
 
@@ -130,7 +130,7 @@ export function createSyncManager({
     // Any mutation triggers session creation. Reads (e.g. another tab
     // refreshing) won't get a session, but the moment we'd POST/PUT/DELETE
     // we want the session header injected.
-    await sessionManager.ensureStarted();
+    await sessionStore.ensureStarted();
 
     // Station lat/lng/alt are now PUT directly from the settings-panel inputs
     // and the index-map marker drag, both of which round-trip the canonical

@@ -14,7 +14,7 @@
 // after the migration has run on every deployment.
 
 import * as api from '../api.js';
-import { sessionManager } from '../session.js';
+import { sessionStore } from '../session-store.js';
 import { fetchCamGroundElev } from '../terrain/tiles.js';
 
 // Matches the terrain module's innermost ring zoom — Terrarium reliably
@@ -38,7 +38,7 @@ export async function runMigration(): Promise<MigrationCounts> {
     cpsConsidered: 0, cpsUpdated: 0, cpsFailed: 0, cpsSkippedNullAlt: 0,
   };
 
-  await sessionManager.ensureStarted();
+  await sessionStore.ensureStarted();
   console.log('[migrate-alt-msl] fetching stations…');
   const stations = await api.listStations();
   counts.stationsConsidered = stations.length;
