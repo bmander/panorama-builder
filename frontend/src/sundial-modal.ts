@@ -12,6 +12,7 @@
 import { findSunDateTimeCandidates, type SunDateTimeCandidate } from './solar.js';
 import { latLngToCameraRelativeMeters, vecToAzAlt } from './geo.js';
 import { radToDeg, wrap2Pi } from './mathx.js';
+import { attachDrag } from './dialog.js';
 import { cpLabel, getElement, type ControlPointView, type LatLng } from './types.js';
 
 export type SundialPickField = 'gnomon' | 'shadow';
@@ -61,6 +62,7 @@ export function createSundialModal(opts: CreateSundialModalOptions): SundialModa
   const clearGnomonBtn = getElement<HTMLButtonElement>('sundial-clear-gnomon');
   const clearShadowBtn = getElement<HTMLButtonElement>('sundial-clear-shadow');
   const resultEl = getElement('sundial-result');
+  attachDrag(panelEl.querySelector('.modal-header')!, panelEl);
 
   let gnomonCpId: string | null = null;
   let shadow: ShadowLocation | null = null;

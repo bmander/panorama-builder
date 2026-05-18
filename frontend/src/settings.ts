@@ -9,6 +9,7 @@
 import { HAZE_DENSITY_MAX } from './viewer.js';
 import { solarAzAlt } from './solar.js';
 import { setCurvatureEnabled, setRefractionEnabled } from './curvature.js';
+import { attachDrag } from './dialog.js';
 import { formatLocalDateTime, getElement } from './types.js';
 import type { LatLng } from './types.js';
 import type { Viewer } from './viewer.js';
@@ -101,6 +102,11 @@ export function createSettingsPanel({
     settingsPanelEl.hidden = !settingsPanelEl.hidden;
     settingsBtnEl.setAttribute('aria-expanded', String(!settingsPanelEl.hidden));
   });
+  getElement<HTMLButtonElement>('settings-close').addEventListener('click', () => {
+    settingsPanelEl.hidden = true;
+    settingsBtnEl.setAttribute('aria-expanded', 'false');
+  });
+  attachDrag(settingsPanelEl.querySelector('.modal-header')!, settingsPanelEl);
 
   hazeSliderEl.addEventListener('input', () => {
     viewer.setFogDensity(hazeSliderToDensity(parseFloat(hazeSliderEl.value)));

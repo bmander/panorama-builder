@@ -58,11 +58,6 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .sigma[hidden] { display: none; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn:disabled:hover { background: rgba(0,0,0,0.5); }
-#settings-panel { position: fixed; top: 36px; right: 8px; padding: 8px 10px;
-                  background: rgba(0,0,0,0.7); color: #fff; font: 12px monospace;
-                  border: 1px solid #fff; min-width: 200px; z-index: 1000;
-                  display: flex; flex-direction: column; gap: 8px; }
-#settings-panel[hidden] { display: none; }
 .settings-row { display: flex; flex-direction: column; gap: 4px; }
 .settings-row input[type="range"] { width: 100%; accent-color: #fff; }
 .settings-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
@@ -141,6 +136,13 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 .modal-panel .modal-header { display: flex; align-items: center; justify-content: space-between;
                              font-weight: bold; }
 .modal-panel .modal-header .btn { padding: 2px 6px; }
+.modal-panel[hidden] { display: none; }
+/* Non-modal hamburger-menu dialog: same chrome as a modal panel, free-
+   floating (no .modal backdrop), draggable by the header. */
+.modal-panel.floating { position: fixed; top: 56px; right: 8px; z-index: 1500;
+                        max-height: calc(100vh - 72px); overflow-y: auto; }
+.modal-panel.floating .modal-header { cursor: grab; user-select: none; }
+.modal-panel.floating .modal-header.dragging { cursor: grabbing; }
 .modal-field { display: flex; flex-direction: column; gap: 4px; }
 .modal-field input[type="text"],
 .modal-field input[type="datetime-local"],
@@ -287,16 +289,6 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 }
 .time-filter-year { text-align: center; opacity: 0.75; }
 
-/* Floating tool panel (not a modal — clicks outside pass through to the
-   3D canvas so the user can pick CPs/surfaces while the panel is open). */
-#sundial-panel { position: fixed; top: 56px; right: 8px; z-index: 1500;
-                 background: rgba(0,0,0,0.85); color: #fff; border: 1px solid #fff;
-                 padding: 12px; min-width: 320px; max-width: 360px; font: 12px monospace;
-                 display: flex; flex-direction: column; gap: 10px; }
-#sundial-panel[hidden] { display: none; }
-.sundial-header { display: flex; align-items: center; justify-content: space-between;
-                  font-weight: bold; }
-.sundial-header .btn { padding: 2px 6px; }
 .sundial-row { display: flex; align-items: center; gap: 8px; }
 .sundial-row-label { flex: 0 0 60px; opacity: 0.75; }
 .sundial-row-value { flex: 1; font: 12px monospace; opacity: 0.9;
@@ -323,8 +315,6 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   .btn { font-size: 16px; padding: 8px 12px; }
   #top-right { top: 12px; right: 12px; gap: 6px; flex-wrap: wrap;
                justify-content: flex-end; max-width: calc(100vw - 24px); }
-  #settings-panel { font-size: 18px; top: 56px; right: 12px;
-                    padding: 12px 16px; gap: 12px; min-width: 260px; }
   #params-panel { font-size: 16px; top: 64px; right: 12px;
                   padding: 12px 16px; gap: 12px; min-width: 300px; }
   #menu-dropdown { font-size: 18px; top: 56px; right: 12px; min-width: 220px; }

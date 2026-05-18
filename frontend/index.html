@@ -63,8 +63,8 @@
       </div>
     </div>
   </div>
-  <div id="sundial-panel" hidden>
-    <div class="sundial-header">
+  <div id="sundial-panel" class="modal-panel floating" hidden>
+    <div class="modal-header">
       <span>Sun dial</span>
       <button type="button" id="sundial-close" class="btn">✕</button>
     </div>
@@ -234,7 +234,11 @@
     </div>
   </div>
   <div id="context-menu" hidden></div>
-  <div id="settings-panel" hidden>
+  <div id="settings-panel" class="modal-panel floating" hidden>
+    <div class="modal-header">
+      <span>Display</span>
+      <button type="button" id="settings-close" class="btn">✕</button>
+    </div>
     <label class="settings-check"><input type="checkbox" id="terrain-toggle" checked> Terrain</label>
     <label class="settings-inline">Sun <input type="datetime-local" id="sun-datetime" step="60"></label>
     <div class="settings-row">
