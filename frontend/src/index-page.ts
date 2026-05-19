@@ -109,8 +109,9 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   let previewObservedCpIds: ReadonlySet<string> = new Set();
   // CP whose popup is currently open. Pinned into the visible layer so the
   // marker stays drawn after the station-preview override that surfaced it
-  // is dropped.
-  let focusedCpId: string | null = null;
+  // is dropped. Seeded from ?cp=<id> so the deep-linked CP survives the
+  // initial refresh (which would otherwise drop it under showCps=false).
+  let focusedCpId: string | null = focusIndexControlPointId;
   // Master toggle: when off, the CP layer is empty except for preview
   // overrides. Off by default — a freshly-loaded map shows stations only.
   let showCps = false;
