@@ -144,6 +144,9 @@ func (s *Server) streamSolve(w http.ResponseWriter, r *http.Request, sess *Sessi
 		sendError("writeback failed")
 		return
 	}
+	if err := s.recordSolveRMS(ctx, sess.ID, res.FinalResidualRMS); err != nil {
+		log.Printf("solver rms record: %v", err)
+	}
 
 	terminalKind := "done"
 	if stopRequested {

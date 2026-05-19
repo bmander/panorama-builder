@@ -354,6 +354,17 @@ type CPSurfaceCreate struct {
 type Commit struct {
 	CreatedAt time.Time `json:"created_at"`
 
+	// ErrorCount Number of merge-gate-flagged entities the user bypassed when
+	// saving (allow_underdetermined=true). Always populated for new
+	// merges (0 when the gate was clean); NULL on legacy commits and
+	// on revert commits.
+	ErrorCount *int `json:"error_count,omitempty"`
+
+	// FitScore final_residual_rms of the most recent solver run in the session
+	// that produced this commit. NULL when no solve ran in the
+	// session, on legacy commits, and on revert commits.
+	FitScore *float64 `json:"fit_score,omitempty"`
+
 	// ID 13-character base32 server-assigned id
 	ID      ID         `json:"id"`
 	Kind    CommitKind `json:"kind"`

@@ -78,7 +78,8 @@ h2 { font-size: 14px; color: #aaa; margin: 32px 0 8px; font-weight: normal;
 .cp-list-with-fit { grid-template-columns: 1fr auto auto auto auto; }
 .photos-list { grid-template-columns: 1fr repeat(7, auto); }
 .visible-photos-grid { grid-template-columns: auto 1fr auto; }
-.commits-list { grid-template-columns: 1fr auto auto auto; align-items: center; }
+.commits-list { grid-template-columns: 1fr auto auto auto auto auto; align-items: center; }
+.commits-list .errors-bad { color: var(--sigma-bad); }
 .cp-list li, .photos-list li, .visible-photos-grid li, .commits-list li {
     display: grid; grid-column: 1 / -1;
     grid-template-columns: subgrid;

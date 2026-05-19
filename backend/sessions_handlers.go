@@ -366,10 +366,11 @@ func (s *Server) mergeSession(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var sess Session
+	var lastSolveRMS *float64
 	err = tx.QueryRow(ctx, `
-		SELECT id, base_seq, status, next_seq FROM sessions
+		SELECT id, base_seq, status, next_seq, last_solve_rms FROM sessions
 		WHERE id=$1 FOR UPDATE`, id,
-	).Scan(&sess.ID, &sess.BaseSeq, &sess.Status, &sess.NextSeq)
+	).Scan(&sess.ID, &sess.BaseSeq, &sess.Status, &sess.NextSeq, &lastSolveRMS)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return
@@ -403,21 +404,6 @@ func (s *Server) mergeSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	plan := orderOpsForApply(ops)
-	commitID := newID()
-	var seq int64
-	var msg *string
-	if body.Message != nil && *body.Message != "" {
-		msg = body.Message
-	}
-	err = tx.QueryRow(ctx, `
-		INSERT INTO commits (id, source_session_id, parent_seq, kind, message, sign_off)
-		VALUES ($1, $2, (SELECT MAX(seq) FROM commits), 'merge', $3, $4)
-		RETURNING seq`, commitID, id, msg, signOff,
-	).Scan(&seq)
-	if err != nil {
-		writeErrorFromDB(w, err)
-		return
-	}
 
 	if err := applyPlanToMain(ctx, tx, plan); err != nil {
 		writeApplyError(w, err)
@@ -444,20 +430,35 @@ func (s *Server) mergeSession(w http.ResponseWriter, r *http.Request) {
 			After:      op.AfterJSON,
 		})
 	}
-	// σ-gate: refuse merge if any touched entity has a free-axis σ over the
-	// refuse threshold. Runs AFTER apply so we see the post-merge state
-	// (which may include σ values just written by a solve in this session).
-	// MergeRequest.allow_underdetermined bypasses.
-	if body.AllowUnderdetermined == nil || !*body.AllowUnderdetermined {
-		flagged, err := mergeGateCheck(ctx, tx, id)
-		if err != nil {
-			writeErrorFromDB(w, err)
-			return
-		}
-		if len(flagged) > 0 {
-			writeRankDeficient(w, flagged)
-			return
-		}
+	// σ-gate: count free-axis σ flags on the post-apply state for the new
+	// commit's error_count, then refuse the merge if allow_underdetermined
+	// is not set. The gate always runs so the count reflects what the user
+	// "saved anyway" via the override.
+	flagged, err := mergeGateCheck(ctx, tx, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if (body.AllowUnderdetermined == nil || !*body.AllowUnderdetermined) && len(flagged) > 0 {
+		writeRankDeficient(w, flagged)
+		return
+	}
+	errorCount := len(flagged)
+
+	commitID := newID()
+	var seq int64
+	var msg *string
+	if body.Message != nil && *body.Message != "" {
+		msg = body.Message
+	}
+	err = tx.QueryRow(ctx, `
+		INSERT INTO commits (id, source_session_id, parent_seq, kind, message, sign_off, error_count, fit_score)
+		VALUES ($1, $2, (SELECT MAX(seq) FROM commits), 'merge', $3, $4, $5, $6)
+		RETURNING seq`, commitID, id, msg, signOff, errorCount, lastSolveRMS,
+	).Scan(&seq)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
 	}
 	if err := bumpEntityCommits(ctx, tx, plan, seq); err != nil {
 		writeErrorFromDB(w, err)

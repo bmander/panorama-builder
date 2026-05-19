@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -140,7 +141,20 @@ func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg solver.Con
 		writeError(w, http.StatusInternalServerError, "writeback failed")
 		return
 	}
+	if err := s.recordSolveRMS(ctx, sess.ID, res.FinalResidualRMS); err != nil {
+		log.Printf("solver rms record: %v", err)
+	}
 	writeJSON(w, http.StatusOK, toAPISolveResult(res))
+}
+
+// recordSolveRMS stamps the session's last_solve_rms so mergeSession can
+// record it on the resulting commit's fit_score. Best-effort: a failure
+// here doesn't fail the solve.
+func (s *Server) recordSolveRMS(ctx context.Context, sessionID string, rms float64) error {
+	_, err := s.db.Exec(ctx,
+		`UPDATE sessions SET last_solve_rms = $1, updated_at = NOW() WHERE id = $2`,
+		rms, sessionID)
+	return err
 }
 
 func toAPISolveResult(r solver.Result) SolveResult {

@@ -28,7 +28,8 @@ const commitSelect = `
 	              JOIN commits r ON r.source_session_id = so.session_id
 	              WHERE r.id = c.reverts_commit_id)
 	         ELSE 0
-	       END AS op_count
+	       END AS op_count,
+	       c.error_count, c.fit_score
 	FROM commits c`
 
 func (s *Server) listCommits(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +81,8 @@ func scanCommit(row pgx.Row) (Commit, error) {
 	var c Commit
 	var kind string
 	err := row.Scan(&c.ID, &c.Seq, &c.ParentSeq, &c.SourceSessionID, &kind,
-		&c.RevertsCommitID, &c.Message, &c.SignOff, &c.CreatedAt, &c.OpCount)
+		&c.RevertsCommitID, &c.Message, &c.SignOff, &c.CreatedAt, &c.OpCount,
+		&c.ErrorCount, &c.FitScore)
 	if err != nil {
 		return c, err
 	}

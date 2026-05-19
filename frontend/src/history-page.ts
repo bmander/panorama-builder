@@ -10,7 +10,15 @@ import { openSignOffModal } from './signoff-modal.js';
 import { getElement, shortId } from './types.js';
 
 const PAGE_SIZE = 40;
-const HEADERS = ['When', 'Signer', 'Changes', ''] as const;
+const HEADERS = ['When', 'Signer', 'Changes', 'Errors', 'Fit', ''] as const;
+
+function fmtErrors(n: number | null | undefined): string {
+  return n == null ? '—' : String(n);
+}
+
+function fmtFit(v: number | null | undefined): string {
+  return v == null ? '—' : v.toExponential(2);
+}
 
 // Captured on each refresh so revert clicks pass it to the backend's
 // optimistic-concurrency check. null means we couldn't determine the head;
@@ -71,6 +79,17 @@ function renderList(commits: readonly ApiCommit[]): void {
     count.disabled = c.op_count === 0;
     count.addEventListener('click', () => { void openChangesModal(c); });
     li.appendChild(count);
+
+    const errors = document.createElement('span');
+    errors.className = 'col';
+    errors.textContent = fmtErrors(c.error_count);
+    if (c.error_count != null && c.error_count > 0) errors.classList.add('errors-bad');
+    li.appendChild(errors);
+
+    const fit = document.createElement('span');
+    fit.className = 'col';
+    fit.textContent = fmtFit(c.fit_score);
+    li.appendChild(fit);
 
     const revertBtn = document.createElement('button');
     revertBtn.type = 'button';
