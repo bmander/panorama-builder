@@ -73,11 +73,11 @@ func parseSolveConfig(w http.ResponseWriter, r *http.Request) (solver.Config, bo
 	if req.MaxIters != nil {
 		cfg.MaxIters = *req.MaxIters
 	}
-	if req.ResidualTolRad != nil {
-		cfg.ResidualTolRad = *req.ResidualTolRad
+	if req.FunctionTol != nil {
+		cfg.FunctionTol = *req.FunctionTol
 	}
-	if req.RelImproveTol != nil {
-		cfg.RelImproveTol = *req.RelImproveTol
+	if req.StepTol != nil {
+		cfg.StepTol = *req.StepTol
 	}
 	if req.KRegLambda != nil {
 		cfg.KRegLambda = *req.KRegLambda

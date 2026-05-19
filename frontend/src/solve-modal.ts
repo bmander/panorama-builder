@@ -54,11 +54,33 @@ export function createSolveModal(
   const cancelBtn = getElement<HTMLButtonElement>('solve-cancel-btn');
   const stopBtn = getElement<HTMLButtonElement>('solve-stop-btn');
   const runBtn = getElement<HTMLButtonElement>('solve-run');
-  const tolEl = getElement<HTMLInputElement>('solve-residual-tol');
-  const relImproveTolEl = getElement<HTMLInputElement>('solve-rel-improve-tol');
+  const functionTolEl = getElement<HTMLInputElement>('solve-function-tol');
+  const functionTolReadoutEl = getElement<HTMLOutputElement>('solve-function-tol-readout');
+  const stepTolEl = getElement<HTMLInputElement>('solve-step-tol');
+  const stepTolReadoutEl = getElement<HTMLOutputElement>('solve-step-tol-readout');
   const kRegLambdaEl = getElement<HTMLInputElement>('solve-k-reg-lambda');
+  const kRegLambdaReadoutEl = getElement<HTMLOutputElement>('solve-k-reg-lambda-readout');
   const positionRegLambdaEl = getElement<HTMLInputElement>('solve-position-reg-lambda');
+  const positionRegLambdaReadoutEl = getElement<HTMLOutputElement>('solve-position-reg-lambda-readout');
   const dryRunEl = getElement<HTMLInputElement>('solve-dry-run');
+
+  // Slider value is log10(param). Position-prior leftmost = off (sends 0).
+  const fromSlider = (s: HTMLInputElement): number => Math.pow(10, parseFloat(s.value));
+  const isAtMin = (s: HTMLInputElement): boolean => s.value === s.min;
+  const positionRegLambdaValue = (): number =>
+    isAtMin(positionRegLambdaEl) ? 0 : fromSlider(positionRegLambdaEl);
+  const fmtSci = (v: number): string =>
+    v === 0 ? 'off' : v.toExponential(1);
+
+  function wireReadout(s: HTMLInputElement, out: HTMLOutputElement, value: () => number): void {
+    const update = (): void => { out.textContent = fmtSci(value()); };
+    s.addEventListener('input', update);
+    update();
+  }
+  wireReadout(functionTolEl, functionTolReadoutEl, () => fromSlider(functionTolEl));
+  wireReadout(stepTolEl, stepTolReadoutEl, () => fromSlider(stepTolEl));
+  wireReadout(kRegLambdaEl, kRegLambdaReadoutEl, () => fromSlider(kRegLambdaEl));
+  wireReadout(positionRegLambdaEl, positionRegLambdaReadoutEl, positionRegLambdaValue);
   const progressEl = getElement('solve-progress');
   const statusEl = getElement('solve-status');
   const chartEl = getElement<HTMLCanvasElement>('solve-loss-chart');
@@ -68,8 +90,8 @@ export function createSolveModal(
   const chart: ChartState = { iters: [], rms: [], logMin: 0, logMax: 0 };
 
   function setRunning(running: boolean): void {
-    tolEl.disabled = running;
-    relImproveTolEl.disabled = running;
+    functionTolEl.disabled = running;
+    stepTolEl.disabled = running;
     kRegLambdaEl.disabled = running;
     positionRegLambdaEl.disabled = running;
     dryRunEl.disabled = running;
@@ -105,7 +127,7 @@ export function createSolveModal(
     // Clear the disabled latch left over from the previous run's Stop click.
     stopBtn.disabled = false;
     modalEl.hidden = false;
-    tolEl.focus();
+    functionTolEl.focus();
   }
 
   closeXBtn.addEventListener('click', close);
@@ -202,35 +224,14 @@ export function createSolveModal(
   runBtn.addEventListener('click', () => {
     if (activeAbort || !activeRun) return;
     const run = activeRun;
-    const tol = parseFloat(tolEl.value);
-    if (!Number.isFinite(tol) || tol <= 0) { tolEl.focus(); return; }
-    const relImproveTol = parseFloat(relImproveTolEl.value);
-    if (!Number.isFinite(relImproveTol) || relImproveTol <= 0) { relImproveTolEl.focus(); return; }
-    // Blank ⇒ omit so the backend default (0.05) applies. Any finite number
-    // (including 0 / negative) passes through; the backend interprets 0 as
-    // "use default" and negative as "disabled" per its existing contract.
-    const kRegRaw = kRegLambdaEl.value.trim();
-    let kRegLambda: number | null = null;
-    if (kRegRaw !== '') {
-      const parsed = parseFloat(kRegRaw);
-      if (!Number.isFinite(parsed)) { kRegLambdaEl.focus(); return; }
-      kRegLambda = parsed;
-    }
-    const positionRegRaw = positionRegLambdaEl.value.trim();
-    let positionRegLambda: number | null = null;
-    if (positionRegRaw !== '') {
-      const parsed = parseFloat(positionRegRaw);
-      if (!Number.isFinite(parsed) || parsed < 0) { positionRegLambdaEl.focus(); return; }
-      positionRegLambda = parsed;
-    }
     const dryRun = dryRunEl.checked;
     const base: api.SolveConfig = {
-      residual_tol_rad: tol,
-      rel_improve_tol: relImproveTol,
+      function_tol: fromSlider(functionTolEl),
+      step_tol: fromSlider(stepTolEl),
+      k_reg_lambda: fromSlider(kRegLambdaEl),
+      position_reg_lambda: positionRegLambdaValue(),
       dry_run: dryRun,
     };
-    if (kRegLambda !== null) base.k_reg_lambda = kRegLambda;
-    if (positionRegLambda !== null) base.position_reg_lambda = positionRegLambda;
 
     setRunning(true);
     progressEl.hidden = false;

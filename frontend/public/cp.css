@@ -4,8 +4,8 @@
   --sigma-bad:     #d06060;
   --sigma-unknown: #707070;
 }
-html, body { margin: 0; min-height: 100%; background: #111; color: #fff;
-              font: 14px monospace; }
+html, body { margin: 0; min-height: 100%; height: auto; overflow: visible;
+              background: #111; color: #fff; font: 14px monospace; }
 main { max-width: 640px; margin: 0 auto; padding: 32px; }
 .back { color: #5080ff; text-decoration: none; font-size: 12px; }
 .back:hover { text-decoration: underline; }
@@ -71,18 +71,22 @@ h2 { font-size: 14px; color: #aaa; margin: 32px 0 8px; font-weight: normal;
                              border: 1px solid rgba(255,255,255,0.6);
                              border-radius: 50%;
                              pointer-events: none; }
-.cp-list, .photos-list, .visible-photos-grid {
+.cp-list, .photos-list, .visible-photos-grid, .commits-list {
     list-style: none; margin: 0; padding: 0;
     display: grid; gap: 4px 16px; font-size: 12px; }
 .cp-list { grid-template-columns: 1fr auto auto; }
 .cp-list-with-fit { grid-template-columns: 1fr auto auto auto auto; }
 .photos-list { grid-template-columns: 1fr repeat(7, auto); }
 .visible-photos-grid { grid-template-columns: auto 1fr auto; }
-.cp-list li, .photos-list li, .visible-photos-grid li {
+.commits-list { grid-template-columns: 1fr auto auto auto; align-items: center; }
+.cp-list li, .photos-list li, .visible-photos-grid li, .commits-list li {
     display: grid; grid-column: 1 / -1;
     grid-template-columns: subgrid;
     align-items: baseline; padding: 6px 8px;
     background: rgba(255,255,255,0.04); }
+.commits-list li { align-items: center; }
+.commits-pager { display: flex; gap: 8px; margin-top: 16px; }
+.commits-pager a[hidden] { display: none; }
 .cp-list a.desc, .photos-list a.desc { color: #5080ff; text-decoration: none;
                                         word-break: break-word; }
 .cp-list a.desc:hover, .photos-list a.desc:hover { text-decoration: underline; }

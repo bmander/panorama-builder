@@ -355,14 +355,17 @@ type Commit struct {
 	CreatedAt time.Time `json:"created_at"`
 
 	// ID 13-character base32 server-assigned id
-	ID              ID         `json:"id"`
-	Kind            CommitKind `json:"kind"`
-	Message         *string    `json:"message,omitempty"`
-	ParentSeq       *int64     `json:"parent_seq,omitempty"`
-	RevertsCommitID *ID        `json:"reverts_commit_id,omitempty"`
-	Seq             int64      `json:"seq"`
-	SignOff         string     `json:"sign_off"`
-	SourceSessionID *ID        `json:"source_session_id,omitempty"`
+	ID      ID         `json:"id"`
+	Kind    CommitKind `json:"kind"`
+	Message *string    `json:"message,omitempty"`
+
+	// OpCount number of entity changes in this commit (for revert commits, the count from the commit being reverted)
+	OpCount         int    `json:"op_count"`
+	ParentSeq       *int64 `json:"parent_seq,omitempty"`
+	RevertsCommitID *ID    `json:"reverts_commit_id,omitempty"`
+	Seq             int64  `json:"seq"`
+	SignOff         string `json:"sign_off"`
+	SourceSessionID *ID    `json:"source_session_id,omitempty"`
 }
 
 // CommitKind defines model for Commit.Kind.
@@ -995,6 +998,9 @@ type SolveConfig struct {
 	// diff that would have been applied. Useful for diagnosis.
 	DryRun *bool `json:"dry_run,omitempty"`
 
+	// FunctionTol Relative cost-reduction convergence threshold — maps to Ceres options.function_tolerance. Default 1e-4 = stop when each iteration reduces total cost by less than 0.01 %.
+	FunctionTol *float64 `json:"function_tol,omitempty"`
+
 	// KRegLambda Tikhonov regularization weight on photo dist_k1 / dist_k2 lens-distortion slots (default 0.05; pass any negative value to disable
 	KRegLambda *float64 `json:"k_reg_lambda,omitempty"`
 
@@ -1004,11 +1010,8 @@ type SolveConfig struct {
 	// PositionRegLambda Tikhonov prior on each unlocked station's ENU offset (meters) from its user-supplied lat/lng. Each axis adds residual √λ·offset_m. Default 0 (off). Useful range ~1e-8 to 1e-3; λ=(σ_residual_rad/σ_position_m)².
 	PositionRegLambda *float64 `json:"position_reg_lambda,omitempty"`
 
-	// RelImproveTol per-iteration fractional reduction in residual RMS below which the run is considered converged (default 1e-4); push smaller for tighter convergence at the cost of more iterations
-	RelImproveTol *float64 `json:"rel_improve_tol,omitempty"`
-
-	// ResidualTolRad per-residual-RMS convergence threshold
-	ResidualTolRad *float64 `json:"residual_tol_rad,omitempty"`
+	// StepTol Relative state-vector step-size convergence threshold — maps to Ceres options.parameter_tolerance. Default 1e-7.
+	StepTol *float64 `json:"step_tol,omitempty"`
 }
 
 // SolveResult defines model for SolveResult.

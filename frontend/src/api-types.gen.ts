@@ -1524,14 +1524,14 @@ export interface components {
             max_iters?: number;
             /**
              * Format: double
-             * @description per-residual-RMS convergence threshold
+             * @description Relative cost-reduction convergence threshold — maps to Ceres options.function_tolerance. Default 1e-4 = stop when each iteration reduces total cost by less than 0.01 %.
              */
-            residual_tol_rad?: number;
+            function_tol?: number;
             /**
              * Format: double
-             * @description per-iteration fractional reduction in residual RMS below which the run is considered converged (default 1e-4); push smaller for tighter convergence at the cost of more iterations
+             * @description Relative state-vector step-size convergence threshold — maps to Ceres options.parameter_tolerance. Default 1e-7.
              */
-            rel_improve_tol?: number;
+            step_tol?: number;
             /**
              * Format: double
              * @description Tikhonov regularization weight on photo dist_k1 / dist_k2 lens-distortion slots (default 0.05; pass any negative value to disable
@@ -1694,6 +1694,8 @@ export interface components {
             sign_off: string;
             /** Format: date-time */
             created_at: string;
+            /** @description number of entity changes in this commit (for revert commits, the count from the commit being reverted) */
+            op_count: number;
         };
         CommitWithOps: {
             commit: components["schemas"]["Commit"];

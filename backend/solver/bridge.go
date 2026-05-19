@@ -316,7 +316,7 @@ func solveBridge(c *solveContext) (Result, error) {
 		k_reg_lambda:            C.double(c.cfg.KRegLambda),
 		position_reg_lambda:     C.double(c.cfg.PositionRegLambda),
 		max_iters:               C.int32_t(c.cfg.MaxIters),
-		function_tol:            C.double(c.cfg.ResidualTolRad),
+		function_tol:            C.double(c.cfg.FunctionTol),
 		parameter_tol:           C.double(c.cfg.StepTol),
 		out_iterations:          (*C.int32_t)(unsafe.Pointer(&outIters)),
 		out_initial_cost:        (*C.double)(unsafe.Pointer(&outInitCost)),

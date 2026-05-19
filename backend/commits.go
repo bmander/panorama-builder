@@ -12,6 +12,24 @@ import (
 // Commit, CommitWithOps, CommitRef, ConflictsResponse — all generated into
 // types.gen.go from openapi.yaml. We use those directly.
 
+// commitSelect is the column list shared by listCommits and getCommit. The
+// op_count CASE branches: for merge commits, count the source session's ops;
+// for revert commits (no own session), count the reverted commit's ops, since
+// a revert's effect is the inverse of that set.
+const commitSelect = `
+	SELECT c.id, c.seq, c.parent_seq, c.source_session_id, c.kind,
+	       c.reverts_commit_id, c.message, c.sign_off, c.created_at,
+	       CASE
+	         WHEN c.source_session_id IS NOT NULL THEN
+	           (SELECT COUNT(*) FROM session_ops WHERE session_id = c.source_session_id)
+	         WHEN c.reverts_commit_id IS NOT NULL THEN
+	           (SELECT COUNT(*) FROM session_ops so
+	              JOIN commits r ON r.source_session_id = so.session_id
+	              WHERE r.id = c.reverts_commit_id)
+	         ELSE 0
+	       END AS op_count
+	FROM commits c`
+
 func (s *Server) listCommits(w http.ResponseWriter, r *http.Request) {
 	limit := 50
 	if v := r.URL.Query().Get("limit"); v != "" {
@@ -25,14 +43,13 @@ func (s *Server) listCommits(w http.ResponseWriter, r *http.Request) {
 			beforeSeq = n
 		}
 	}
-	q := `SELECT id, seq, parent_seq, source_session_id, kind, reverts_commit_id, message, sign_off, created_at
-	      FROM commits`
+	q := commitSelect
 	args := []any{}
 	if beforeSeq > 0 {
-		q += ` WHERE seq < $1`
+		q += ` WHERE c.seq < $1`
 		args = append(args, beforeSeq)
 	}
-	q += ` ORDER BY seq DESC LIMIT $` + strconv.Itoa(len(args)+1)
+	q += ` ORDER BY c.seq DESC LIMIT $` + strconv.Itoa(len(args)+1)
 	args = append(args, limit)
 	rows, err := s.db.Query(r.Context(), q, args...)
 	if err != nil {
@@ -62,7 +79,7 @@ func scanCommit(row pgx.Row) (Commit, error) {
 	var c Commit
 	var kind string
 	err := row.Scan(&c.ID, &c.Seq, &c.ParentSeq, &c.SourceSessionID, &kind,
-		&c.RevertsCommitID, &c.Message, &c.SignOff, &c.CreatedAt)
+		&c.RevertsCommitID, &c.Message, &c.SignOff, &c.CreatedAt, &c.OpCount)
 	if err != nil {
 		return c, err
 	}
@@ -75,9 +92,7 @@ func (s *Server) getCommit(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		return
 	}
-	c, err := scanCommit(s.db.QueryRow(r.Context(), `
-		SELECT id, seq, parent_seq, source_session_id, kind, reverts_commit_id, message, sign_off, created_at
-		FROM commits WHERE id=$1`, id))
+	c, err := scanCommit(s.db.QueryRow(r.Context(), commitSelect+` WHERE c.id=$1`, id))
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return

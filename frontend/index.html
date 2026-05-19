@@ -211,18 +211,26 @@
         <span id="solve-title">Solve</span>
         <button type="button" id="solve-close" class="btn">✕</button>
       </div>
-      <label class="modal-field" title="Per-residual RMS angular error threshold, in radians. When the average per-observation residual drops below this, the solver stops as converged. Default 1e-4 ≈ 20 arcsec.">Residual tolerance (rad)
-        <input type="text" id="solve-residual-tol" value="1e-4">
-      </label>
-      <label class="modal-field" title="Per-iteration fractional reduction in residual RMS below which the run is considered converged. Push smaller (e.g. 1e-6) for tighter convergence at the cost of more iterations. Default 1e-4 = stop when each iteration improves by less than 0.01%.">Convergence tolerance (relative)
-        <input type="text" id="solve-rel-improve-tol" value="1e-4">
-      </label>
-      <label class="modal-field" title="Tikhonov regularization weight on each photo's dist_k1 / dist_k2 lens-distortion slots. Pulls weakly-observed coefficients toward zero so they don't run away on narrow-FOV photos. Higher = stronger pull. 0 falls back to the default 0.05; enter a negative number to disable.">k1/k2 regularization (λ)
-        <input type="text" id="solve-k-reg-lambda" value="0.05">
-      </label>
-      <label class="modal-field" title="Tikhonov prior pulling each unlocked station back toward its user-supplied lat/lng (and alt). Each station axis adds a residual √λ·offset_m, so larger λ makes the solver demand stronger observational evidence before moving a station. 0 = no prior (default). λ = (σ_residual_rad / σ_position_m)²; try 1e-6 for a soft prior, 1e-4 for a strong one.">Position prior (λ)
-        <input type="text" id="solve-position-reg-lambda" value="0">
-      </label>
+      <div class="settings-row solve-slider-row">
+        <label for="solve-function-tol" title="Stops the solver when per-iteration relative cost reduction falls below this. Default 1e-4 = stop when each iteration reduces total cost by less than 0.01%. Smaller = tighter convergence at the cost of more iterations.">Cost-reduction tolerance</label>
+        <input type="range" id="solve-function-tol" min="-7" max="-2" step="0.1" value="-4">
+        <output for="solve-function-tol" id="solve-function-tol-readout" class="solve-slider-readout">1.0e-4</output>
+      </div>
+      <div class="settings-row solve-slider-row">
+        <label for="solve-step-tol" title="Stops the solver when the relative state-vector step falls below this — i.e. when per-iteration parameter updates become negligibly small. Default 1e-7. Smaller = tighter convergence at the cost of more iterations.">Step-size tolerance</label>
+        <input type="range" id="solve-step-tol" min="-12" max="-4" step="0.1" value="-7">
+        <output for="solve-step-tol" id="solve-step-tol-readout" class="solve-slider-readout">1.0e-7</output>
+      </div>
+      <div class="settings-row solve-slider-row">
+        <label for="solve-k-reg-lambda" title="Tikhonov regularization weight on each photo's dist_k1 / dist_k2 lens-distortion slots. Pulls weakly-observed coefficients toward zero so they don't run away on narrow-FOV photos. Higher = stronger pull. Default 0.05.">k1/k2 regularization (λ)</label>
+        <input type="range" id="solve-k-reg-lambda" min="-4" max="0" step="0.1" value="-1.3">
+        <output for="solve-k-reg-lambda" id="solve-k-reg-lambda-readout" class="solve-slider-readout">5.0e-2</output>
+      </div>
+      <div class="settings-row solve-slider-row">
+        <label for="solve-position-reg-lambda" title="Tikhonov prior pulling each unlocked station back toward its user-supplied lat/lng (and alt). Each station axis adds a residual √λ·offset_m, so larger λ makes the solver demand stronger observational evidence before moving a station. λ = (σ_residual_rad / σ_position_m)²; try 1e-6 for a soft prior, 1e-4 for a strong one. Leftmost = off.">Position prior (λ)</label>
+        <input type="range" id="solve-position-reg-lambda" min="-9" max="-2" step="0.1" value="-9">
+        <output for="solve-position-reg-lambda" id="solve-position-reg-lambda-readout" class="solve-slider-readout">off</output>
+      </div>
       <label class="settings-check"><input type="checkbox" id="solve-dry-run"> Dry run (don't write to DB)</label>
       <div id="solve-progress" hidden>
         <div id="solve-status"></div>

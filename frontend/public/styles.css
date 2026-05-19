@@ -171,6 +171,15 @@ label.menu-item { display: flex; align-items: center; gap: 6px; }
                        color: #fff; cursor: pointer; font: 14px monospace; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 #solve-modal .modal-panel { width: 480px; }
+/* Slider rows in the solve modal lay out as [label / slider+readout],
+   with the readout right-aligned in a fixed-width column so values
+   don't jitter as the slider moves. */
+.solve-slider-row { display: grid; grid-template-columns: 1fr auto;
+                    column-gap: 8px; row-gap: 4px; align-items: center; }
+.solve-slider-row > label { grid-column: 1 / -1; }
+.solve-slider-row input[type="range"] { width: 100%; accent-color: #fff; }
+.solve-slider-readout { font: 12px monospace; color: #ddd; min-width: 5ch;
+                        text-align: right; }
 #solve-progress { display: flex; flex-direction: column; gap: 6px; }
 #solve-progress[hidden] { display: none; }
 #solve-status { font: 12px monospace; color: #ddd; }
