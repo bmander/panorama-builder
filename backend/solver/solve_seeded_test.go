@@ -125,19 +125,26 @@ func TestSolveJointWithSeedRecoversNullCP(t *testing.T) {
 }
 
 func TestSolveJointWithSeedDoesNotPerturbWellLocatedNeighbors(t *testing.T) {
-	// Two CPs: cp1 starts at the station centroid (simulating the null-seed
-	// case), cp2 starts at its truth. With pre-solve handling cp1 in
-	// isolation, the joint phase sees both CPs already near-truth and should
-	// leave cp2 essentially untouched. (Without pre-solve, the early joint
-	// iterations would tug cp2 around while chasing cp1.)
+	// Three CPs: cp1 starts at the station centroid (simulating the null-seed
+	// case), cp2 and cp3 start at their truth. With pre-solve handling cp1
+	// in isolation, the joint phase sees the CPs already near-truth and
+	// should leave cp2 essentially untouched. (Without pre-solve, the early
+	// joint iterations would tug cp2 around while chasing cp1.)
+	//
+	// A third well-located CP is needed because the per-station auto-lock
+	// policy requires ≥3 matched obs per station to leave lat/lng free; with
+	// only 2 CPs each station would auto-lock at its perturbed position and
+	// the test's nudge-and-recover dynamic would be neutralized.
 	cp1Lat, cp1Lng, cp1Alt := solver.ENUToLatLngAlt(75, 250, 5, gaugeLat, gaugeLng, 0)
 	cp2Lat, cp2Lng, cp2Alt := solver.ENUToLatLngAlt(40, 240, 0, gaugeLat, gaugeLng, 0)
+	cp3Lat, cp3Lng, cp3Alt := solver.ENUToLatLngAlt(-30, 260, 0, gaugeLat, gaugeLng, 0)
 	w := fourStationWorld(
 		[]synth.TrueCP{
 			{ID: "cp1", EstLat: cp1Lat, EstLng: cp1Lng, EstAlt: cp1Alt},
 			{ID: "cp2", EstLat: cp2Lat, EstLng: cp2Lng, EstAlt: cp2Alt},
+			{ID: "cp3", EstLat: cp3Lat, EstLng: cp3Lng, EstAlt: cp3Alt},
 		},
-		[][]int{{0, 1, 2, 3}, {0, 1, 2, 3}},
+		[][]int{{0, 1, 2, 3}, {0, 1, 2, 3}, {0, 1, 2, 3}},
 	)
 	prob, err := synth.Build(w)
 	if err != nil {

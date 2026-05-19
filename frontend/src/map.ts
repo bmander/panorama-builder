@@ -29,6 +29,10 @@ export interface StationMarker {
   lockLat: boolean;
   lockLng: boolean;
   lockAlt: boolean;
+  // Derived auto-lock flags — when set, the popup checkbox is forced
+  // checked+disabled regardless of the manual lock state.
+  autoLockPos: boolean;
+  autoLockAlt: boolean;
   // 1σ position bounds (meters) from the last solve; null when no solve
   // has touched this axis.
   sigmaLat: number | null;
@@ -432,11 +436,19 @@ export function createMapView({
   // checkboxes use a shared `popup-lock` class so they can be wired
   // generically by wirePopupLock(); the `data-lock` attribute names which
   // patch field to populate.
-  function paramRowsHtml(alt: number | null, lockPos: boolean, lockAlt: boolean): string {
-    const ck = (checked: boolean): string => checked ? ' checked' : '';
+  function paramRowsHtml(
+    alt: number | null, lockPos: boolean, lockAlt: boolean,
+    autoLockPos = false, autoLockAlt = false,
+  ): string {
+    const attrs = (checked: boolean, auto: boolean): string => {
+      const parts: string[] = [];
+      if (checked || auto) parts.push('checked');
+      if (auto) parts.push('disabled');
+      return parts.length ? ' ' + parts.join(' ') : '';
+    };
     return `<div class="popup-alt">alt ${escapeHtml(fmtAlt(alt))}</div>`
-      + `<label class="popup-lock-row"><input type="checkbox" class="popup-lock" data-lock="pos"${ck(lockPos)}> lock location</label>`
-      + `<label class="popup-lock-row"><input type="checkbox" class="popup-lock" data-lock="alt"${ck(lockAlt)}> lock elevation</label>`;
+      + `<label class="popup-lock-row"><input type="checkbox" class="popup-lock" data-lock="pos"${attrs(lockPos, autoLockPos)}> lock location</label>`
+      + `<label class="popup-lock-row"><input type="checkbox" class="popup-lock" data-lock="alt"${attrs(lockAlt, autoLockAlt)}> lock elevation</label>`;
   }
   // 2-σ ellipse from the 2×2 horizontal-position covariance. The principal
   // axis aligns with cov's larger eigenvector when present; with cov=0 it
@@ -685,7 +697,7 @@ export function createMapView({
 
   function openStationPopup(p: StationMarker): void {
     const popupHtml = `<span class="name">${escapeHtml(p.label)}</span>`
-      + paramRowsHtml(p.alt, p.lockLat && p.lockLng, p.lockAlt)
+      + paramRowsHtml(p.alt, p.lockLat && p.lockLng, p.lockAlt, p.autoLockPos, p.autoLockAlt)
       + goButtonHtml('Go to station →')
       + goButtonHtml('Move', 'move');
     // openOn auto-closes any prior popup; its 'remove' event clears the

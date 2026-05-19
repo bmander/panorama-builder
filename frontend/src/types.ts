@@ -62,6 +62,10 @@ export interface ImageMeasurementBearing {
   // Server-assigned id; matches the row in the API's image_measurements table.
   readonly id: string;
   readonly handle: THREE.Mesh;
+  // Photo overlay id that owns this measurement. Surfaced here so callers
+  // (auto-lock counters, etc.) don't have to walk the scene-graph parent
+  // pointer themselves.
+  readonly photoId: string;
   readonly az: number;
   readonly uv: { readonly u: number; readonly v: number };
   // FK to the linked control point. Sync layer reads this when PUTing

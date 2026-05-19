@@ -257,6 +257,10 @@ func TestBridgeSingleStationFocus(t *testing.T) {
 // Constructed by hand (rather than via synth.Build, which requires every
 // CP to be visible in every photo of its VisibleIn list) so the s2 station
 // can have no locks but still hold a sane initial pose.
+//
+// Three observations on s2's photo keep s2 unlocked under the per-station
+// auto-lock policy (lat/lng threshold = 3); the gauge error fires before
+// the solver evaluates them, so their u/v need not project to real bearings.
 func TestBridgeUnderconstrainedGauge(t *testing.T) {
 	prob := solver.Problem{
 		Stations: []solver.Station{
@@ -272,6 +276,13 @@ func TestBridgeUnderconstrainedGauge(t *testing.T) {
 		},
 		ControlPoints: []solver.ControlPoint{
 			{ID: "cp1", EstLat: gaugeLat + 0.0001, EstLng: gaugeLng},
+			{ID: "cp2", EstLat: gaugeLat + 0.0002, EstLng: gaugeLng},
+			{ID: "cp3", EstLat: gaugeLat + 0.0003, EstLng: gaugeLng},
+		},
+		Observations: []solver.Observation{
+			{ID: "o1", PhotoID: "p2", ControlPointID: "cp1", U: 0.5, V: 0.5},
+			{ID: "o2", PhotoID: "p2", ControlPointID: "cp2", U: 0.5, V: 0.5},
+			{ID: "o3", PhotoID: "p2", ControlPointID: "cp3", U: 0.5, V: 0.5},
 		},
 	}
 	_, err := solver.Solve(prob, solver.Config{Mode: solver.ModeJoint})

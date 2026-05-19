@@ -5,12 +5,14 @@
 import type { ApiHydratedStation } from '../api.js';
 import type { StationScene } from './scene.js';
 import type { StationDataController } from './data-controller.js';
+import type { StationPanels } from './panels.js';
 import type { StationRouteState } from './route-state.js';
 import type { SundialController } from './sundial-controller.js';
 
 export interface WireStationEventsOptions {
   readonly scene: StationScene;
   readonly data: StationDataController;
+  readonly panels: StationPanels;
   readonly route: StationRouteState;
   readonly sundial: SundialController;
   readonly pushPose: () => void;
@@ -18,19 +20,22 @@ export interface WireStationEventsOptions {
 }
 
 export function wireStationEvents(opts: WireStationEventsOptions): void {
-  const { scene, data, route, sundial, pushPose, applyStation } = opts;
+  const { scene, data, panels, route, sundial, pushPose, applyStation } = opts;
   const { viewer, overlays, worldCamera, baker } = scene;
   const { sync } = data;
 
   // Overlay mutations: render + bake-dirty + CP-visibility refresh + sync.
-  // setCallbacks is attached here (not inside overlays itself) so that sync
-  // and data.refreshControlPointColumns are already wired up by the time
-  // the first batch fires.
+  // Panel refresh piggybacks on the same signal so auto-lock state tracks
+  // the matched-obs count without its own event channel. setCallbacks is
+  // attached here (not inside overlays itself) so sync and
+  // data.refreshControlPointColumns are wired up before the first batch.
   overlays.setCallbacks({
     onMutate: () => {
       viewer.requestRender();
       baker.markDirty();
       data.refreshControlPointColumns();
+      panels.stationFields.refresh();
+      panels.photoHud.refresh();
       sync.flush();
     },
     onSelectionChange: () => {

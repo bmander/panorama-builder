@@ -202,6 +202,13 @@ label.menu-item { display: flex; align-items: center; gap: 6px; }
 .photo-hud-row .lock-check { display: flex; align-items: center; gap: 4px;
                               cursor: pointer; flex: 0 0 auto; }
 .photo-hud-row .lock-check input { margin: 0; }
+
+/* Auto-locked checkbox affordance: fade the row and remove the
+   pointer-cursor so the disabled+checked state reads as "computer says
+   no" rather than greyed-out-and-broken. */
+.settings-check:has(input:disabled),
+.popup-lock-row:has(input:disabled),
+.photo-hud-row .lock-check:has(input:disabled) { cursor: default; opacity: 0.55; }
 #photo-hud-opacity { flex: 1; accent-color: #fff; }
 .btn.danger { color: #ff8080; border-color: #ff8080; }
 .btn.danger:hover { background: rgba(255,80,80,0.2); }

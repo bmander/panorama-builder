@@ -93,6 +93,11 @@ export interface MeasurementStore {
   setControlPoint(measurement: THREE.Mesh, controlPointId: string | null): void;
   deleteSelected(): void;
   list(): ImageMeasurementBearing[];
+  // Count CP-matched measurements (controlPointId != null) without
+  // building the full per-measurement bearing list — used by the
+  // auto-lock derivation which only needs raw counts.
+  matchedCountByPhoto(): Map<string, number>;
+  matchedCount(): number;
   getById(id: string): THREE.Mesh | null;
   findOnOverlayByCpId(overlay: THREE.Group, controlPointId: string): THREE.Mesh | null;
   getSelected(): THREE.Mesh | null;
@@ -254,6 +259,7 @@ export function createMeasurementStore(
           result.push({
             id: pData.id,
             handle: poi,
+            photoId: data.id,
             az: azFromLocal(o, poi.position.x, poi.position.y, poi.position.z),
             uv: { ...pData.uv },
             controlPointId: pData.controlPointId,
@@ -262,6 +268,30 @@ export function createMeasurementStore(
         }
       }
       return result;
+    },
+    matchedCountByPhoto() {
+      const out = new Map<string, number>();
+      for (const child of overlaysGroup.children) {
+        const data = overlayData(child as THREE.Group);
+        if (!data.pois || data.pois.length === 0) continue;
+        let n = 0;
+        for (const poi of data.pois) {
+          if (poiData(poi).controlPointId !== null) n++;
+        }
+        if (n > 0) out.set(data.id, n);
+      }
+      return out;
+    },
+    matchedCount() {
+      let n = 0;
+      for (const child of overlaysGroup.children) {
+        const data = overlayData(child as THREE.Group);
+        if (!data.pois) continue;
+        for (const poi of data.pois) {
+          if (poiData(poi).controlPointId !== null) n++;
+        }
+      }
+      return n;
     },
     getById(id) {
       for (const child of overlaysGroup.children) {

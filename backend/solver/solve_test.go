@@ -294,7 +294,17 @@ func TestSolveControlPointRecovery(t *testing.T) {
 }
 
 func TestSolveJointGaugeRequired(t *testing.T) {
-	cpLat, cpLng := offsetLatLng(0, 50)
+	// Three CPs visible in both photos → 3 matched obs per station, enough
+	// to keep s2 unlocked under the per-station auto-lock policy (lat/lng
+	// threshold = 3). With s2 unlocked and only s1 fully locked, joint mode
+	// lacks the second gauge anchor.
+	// Far enough north (and not too far east/west) that all three CPs fall
+	// inside s2's photo FOV too — s2 sits ~37 m east of s1, so a CP at
+	// (e=-20, n=50) would project just outside p2's ±45° horizontal cone.
+	cp1Lat, cp1Lng := offsetLatLng(0, 100)
+	cp2Lat, cp2Lng := offsetLatLng(20, 100)
+	cp3Lat, cp3Lng := offsetLatLng(-20, 100)
+	lockAll := solver.CPLocks{EstLat: true, EstLng: true, EstAlt: true}
 	w := synth.World{
 		Stations: []synth.TrueStation{
 			// Only one station fully locked → gauge underconstrained for joint mode.
@@ -306,10 +316,11 @@ func TestSolveJointGaugeRequired(t *testing.T) {
 			{ID: "p2", StationID: "s2", Pose: basicPose(0)},
 		},
 		ControlPoints: []synth.TrueCP{
-			{ID: "cp1", EstLat: cpLat, EstLng: cpLng,
-				Locks: solver.CPLocks{EstLat: true, EstLng: true, EstAlt: true}},
+			{ID: "cp1", EstLat: cp1Lat, EstLng: cp1Lng, Locks: lockAll},
+			{ID: "cp2", EstLat: cp2Lat, EstLng: cp2Lng, Locks: lockAll},
+			{ID: "cp3", EstLat: cp3Lat, EstLng: cp3Lng, Locks: lockAll},
 		},
-		VisibleIn: [][]int{{0, 1}},
+		VisibleIn: [][]int{{0, 1}, {0, 1}, {0, 1}},
 	}
 	prob, err := synth.Build(w)
 	if err != nil {

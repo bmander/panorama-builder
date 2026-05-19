@@ -19,6 +19,7 @@ import {
   cpLifespanFromApi, getElement, lifespanOverlapsRange,
   nullableIntervalOverlapsRange, stationHref,
 } from './types.js';
+import { stationAutoLockFor } from './auto-lock.js';
 import { createSessionPanel } from './session-panel.js';
 import type { Cone, ControlPointView, LatLng } from './types.js';
 
@@ -101,6 +102,9 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   interface CachedStation {
     readonly station: ApiStation;
     readonly cones: readonly Cone[];
+    // Matched (control_point_id != null) image-measurement count across
+    // this station's photos — feeds the popup's per-station auto-lock.
+    readonly matchedObsCount: number;
   }
   const stationsById = new Map<string, CachedStation>();
   // CPs observed by the currently-previewed station. These bypass the time
@@ -145,9 +149,10 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   function refreshStationMarkers(): void {
     const { startMs, endMs } = timeFilter.getRange();
     const markers = [];
-    for (const { station: st, cones } of stationsById.values()) {
+    for (const { station: st, cones, matchedObsCount } of stationsById.values()) {
       const w = st.derived_window;
       if (!nullableIntervalOverlapsRange(w.captured_at_lower, w.captured_at_upper, startMs, endMs)) continue;
+      const auto = stationAutoLockFor(matchedObsCount);
       markers.push({
         id: st.id,
         latlng: { lat: st.lat, lng: st.lng },
@@ -156,6 +161,8 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
         lockLat: st.lock_lat,
         lockLng: st.lock_lng,
         lockAlt: st.lock_alt,
+        autoLockPos: auto.lat && auto.lng,
+        autoLockAlt: auto.alt,
         sigmaLat: st.sigma_lat ?? null,
         sigmaLng: st.sigma_lng ?? null,
         covLatLng: st.cov_lat_lng ?? null,
@@ -203,7 +210,13 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
       const cones: Cone[] = h
         ? h.photos.map(p => ({ azL: p.photo_az - p.size_rad / 2, azR: p.photo_az + p.size_rad / 2 }))
         : [];
-      stationsById.set(st.id, { station: st, cones });
+      let matchedObsCount = 0;
+      if (h) {
+        for (const im of h.image_measurements) {
+          if (im.control_point_id !== null) matchedObsCount++;
+        }
+      }
+      stationsById.set(st.id, { station: st, cones, matchedObsCount });
     });
     refreshStationMarkers();
   }

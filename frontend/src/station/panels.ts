@@ -33,6 +33,8 @@ import { createStationNavigation } from '../station-navigation.js';
 import type { StationNavigation } from '../station-navigation.js';
 import { createStationFields } from '../station-fields.js';
 import type { StationFieldsHandle } from '../station-fields.js';
+import { photoAutoLockFor, stationAutoLockFor } from '../auto-lock.js';
+import type { PhotoAutoLock, StationAutoLock } from '../auto-lock.js';
 import { attachSolveActions } from '../solve-actions.js';
 import type { StationScene } from './scene.js';
 import type { StationDataController } from './data-controller.js';
@@ -134,7 +136,18 @@ export function createStationPanels(opts: CreateStationPanelsOptions): StationPa
     overlays, sync,
     reportError: (label, err) => { sync.reportError(label, err); },
   });
-  const photoHud = createPhotoHud({ overlays, sync, undoManager });
+
+  // The station view only loads the active station's photos +
+  // measurements, so the per-station total is just the loaded set —
+  // no station-id filter needed.
+  const getPhotoAutoLock = (photoId: string): PhotoAutoLock =>
+    photoAutoLockFor(overlays.measurements.matchedCountByPhoto().get(photoId) ?? 0);
+  const getStationAutoLock = (): StationAutoLock =>
+    stationAutoLockFor(overlays.measurements.matchedCount());
+
+  const photoHud = createPhotoHud({
+    overlays, sync, undoManager, getPhotoAutoLock,
+  });
   const observationModal = createObservationModal({
     getControlPoints: () => overlays.controlPoints.list(),
     onPickExisting: (overlay, u, v, controlPointId) => {
@@ -160,6 +173,7 @@ export function createStationPanels(opts: CreateStationPanelsOptions): StationPa
       if (pose.stationAltitudeMSL === null) return;
       data.applyCameraLocation(loc, pose.stationAltitudeMSL);
     },
+    getStationAutoLock,
   });
 
   const stationNavigation = createStationNavigation({

@@ -13,10 +13,12 @@ import * as api from './api.js';
 import {
   createInconsistencyDetails, createSigmaSpan, fmtSigmaMeters,
   formatEstimateRange, formatLocalDateTime, getElement,
-  sigmaSeverityClass, syncInputChecked, syncInputValue,
+  sigmaSeverityClass, syncInputValue,
   updateSigma, worstHorizontalSigma,
 } from './types.js';
 import type { LatLng } from './types.js';
+import { AUTO_LOCK_THRESHOLDS, applyLockState } from './auto-lock.js';
+import type { StationAutoLock } from './auto-lock.js';
 import {
   SIGMA_ALT_REFUSE_M, SIGMA_ALT_WARN_M,
   SIGMA_POS_REFUSE_M, SIGMA_POS_WARN_M,
@@ -39,6 +41,10 @@ export interface StationFields {
 
 export interface StationFieldsHandle {
   hydrate: (s: api.ApiStation) => void;
+  // Re-render the inputs against the current cache. Called when external
+  // state (matched-obs count) changes the auto-lock affordance without
+  // touching the canonical station fields themselves.
+  refresh: () => void;
   // The fly-between animation needs the station's display name + altitude
   // before transitioning. Other cache fields (lat/lng/locks) are internal.
   getNameAndAlt: () => { name: string | null; alt: number } | null;
@@ -56,12 +62,15 @@ export interface CreateStationFieldsOptions {
   // Fires only when a server PUT round-trip returns lat/lng different from
   // the cached values. Consumer typically calls applyCameraLocation(loc).
   onLocationChanged: (loc: LatLng) => void;
+  // Polled on every render() so matched-obs changes surface without
+  // re-hydrating from the API.
+  getStationAutoLock: () => StationAutoLock;
 }
 
 const fieldDigits = (key: 'lat' | 'lng' | 'alt'): number => key === 'alt' ? 2 : 6;
 
 export function createStationFields(opts: CreateStationFieldsOptions): StationFieldsHandle {
-  const { getCurrentStationId, onAltitudeChanged, onLocationChanged } = opts;
+  const { getCurrentStationId, onAltitudeChanged, onLocationChanged, getStationAutoLock } = opts;
 
   const latEl = getElement<HTMLInputElement>('station-lat');
   const lngEl = getElement<HTMLInputElement>('station-lng');
@@ -145,8 +154,12 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
     syncInputValue(lngEl, cache.lng.toFixed(fieldDigits('lng')));
     syncInputValue(altEl, cache.alt.toFixed(fieldDigits('alt')));
     if (document.activeElement !== capturedAtEl) renderCapturedAt();
-    syncInputChecked(lockPosEl, cache.lockLat && cache.lockLng);
-    syncInputChecked(lockAltEl, cache.lockAlt);
+    // The combined position toggle is the AND of the per-axis flags — if
+    // only lat OR only lng is auto-locked the user still has no useful
+    // single-toggle behaviour, so we require both.
+    const auto = getStationAutoLock();
+    applyLockState(lockPosEl, cache.lockLat && cache.lockLng, auto.lat && auto.lng, AUTO_LOCK_THRESHOLDS.lat);
+    applyLockState(lockAltEl, cache.lockAlt, auto.alt, AUTO_LOCK_THRESHOLDS.alt);
   }
 
   function hydrate(s: api.ApiStation): void {
@@ -236,6 +249,7 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
 
   return {
     hydrate,
+    refresh: render,
     getNameAndAlt: () => cache && { name: cache.name, alt: cache.alt },
     getCapturedAt: () => cache?.capturedAt ?? null,
   };

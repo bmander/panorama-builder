@@ -4,7 +4,7 @@
 
 import {
   createSigmaSpan, fmtSigmaRad, getElement, overlayData, sigmaSeverityClass,
-  syncInputChecked, syncInputValue, updateSigma,
+  syncInputValue, updateSigma,
 } from './types.js';
 import { SIZE_MAX, SIZE_MIN } from './overlay.js';
 import type { OverlayManager } from './overlay.js';
@@ -13,6 +13,8 @@ import { clamp, degToRad, radToDeg } from './mathx.js';
 import { applyPhotoSnapshot, snapshotPhoto } from './undo.js';
 import type { PhotoSnapshot, UndoManager } from './undo.js';
 import type { PhotoLocks } from './types.js';
+import { AUTO_LOCK_THRESHOLDS, applyLockState } from './auto-lock.js';
+import type { PhotoAutoLock } from './auto-lock.js';
 import { SIGMA_ANGLE_REFUSE_RAD, SIGMA_ANGLE_WARN_RAD } from './sigma-thresholds.js';
 import type * as THREE from 'three';
 
@@ -24,10 +26,13 @@ export interface CreatePhotoHudOptions {
   overlays: OverlayManager;
   sync: SyncManager;
   undoManager?: UndoManager;
+  // Polled on every populate() so the disabled affordance tracks
+  // matched-obs changes without its own event channel.
+  getPhotoAutoLock: (photoId: string) => PhotoAutoLock;
 }
 
 export function createPhotoHud(
-  { overlays, sync, undoManager }: CreatePhotoHudOptions,
+  { overlays, sync, undoManager, getPhotoAutoLock }: CreatePhotoHudOptions,
 ): PhotoHud {
   const sectionEl = getElement('params-photo-section');
   const opacityEl = getElement<HTMLInputElement>('photo-hud-opacity');
@@ -68,6 +73,7 @@ export function createPhotoHud(
     const pose = overlays.photos.extractPose(overlay, null);
     const locks = overlays.photos.getLocks(overlay);
     const sigmas = overlays.photos.getSigmas(overlay);
+    const auto = getPhotoAutoLock(overlayData(overlay).id);
     syncInputValue(opacityEl, String(Math.round(overlays.photos.getOpacity(overlay) * 100)));
     syncInputValue(azEl, radToDeg(pose.photoAz).toFixed(2));
     syncInputValue(tiltEl, radToDeg(pose.photoTilt).toFixed(2));
@@ -76,18 +82,19 @@ export function createPhotoHud(
     syncInputValue(aspectEl, pose.aspect.toFixed(4));
     syncInputValue(k1El, pose.k1.toFixed(4));
     syncInputValue(k2El, pose.k2.toFixed(4));
-    syncInputChecked(azLockEl, locks.lockPhotoAz);
-    syncInputChecked(tiltLockEl, locks.lockPhotoTilt);
-    syncInputChecked(rollLockEl, locks.lockPhotoRoll);
-    syncInputChecked(fovLockEl, locks.lockSizeRad);
-    syncInputChecked(k1LockEl, locks.lockDistK1);
-    syncInputChecked(k2LockEl, locks.lockDistK2);
-    setSigma(azSigmaEl, sigmas.sigmaPhotoAz, locks.lockPhotoAz, 'azimuth');
-    setSigma(tiltSigmaEl, sigmas.sigmaPhotoTilt, locks.lockPhotoTilt, 'tilt');
-    setSigma(rollSigmaEl, sigmas.sigmaPhotoRoll, locks.lockPhotoRoll, 'roll');
-    setSigma(fovSigmaEl, sigmas.sigmaSizeRad, locks.lockSizeRad, 'FOV');
-    setSigma(k1SigmaEl, sigmas.sigmaDistK1, locks.lockDistK1, 'k1');
-    setSigma(k2SigmaEl, sigmas.sigmaDistK2, locks.lockDistK2, 'k2');
+    // σ is hidden whenever effective-locked since the solver couldn't refine that axis.
+    const azEff = applyLockState(azLockEl, locks.lockPhotoAz, auto.photoAz, AUTO_LOCK_THRESHOLDS.photoAz);
+    const tiltEff = applyLockState(tiltLockEl, locks.lockPhotoTilt, auto.photoTilt, AUTO_LOCK_THRESHOLDS.photoTilt);
+    const rollEff = applyLockState(rollLockEl, locks.lockPhotoRoll, auto.photoRoll, AUTO_LOCK_THRESHOLDS.photoRoll);
+    const fovEff = applyLockState(fovLockEl, locks.lockSizeRad, auto.sizeRad, AUTO_LOCK_THRESHOLDS.sizeRad);
+    const k1Eff = applyLockState(k1LockEl, locks.lockDistK1, auto.distK1, AUTO_LOCK_THRESHOLDS.distK1);
+    const k2Eff = applyLockState(k2LockEl, locks.lockDistK2, auto.distK2, AUTO_LOCK_THRESHOLDS.distK2);
+    setSigma(azSigmaEl, sigmas.sigmaPhotoAz, azEff, 'azimuth');
+    setSigma(tiltSigmaEl, sigmas.sigmaPhotoTilt, tiltEff, 'tilt');
+    setSigma(rollSigmaEl, sigmas.sigmaPhotoRoll, rollEff, 'roll');
+    setSigma(fovSigmaEl, sigmas.sigmaSizeRad, fovEff, 'FOV');
+    setSigma(k1SigmaEl, sigmas.sigmaDistK1, k1Eff, 'k1');
+    setSigma(k2SigmaEl, sigmas.sigmaDistK2, k2Eff, 'k2');
   }
 
   function refresh(): void {

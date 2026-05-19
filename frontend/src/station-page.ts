@@ -52,7 +52,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
 
   const interactions = createStationInteractions({ scene, data, route, sundial, panels });
 
-  wireStationEvents({ scene, data, route, sundial, pushPose, applyStation });
+  wireStationEvents({ scene, data, panels, route, sundial, pushPose, applyStation });
 
   scene.viewer.setCanvasVisible(true);
   scene.hud.setVisible(true);

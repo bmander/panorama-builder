@@ -160,6 +160,13 @@ type solveContext struct {
 // gauge for the mode, builds the working ENU state, and assembles the free
 // parameter slots.
 func buildContext(problem Problem, cfg Config) (*solveContext, error) {
+	// Every downstream lock read (gauge picker, slot emitters, Ceres bridge)
+	// consults problem.{Stations,Photos}[i].Locks, so one OR pass here
+	// covers them all. Clone first so the caller's input is untouched.
+	problem.Stations = append([]Station(nil), problem.Stations...)
+	problem.Photos = append([]Photo(nil), problem.Photos...)
+	applyAutoLocks(&problem)
+
 	c := &solveContext{
 		cfg:        cfg,
 		problem:    problem,
