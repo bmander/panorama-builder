@@ -58,6 +58,7 @@ export type ApiCommitWithOps = Schemas['CommitWithOps'];
 export type ApiEntityRef = Schemas['EntityRef'];
 export type ApiMergeRequest = Schemas['MergeRequest'];
 export type ApiRevertRequest = Schemas['RevertRequest'];
+export type ApiRevertToBeforeRequest = Schemas['RevertToBeforeRequest'];
 
 // SessionRankDeficientError: thrown by mergeSession on a 422 with the
 // per-entity σ list from backend/merge_gate.go. Caller decides whether to
@@ -511,6 +512,28 @@ export async function revertCommit(id: string, body: ApiRevertRequest): Promise<
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`POST /commits/${id}/revert → ${res.status.toString()} ${text}`);
+  }
+  return res.json() as Promise<ApiCommitRef>;
+}
+
+// revertToBefore: applies one commit reverting state to just-before the
+// target. expected_latest_seq is the MAX(seq) the caller observed; a 409
+// signals a newer commit landed since (refresh and retry). 400 surfaces the
+// "range contains revert commits" refusal as a plain error message.
+export async function revertToBefore(id: string, body: ApiRevertToBeforeRequest): Promise<ApiCommitRef> {
+  const init: RequestInit = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  };
+  const res = await apiFetch(`/commits/${encodeURIComponent(id)}/revert_to_before`, init);
+  if (res.status === 409) {
+    const errBody = await res.json().catch(() => ({ error: 'conflict' })) as { error?: string };
+    throw new Error(errBody.error ?? 'newer commits exist; refresh and retry');
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`POST /commits/${id}/revert_to_before → ${res.status.toString()} ${text}`);
   }
   return res.json() as Promise<ApiCommitRef>;
 }

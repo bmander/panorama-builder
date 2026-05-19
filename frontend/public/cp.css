@@ -87,6 +87,13 @@ h2 { font-size: 14px; color: #aaa; margin: 32px 0 8px; font-weight: normal;
 .commits-list li { align-items: center; }
 .commits-pager { display: flex; gap: 8px; margin-top: 16px; }
 .commits-pager a[hidden] { display: none; }
+.changes-btn { font: inherit; padding: 0 4px; }
+.changes-panel { width: min(90vw, 720px); max-height: 80vh; }
+.changes-dump { font: 11px monospace; color: #ddd;
+                background: rgba(0,0,0,0.4); padding: 8px;
+                border: 1px solid #444; margin: 0;
+                max-height: 60vh; overflow: auto;
+                white-space: pre; }
 .cp-list a.desc, .photos-list a.desc { color: #5080ff; text-decoration: none;
                                         word-break: break-word; }
 .cp-list a.desc:hover, .photos-list a.desc:hover { text-decoration: underline; }

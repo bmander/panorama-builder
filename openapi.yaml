@@ -1006,6 +1006,39 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ConflictsResponse' }
 
+  /commits/{id}/revert_to_before:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/Id' }
+    post:
+      tags: [commits]
+      summary: Revert state to just before this commit (range revert)
+      description: |
+        Applies a single new revert commit whose effect is the diff between
+        current state and state-just-before-target. Covers every commit with
+        seq in [target.seq, expected_latest_seq]. Refuses with 400 if the
+        range contains any existing revert commit (those have no journaled
+        ops and can't be cleanly composed); refuses with 409 if a newer
+        commit has landed since the caller observed expected_latest_seq.
+      operationId: revertCommitToBefore
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevertToBeforeRequest' }
+      responses:
+        '201':
+          description: Reverted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommitRef' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Conflict — newer commits exist; refresh and retry
+
   /control-points/{id}/visible-photos:
     parameters:
       - $ref: '#/components/parameters/ControlPointId'
@@ -1978,6 +2011,19 @@ components:
       properties:
         sign_off: { type: string, minLength: 1 }
         message: { type: string }
+
+    RevertToBeforeRequest:
+      type: object
+      required: [sign_off, expected_latest_seq]
+      properties:
+        sign_off: { type: string, minLength: 1 }
+        message: { type: string }
+        expected_latest_seq:
+          type: integer
+          format: int64
+          description: |
+            MAX(commits.seq) the caller observed before clicking. Rejected
+            with 409 if any commit has landed since.
 
     CommitRef:
       type: object

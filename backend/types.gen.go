@@ -947,6 +947,15 @@ type RevertRequest struct {
 	SignOff string  `json:"sign_off"`
 }
 
+// RevertToBeforeRequest defines model for RevertToBeforeRequest.
+type RevertToBeforeRequest struct {
+	// ExpectedLatestSeq MAX(commits.seq) the caller observed before clicking. Rejected
+	// with 409 if any commit has landed since.
+	ExpectedLatestSeq int64   `json:"expected_latest_seq"`
+	Message           *string `json:"message,omitempty"`
+	SignOff           string  `json:"sign_off"`
+}
+
 // SessionOp defines model for SessionOp.
 type SessionOp struct {
 	// After Row state after the op (NULL for deletes).
@@ -1167,6 +1176,9 @@ type ListStationsParams struct {
 
 // RevertCommitJSONRequestBody defines body for RevertCommit for application/json ContentType.
 type RevertCommitJSONRequestBody = RevertRequest
+
+// RevertCommitToBeforeJSONRequestBody defines body for RevertCommitToBefore for application/json ContentType.
+type RevertCommitToBeforeJSONRequestBody = RevertToBeforeRequest
 
 // CreateCPConstraintJSONRequestBody defines body for CreateCPConstraint for application/json ContentType.
 type CreateCPConstraintJSONRequestBody = CPConstraintCreate

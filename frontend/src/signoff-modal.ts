@@ -39,7 +39,10 @@ export interface SignOffModalIds {
 export interface SignOffModalOptions {
   ids: SignOffModalIds;
   submit: (req: SignOffRequest) => Promise<void>;
-  onConflict: (err: SessionConflictError) => void;
+  // Called when submit throws SessionConflictError (entity-level conflict).
+  // Omit for flows whose submit doesn't surface that error type — the modal's
+  // default error display handles other errors inline.
+  onConflict?: (err: SessionConflictError) => void;
   onSuccess?: () => void;
   // Default true. Set false when the submit handler triggers a page reload
   // and the modal should stay locked until the new document arrives.
@@ -138,7 +141,7 @@ export function openSignOffModal(opts: SignOffModalOptions): void {
       opt.onSuccess?.();
     }, (err: unknown) => {
       setLoading(false);
-      if (err instanceof SessionConflictError) {
+      if (err instanceof SessionConflictError && opt.onConflict) {
         modal.hidden = true;
         active = null;
         opt.onConflict(err);

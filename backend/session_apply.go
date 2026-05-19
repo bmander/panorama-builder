@@ -280,3 +280,91 @@ func deleteEntityByID(ctx context.Context, tx pgx.Tx, entityType, id string) err
 	_, err := tx.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE id=$1`, table), id)
 	return err
 }
+
+// loadEntityJSONsByType bulk-reads rows for a set of ids from one entity
+// table and returns id → JSON bytes shaped the same way session_ops.before
+// _json / after_json are (Go struct json tags, not Postgres' to_jsonb).
+// Missing ids are simply absent from the map.
+func loadEntityJSONsByType(ctx context.Context, tx pgx.Tx, entityType string, ids []string) (map[string][]byte, error) {
+	if len(ids) == 0 {
+		return map[string][]byte{}, nil
+	}
+	f, ok := entityFetches[entityType]
+	if !ok {
+		return nil, fmt.Errorf("loadEntityJSONsByType: unknown entity_type %q", entityType)
+	}
+	rows, err := tx.Query(ctx,
+		fmt.Sprintf(`SELECT %s FROM %s WHERE id = ANY($1::text[])`, f.cols, f.table), ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string][]byte, len(ids))
+	for rows.Next() {
+		id, js, err := f.scanJSON(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[id] = js
+	}
+	return out, rows.Err()
+}
+
+// entityFetches dispatches per-type bulk row loading. Each scanJSON reads one
+// row and returns (id, json-bytes, error) where the json shape matches what
+// session_ops journals.
+var entityFetches = map[string]struct {
+	cols     string
+	table    string
+	scanJSON func(pgx.Row) (string, []byte, error)
+}{
+	entityStation: {stationCols, "stations", func(r pgx.Row) (string, []byte, error) {
+		v, err := scanStation(r)
+		if err != nil {
+			return "", nil, err
+		}
+		return v.ID, jsonMust(v), nil
+	}},
+	entityPhoto: {photoCols, "photos", func(r pgx.Row) (string, []byte, error) {
+		v, err := scanPhoto(r)
+		if err != nil {
+			return "", nil, err
+		}
+		return v.ID, jsonMust(v), nil
+	}},
+	entityImageMeasurement: {imageMeasurementCols, "image_measurements", func(r pgx.Row) (string, []byte, error) {
+		v, err := scanImageMeasurement(r)
+		if err != nil {
+			return "", nil, err
+		}
+		return v.ID, jsonMust(v), nil
+	}},
+	entityControlPoint: {controlPointCols, "control_points", func(r pgx.Row) (string, []byte, error) {
+		v, err := scanControlPoint(r)
+		if err != nil {
+			return "", nil, err
+		}
+		return v.ID, jsonMust(v), nil
+	}},
+	entityCPConstraint: {cpConstraintCols, "cp_constraints", func(r pgx.Row) (string, []byte, error) {
+		v, err := scanCPConstraint(r)
+		if err != nil {
+			return "", nil, err
+		}
+		return v.ID, jsonMust(v), nil
+	}},
+	entityCPSurface: {cpSurfaceCols, "cp_surfaces", func(r pgx.Row) (string, []byte, error) {
+		v, err := scanCPSurface(r)
+		if err != nil {
+			return "", nil, err
+		}
+		return v.ID, jsonMust(v), nil
+	}},
+	entityCPObservation: {cpObservationCols, "cp_observations", func(r pgx.Row) (string, []byte, error) {
+		v, err := scanCpObservation(r)
+		if err != nil {
+			return "", nil, err
+		}
+		return v.ID, jsonMust(v), nil
+	}},
+}

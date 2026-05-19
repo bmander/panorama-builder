@@ -777,6 +777,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/commits/{id}/revert_to_before": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revert state to just before this commit (range revert)
+         * @description Applies a single new revert commit whose effect is the diff between
+         *     current state and state-just-before-target. Covers every commit with
+         *     seq in [target.seq, expected_latest_seq]. Refuses with 400 if the
+         *     range contains any existing revert commit (those have no journaled
+         *     ops and can't be cleanly composed); refuses with 409 if a newer
+         *     commit has landed since the caller observed expected_latest_seq.
+         */
+        post: operations["revertCommitToBefore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/control-points/{id}/visible-photos": {
         parameters: {
             query?: never;
@@ -1674,6 +1701,16 @@ export interface components {
         RevertRequest: {
             sign_off: string;
             message?: string;
+        };
+        RevertToBeforeRequest: {
+            sign_off: string;
+            message?: string;
+            /**
+             * Format: int64
+             * @description MAX(commits.seq) the caller observed before clicking. Rejected
+             *     with 409 if any commit has landed since.
+             */
+            expected_latest_seq: number;
         };
         CommitRef: {
             commit_id: components["schemas"]["Id"];
@@ -3006,6 +3043,41 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ConflictsResponse"];
                 };
+            };
+        };
+    };
+    revertCommitToBefore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RevertToBeforeRequest"];
+            };
+        };
+        responses: {
+            /** @description Reverted */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommitRef"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            /** @description Conflict — newer commits exist; refresh and retry */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

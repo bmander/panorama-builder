@@ -20,7 +20,7 @@
   <div id="revert-modal" class="modal" hidden>
     <div class="modal-panel">
       <div class="modal-header">
-        <span id="revert-modal-title">Revert commit</span>
+        <span id="revert-modal-title">Revert to before here</span>
         <button type="button" id="revert-close" class="btn">✕</button>
       </div>
       <div class="modal-field">
@@ -36,6 +36,15 @@
         <button type="button" id="revert-cancel" class="btn">Cancel</button>
         <button type="button" id="revert-confirm" class="btn" disabled>Revert</button>
       </div>
+    </div>
+  </div>
+  <div id="changes-modal" class="modal" hidden>
+    <div class="modal-panel changes-panel">
+      <div class="modal-header">
+        <span id="changes-modal-title">Changes</span>
+        <button type="button" id="changes-close" class="btn">✕</button>
+      </div>
+      <pre id="changes-dump" class="changes-dump"></pre>
     </div>
   </div>
   <script type="module" src="/src/history-page.ts"></script>

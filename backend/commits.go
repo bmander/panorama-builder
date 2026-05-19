@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -218,6 +219,223 @@ func (s *Server) revertCommit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := bumpEntityCommits(ctx, tx, plan, newSeq); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "40001" {
+			writeError(w, http.StatusConflict, "concurrent merge; retry")
+			return
+		}
+		writeErrorFromDB(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, CommitRef{CommitID: commitID, Seq: newSeq})
+}
+
+// revertToBefore creates a single new commit whose effect is the diff between
+// current state and state-just-before the target. Covers every commit with
+// seq in [target.seq, expected_latest_seq]. Refuses if the range contains an
+// existing revert commit (those carry no journaled ops and can't be cleanly
+// composed) or if a newer commit has landed since the caller observed
+// expected_latest_seq.
+//
+// The new revert commit gets its own synthetic session journal so it shows
+// the correct op_count on listCommits, and so it can itself be reverted by a
+// future "revert to before here" click — closing the asymmetry where
+// single-commit reverts can't be rolled back.
+func (s *Server) revertToBefore(w http.ResponseWriter, r *http.Request) {
+	id := requireID(w, r, "id")
+	if id == "" {
+		return
+	}
+	var body RevertToBeforeRequest
+	if !parseJSON(w, r, &body) {
+		return
+	}
+	signOff, ok := requireSignOff(w, body.SignOff)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var targetSeq int64
+	err = tx.QueryRow(ctx, `SELECT seq FROM commits WHERE id=$1`, id).Scan(&targetSeq)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+
+	var currentMaxSeq int64
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(seq), 0) FROM commits`).Scan(&currentMaxSeq); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if body.ExpectedLatestSeq != currentMaxSeq {
+		writeError(w, http.StatusConflict, "newer commits exist; refresh and retry")
+		return
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT seq FROM commits
+		WHERE seq BETWEEN $1 AND $2 AND kind='revert'
+		ORDER BY seq`, targetSeq, currentMaxSeq)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	var revertSeqs []int64
+	for rows.Next() {
+		var s int64
+		if err := rows.Scan(&s); err != nil {
+			rows.Close()
+			writeErrorFromDB(w, err)
+			return
+		}
+		revertSeqs = append(revertSeqs, s)
+	}
+	rows.Close()
+	if len(revertSeqs) > 0 {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("range contains revert commits (seq %v); revert those individually first", revertSeqs))
+		return
+	}
+
+	// For each entity touched by any commit in [targetSeq, currentMaxSeq],
+	// pick the earliest touching commit's before_json — that's the entity's
+	// state immediately before the target, since nothing in the range is
+	// earlier than target.
+	rows, err = tx.Query(ctx, `
+		SELECT DISTINCT ON (so.entity_type, so.entity_id)
+		       so.entity_type, so.entity_id, so.before_json
+		FROM session_ops so
+		JOIN commits c ON c.source_session_id = so.session_id
+		WHERE c.seq BETWEEN $1 AND $2
+		ORDER BY so.entity_type, so.entity_id, c.seq ASC`, targetSeq, currentMaxSeq)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	type entityBefore struct {
+		entityType string
+		entityID   string
+		beforeJSON []byte // nil ⇒ entity did not exist before the target
+	}
+	var entities []entityBefore
+	idsByType := make(map[string][]string)
+	for rows.Next() {
+		var e entityBefore
+		if err := rows.Scan(&e.entityType, &e.entityID, &e.beforeJSON); err != nil {
+			rows.Close()
+			writeErrorFromDB(w, err)
+			return
+		}
+		entities = append(entities, e)
+		idsByType[e.entityType] = append(idsByType[e.entityType], e.entityID)
+	}
+	rows.Close()
+
+	// Bulk-load current state per entity type (one SELECT per type instead
+	// of one per entity).
+	currentByKey := make(map[string][]byte, len(entities))
+	for entityType, ids := range idsByType {
+		got, err := loadEntityJSONsByType(ctx, tx, entityType, ids)
+		if err != nil {
+			writeErrorFromDB(w, err)
+			return
+		}
+		for id, js := range got {
+			currentByKey[entityType+"\x00"+id] = js
+		}
+	}
+
+	plan := make([]journalOp, 0, len(entities))
+	for _, e := range entities {
+		current, hasCurrent := currentByKey[e.entityType+"\x00"+e.entityID]
+		target := e.beforeJSON
+		switch {
+		case target == nil && !hasCurrent:
+			continue
+		case target == nil && hasCurrent:
+			plan = append(plan, journalOp{
+				EntityType: e.entityType, EntityID: e.entityID,
+				Op: "delete", BeforeJSON: current, AfterJSON: nil,
+			})
+		case target != nil && !hasCurrent:
+			plan = append(plan, journalOp{
+				EntityType: e.entityType, EntityID: e.entityID,
+				Op: "insert", BeforeJSON: nil, AfterJSON: target,
+			})
+		default:
+			plan = append(plan, journalOp{
+				EntityType: e.entityType, EntityID: e.entityID,
+				Op: "update", BeforeJSON: current, AfterJSON: target,
+			})
+		}
+	}
+
+	// Synthetic session row carries the journal for the new revert commit so
+	// it has an op_count and can itself be reverted later.
+	sessionID := newID()
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO sessions (id, base_seq, status, next_seq)
+		VALUES ($1, $2, 'merged', $3)`, sessionID, currentMaxSeq, int64(len(plan)+1)); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	batch := &pgx.Batch{}
+	for i, op := range plan {
+		plan[i].Seq = int64(i + 1)
+		batch.Queue(`
+			INSERT INTO session_ops (session_id, seq, entity_type, entity_id, op, before_json, after_json)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			sessionID, plan[i].Seq, op.EntityType, op.EntityID, op.Op, op.BeforeJSON, op.AfterJSON)
+	}
+	br := tx.SendBatch(ctx, batch)
+	for range plan {
+		if _, err := br.Exec(); err != nil {
+			_ = br.Close()
+			writeErrorFromDB(w, err)
+			return
+		}
+	}
+	if err := br.Close(); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+
+	commitID := newID()
+	var newSeq int64
+	var msg *string
+	if body.Message != nil && *body.Message != "" {
+		msg = body.Message
+	}
+	revertOf := id
+	err = tx.QueryRow(ctx, `
+		INSERT INTO commits (id, source_session_id, parent_seq, kind, reverts_commit_id, message, sign_off)
+		VALUES ($1, $2, (SELECT MAX(seq) FROM commits), 'revert', $3, $4, $5)
+		RETURNING seq`, commitID, sessionID, revertOf, msg, signOff,
+	).Scan(&newSeq)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+
+	ordered := orderOpsForApply(plan)
+	if err := applyPlanToMain(ctx, tx, ordered); err != nil {
+		writeApplyError(w, err)
+		return
+	}
+	if err := bumpEntityCommits(ctx, tx, ordered, newSeq); err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}

@@ -76,6 +76,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/commits", s.listCommits)
 	mux.HandleFunc("GET /api/commits/{id}", s.getCommit)
 	mux.HandleFunc("POST /api/commits/{id}/revert", s.revertCommit)
+	mux.HandleFunc("POST /api/commits/{id}/revert_to_before", s.revertToBefore)
 
 	// Catch-all: serve static frontend with SPA fallback for unknown paths.
 	mux.HandleFunc("/", s.spaFallback)
