@@ -10,6 +10,7 @@ import { openSignOffModal } from './signoff-modal.js';
 import { fmtRef, getElement, shortId } from './types.js';
 
 const PAGE_SIZE = 40;
+const HEADERS = ['When', 'Signer', 'Changes', ''] as const;
 
 function fmtDate(iso: string): string {
   const d = new Date(iso);
@@ -23,6 +24,17 @@ function readBeforeSeq(): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+function renderHeader(): HTMLElement {
+  const li = document.createElement('li');
+  li.className = 'header';
+  for (const label of HEADERS) {
+    const sp = document.createElement('span');
+    sp.textContent = label;
+    li.append(sp);
+  }
+  return li;
+}
+
 function renderList(commits: readonly ApiCommit[]): void {
   const list = getElement('list');
   list.replaceChildren();
@@ -33,6 +45,7 @@ function renderList(commits: readonly ApiCommit[]): void {
     list.appendChild(empty);
     return;
   }
+  list.appendChild(renderHeader());
   for (const c of commits) {
     const li = document.createElement('li');
 

@@ -99,7 +99,8 @@ h2 { font-size: 14px; color: #aaa; margin: 32px 0 8px; font-weight: normal;
     grid-column: 1 / -1; color: #888;
     font-style: italic; padding: 6px 8px;
     background: rgba(255,255,255,0.04); }
-.cp-list li.header, .photos-list li.header, .visible-photos-grid li.header {
+.cp-list li.header, .photos-list li.header, .visible-photos-grid li.header,
+.commits-list li.header {
     background: transparent; padding: 4px 8px;
     color: #aaa; font-size: 10px;
     text-transform: uppercase; letter-spacing: 0.05em; }
