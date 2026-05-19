@@ -394,8 +394,12 @@ export function createMapView({
       L.DomEvent.stopPropagation(e);
     });
   }
-  // Preview overlay drawn when a station marker is clicked.
+  // Preview overlay drawn when a station marker is clicked. The bubble's ✕
+  // closes only the popup; the decorations linger until the user clicks
+  // empty map or opens another station, so the cone / uncertainty / CP
+  // highlights remain available for reference.
   let stationPreview: StationPreview | null = null;
+  let stationPreviewEllipse: L.Polygon | null = null;
   const previewConeLayers: L.Polygon[] = [];
   const previewRayLayers: L.Polyline[] = [];
   let indexControlPoints: readonly IndexControlPoint[] = [];
@@ -593,6 +597,16 @@ export function createMapView({
     restyleIndexControlPoints();
   }
 
+  function clearStationDecorations(): void {
+    const had = stationPreview !== null || stationPreviewEllipse !== null;
+    if (stationPreviewEllipse) {
+      map.removeLayer(stationPreviewEllipse);
+      stationPreviewEllipse = null;
+    }
+    if (stationPreview !== null) applyStationPreview(null);
+    if (had) onStationPreviewClose?.();
+  }
+
   map.on('contextmenu', (e: L.LeafletMouseEvent) => {
     // Skip when the right-click landed on a marker or popup — those have
     // their own contextmenu / popup handling and we don't want to clobber it.
@@ -612,6 +626,13 @@ export function createMapView({
   });
   map.on('zoomend', redrawStationPreview);
   map.on('resize', redrawStationPreview);
+  // Empty-map click drops the lingering station decorations. Clicks on
+  // markers / popups have their own propagation rules and don't reach here.
+  map.on('click', (e: L.LeafletMouseEvent) => {
+    const target = e.originalEvent.target as Element | null;
+    if (target?.closest('.leaflet-marker-icon, .leaflet-popup')) return;
+    clearStationDecorations();
+  });
 
   // Drag-and-drop image files onto the map → callback gets the drop location
   // and the files. Only photo MIME types count; non-image drops are ignored.
@@ -700,18 +721,15 @@ export function createMapView({
       + paramRowsHtml(p.alt, p.lockLat && p.lockLng, p.lockAlt, p.autoLockPos, p.autoLockAlt)
       + goButtonHtml('Go to station →')
       + goButtonHtml('Move', 'move');
-    // openOn auto-closes any prior popup; its 'remove' event clears the
-    // previous station's preview before the new preview is kicked off below.
+    // Replace any prior station's decorations before opening the new popup;
+    // the bubble's ✕ no longer tears them down, so we drop the previous set
+    // explicitly here. A map click on empty space also clears them.
+    clearStationDecorations();
     const popup = L.popup(GO_POPUP_OPTS)
       .setLatLng([p.latlng.lat, p.latlng.lng])
       .setContent(popupHtml)
       .openOn(map);
-    const circle = drawUncertaintyEllipse(p.latlng, p.sigmaLat, p.sigmaLng, p.covLatLng);
-    popup.on('remove', () => {
-      if (circle) map.removeLayer(circle);
-      applyStationPreview(null);
-      onStationPreviewClose?.();
-    });
+    stationPreviewEllipse = drawUncertaintyEllipse(p.latlng, p.sigmaLat, p.sigmaLng, p.covLatLng);
     onStationMarkerPreview?.(p.id);
     // The "Go to station →" button shares the .go base class with .move, so
     // disambiguate using ':not(.move)' rather than just '.go'.
