@@ -406,6 +406,12 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
       return;
     }
     cpsById.set(cp.id, cp);
+    // Select the new CP so it survives the showCps=false filter and gets a
+    // popup; the focus filter at refreshIndexControlPoints keeps it visible
+    // until the user dismisses the popup.
+    focusedCpId = cp.id;
+    refreshIndexControlPoints();
+    view.focusIndexControlPoint(cp.id);
   }
 
   // The shared dropdown carries items for both routes; hide /world's.
@@ -462,7 +468,6 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     },
     onCreateMapAndObserve: async (latlng, description) => {
       await onCreateCPAtLocation(latlng, description);
-      refreshIndexControlPoints();
     },
   });
   const view: MapView = createMapView({
