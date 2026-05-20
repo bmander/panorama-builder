@@ -11,41 +11,24 @@ import (
 )
 
 // cp_observations is the per-station-per-CP visibility ledger. status is
-// observed / missing / cant_see; reason is non-null iff status=cant_see.
-// Writes funnel through the session journal like every other entity.
+// present / absent / obscured. Writes funnel through the session journal
+// like every other entity.
 
-const cpObservationCols = `id, station_id, control_point_id, status, reason, created_at, updated_at`
+const cpObservationCols = `id, station_id, control_point_id, status, created_at, updated_at`
 
 func scanCpObservation(row pgx.Row) (CpObservation, error) {
 	var o CpObservation
 	var status string
-	var reason *string
-	if err := row.Scan(&o.ID, &o.StationID, &o.ControlPointID, &status, &reason, &o.CreatedAt, &o.UpdatedAt); err != nil {
+	if err := row.Scan(&o.ID, &o.StationID, &o.ControlPointID, &status, &o.CreatedAt, &o.UpdatedAt); err != nil {
 		return o, err
 	}
 	o.Status = CpObservationStatus(status)
-	if reason != nil {
-		r := CpObservationReason(*reason)
-		o.Reason = &r
-	}
 	return o, nil
 }
 
-// validateStatusReason enforces the reason-iff-cant_see invariant and
-// the enum membership of status / reason. Returns "" on success.
-func validateStatusReason(status CpObservationStatus, reason *CpObservationReason) string {
+func validateStatus(status CpObservationStatus) string {
 	if !status.Valid() {
 		return "invalid status"
-	}
-	if status == CantSee {
-		if reason == nil {
-			return "reason required when status=cant_see"
-		}
-		if !reason.Valid() {
-			return "invalid reason"
-		}
-	} else if reason != nil {
-		return "reason only allowed when status=cant_see"
 	}
 	return ""
 }
@@ -63,7 +46,7 @@ func (s *Server) postCpObservation(w http.ResponseWriter, r *http.Request) {
 	if !parseJSON(w, r, &req) {
 		return
 	}
-	if msg := validateStatusReason(req.Status, req.Reason); msg != "" {
+	if msg := validateStatus(req.Status); msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -95,7 +78,6 @@ func (s *Server) postCpObservation(w http.ResponseWriter, r *http.Request) {
 		StationID:      stationID,
 		ControlPointID: req.ControlPointID,
 		Status:         req.Status,
-		Reason:         req.Reason,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
@@ -138,14 +120,7 @@ func (s *Server) putCpObservation(w http.ResponseWriter, r *http.Request) {
 	if req.Status != nil {
 		cur.Status = *req.Status
 	}
-	if req.Reason != nil {
-		cur.Reason = req.Reason
-	}
-	// Status moving away from cant_see invalidates any prior reason.
-	if cur.Status != CantSee {
-		cur.Reason = nil
-	}
-	if msg := validateStatusReason(cur.Status, cur.Reason); msg != "" {
+	if msg := validateStatus(cur.Status); msg != "" {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -181,9 +156,9 @@ func (s *Server) deleteCpObservation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	// observed rows backed by image_measurement evidence can't be deleted
+	// present rows backed by image_measurement evidence can't be deleted
 	// without leaving an orphaned pixel pin claiming the CP is observed.
-	if cur.Status == Observed {
+	if cur.Status == Present {
 		hasIM, err := s.hasImageMeasurementForStationCP(ctx, overlay, cur.StationID, cur.ControlPointID)
 		if err != nil {
 			writeErrorFromDB(w, err)

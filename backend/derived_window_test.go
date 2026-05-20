@@ -27,9 +27,9 @@ func TestPropagateWindows_Missing_NarrowsDerivedStationWindow(t *testing.T) {
 	sMis := Station{ID: "s_mis"} // captured_at nil
 
 	obs := []CpObservation{
-		{ID: "o1", ControlPointID: "c_low", StationID: "s_mis", Status: Observed},
-		{ID: "o2", ControlPointID: "c_high", StationID: "s_mis", Status: Observed},
-		{ID: "o3", ControlPointID: "c_target", StationID: "s_mis", Status: Missing},
+		{ID: "o1", ControlPointID: "c_low", StationID: "s_mis", Status: Present},
+		{ID: "o2", ControlPointID: "c_high", StationID: "s_mis", Status: Present},
+		{ID: "o3", ControlPointID: "c_target", StationID: "s_mis", Status: Absent},
 	}
 
 	result := propagateWindows(
@@ -59,8 +59,8 @@ func TestPropagateWindows_Missing_PreciseTimesParity(t *testing.T) {
 	sMis := Station{ID: "s_mis", CapturedAt: ymd(1850)}
 
 	obs := []CpObservation{
-		{ID: "o1", ControlPointID: "c", StationID: "s_obs", Status: Observed},
-		{ID: "o2", ControlPointID: "c", StationID: "s_mis", Status: Missing},
+		{ID: "o1", ControlPointID: "c", StationID: "s_obs", Status: Present},
+		{ID: "o2", ControlPointID: "c", StationID: "s_mis", Status: Absent},
 	}
 
 	result := propagateWindows([]ControlPoint{cp}, []Station{sObs, sMis}, obs)
@@ -81,7 +81,7 @@ func TestPropagateWindows_Missing_BothBranchesInfeasible(t *testing.T) {
 	s := Station{ID: "s", CapturedAt: ymd(1880)}
 
 	obs := []CpObservation{
-		{ID: "o", ControlPointID: "c", StationID: "s", Status: Missing},
+		{ID: "o", ControlPointID: "c", StationID: "s", Status: Absent},
 	}
 
 	result := propagateWindows([]ControlPoint{cp}, []Station{s}, obs)
@@ -101,7 +101,7 @@ func TestPropagateWindows_Missing_BothBranchesFeasible(t *testing.T) {
 	s := Station{ID: "s"} // no precise captured_at, no observed anchors
 
 	obs := []CpObservation{
-		{ID: "o", ControlPointID: "c", StationID: "s", Status: Missing},
+		{ID: "o", ControlPointID: "c", StationID: "s", Status: Absent},
 	}
 
 	result := propagateWindows([]ControlPoint{cp}, []Station{s}, obs)
@@ -150,8 +150,8 @@ func TestExplainInconsistency_StationObservedNonOverlappingCPs(t *testing.T) {
 	st := Station{ID: "s"}
 
 	obs := []CpObservation{
-		{ID: "o1", ControlPointID: "c_a", StationID: "s", Status: Observed},
-		{ID: "o2", ControlPointID: "c_b", StationID: "s", Status: Observed},
+		{ID: "o1", ControlPointID: "c_a", StationID: "s", Status: Present},
+		{ID: "o2", ControlPointID: "c_b", StationID: "s", Status: Present},
 	}
 
 	reasons, found := explainStationInconsistency("s", []ControlPoint{cpA, cpB}, []Station{st}, obs)
@@ -190,7 +190,7 @@ func TestExplainInconsistency_StationMissingObservationContradicted(t *testing.T
 	st := Station{ID: "s", CapturedAt: ymd(1880)}
 
 	obs := []CpObservation{
-		{ID: "o", ControlPointID: "c", StationID: "s", Status: Missing},
+		{ID: "o", ControlPointID: "c", StationID: "s", Status: Absent},
 	}
 
 	reasons, found := explainStationInconsistency("s", []ControlPoint{cp}, []Station{st}, obs)
@@ -209,7 +209,7 @@ func TestExplainInconsistency_ConsistentReturnsEmpty(t *testing.T) {
 	cp := ControlPoint{ID: "c", StartedAt: ymd(1860), EndedAt: ymd(1900)}
 	st := Station{ID: "s", CapturedAt: ymd(1880)}
 	obs := []CpObservation{
-		{ID: "o", ControlPointID: "c", StationID: "s", Status: Observed},
+		{ID: "o", ControlPointID: "c", StationID: "s", Status: Present},
 	}
 
 	reasons, found := explainStationInconsistency("s", []ControlPoint{cp}, []Station{st}, obs)
@@ -244,9 +244,9 @@ func TestExplainInconsistency_BlameSurfacesUpstreamObservations(t *testing.T) {
 	st := Station{ID: "s", Name: ptr("nw lookout")}
 
 	obs := []CpObservation{
-		{ID: "o1", ControlPointID: "c_anchor", StationID: "s", Status: Observed},
-		{ID: "o2", ControlPointID: "c_missing", StationID: "s", Status: Missing},
-		{ID: "o3", ControlPointID: "c_late", StationID: "s", Status: Observed},
+		{ID: "o1", ControlPointID: "c_anchor", StationID: "s", Status: Present},
+		{ID: "o2", ControlPointID: "c_missing", StationID: "s", Status: Absent},
+		{ID: "o3", ControlPointID: "c_late", StationID: "s", Status: Present},
 	}
 
 	reasons, found := explainStationInconsistency("s", []ControlPoint{cpAnchor, cpMissing, cpLate}, []Station{st}, obs)

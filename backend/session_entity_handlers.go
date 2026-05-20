@@ -589,10 +589,10 @@ func (s *Server) postImageMeasurementInSession(w http.ResponseWriter, r *http.Re
 	}
 
 	// When the new measurement links to a CP, ensure the per-station
-	// cp_observation row exists with status=observed. The image-measurement
+	// cp_observation row exists with status=present. The image-measurement
 	// pixel pin is evidence backing the observation; the two facts must
-	// agree, so we either auto-create the observed row or refuse if a
-	// missing/cant_see contradicts it.
+	// agree, so we either auto-create the present row or refuse if a
+	// absent/obscured contradicts it.
 	var observedToCreate *CpObservation
 	if req.ControlPointID != nil {
 		photo, present, err := currentPhoto(ctx, s.db, overlay, photoID)
@@ -609,7 +609,7 @@ func (s *Server) postImageMeasurementInSession(w http.ResponseWriter, r *http.Re
 			writeErrorFromDB(w, err)
 			return
 		}
-		if existing != nil && existing.Status != Observed {
+		if existing != nil && existing.Status != Present {
 			writeError(w, http.StatusConflict,
 				"cp_observation at this station is "+string(existing.Status)+"; resolve before adding a pixel pin")
 			return
@@ -620,7 +620,7 @@ func (s *Server) postImageMeasurementInSession(w http.ResponseWriter, r *http.Re
 				ID:             newID(),
 				StationID:      photo.StationID,
 				ControlPointID: *req.ControlPointID,
-				Status:         Observed,
+				Status:         Present,
 				CreatedAt:      now,
 				UpdatedAt:      now,
 			}

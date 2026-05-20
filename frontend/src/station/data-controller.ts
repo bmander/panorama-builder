@@ -30,8 +30,8 @@ import type { StationRouteState } from './route-state.js';
 const FOCUS_FOV_DEG = 25;
 
 // Per-station cp_observation status, indexed by control_point_id. Drives
-// both the visibility filter (non-`observed` hides the marker) and POST vs
-// PUT routing in the CP context menu — a stale `observed` row from legacy
+// both the visibility filter (non-`present` hides the marker) and POST vs
+// PUT routing in the CP context menu — a stale `present` row from legacy
 // data would 409 on POST, so we PUT when an id is known. `id: null` is the
 // brief optimistic window between click and server ack.
 export interface CpObservationCache {
@@ -81,7 +81,13 @@ export interface StationDataController {
   // CP observation upsert. Optimistically updates the local cache + refreshes
   // visibility, then issues the POST/PUT (routed by whether a cp_observation
   // row already exists at this station). Rolls back the cache on failure.
-  postCpObservation(cpId: string, status: api.ApiCpObservationStatus, reason: api.ApiCpObservationReason | null): Promise<void>;
+  postCpObservation(cpId: string, status: api.ApiCpObservationStatus): Promise<void>;
+
+  // CP observation delete. Optimistic cache clear + refresh, then DELETE.
+  deleteCpObservation(cpId: string): Promise<void>;
+
+  // Per-CP observation status at this station; null when no row exists.
+  getCpObservationStatus(cpId: string): api.ApiCpObservationStatus | null;
 
   // Other-stations setter (used by station-navigation's fly post-update path).
   setOtherStations(stations: readonly StationMarker[]): void;
@@ -188,7 +194,7 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
       const forced = cp.id === focusedCpId;
       const isObserved = forced || observed.has(cp.id);
       const obs = cpObservationByCp.get(cp.id);
-      if (!isObserved && obs && obs.status !== 'observed') return false;
+      if (!isObserved && obs && obs.status !== 'present') return false;
       if (!showAllCPs && !isObserved) return false;
       if (capturedMs !== null && !isObserved && !isExtantAt(cp, capturedMs)) return false;
       if (maxD !== null && camLoc && !isObserved
@@ -588,18 +594,16 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
   async function postCpObservation(
     cpId: string,
     status: api.ApiCpObservationStatus,
-    reason: api.ApiCpObservationReason | null,
   ): Promise<void> {
     const prior = cpObservationByCp.get(cpId);
     cpObservationByCp.set(cpId, { id: prior?.id ?? null, status });
     refreshControlPointColumns();
     try {
       const o: api.ApiCpObservation = prior?.id
-        ? await api.updateCpObservation(prior.id, { status, reason })
+        ? await api.updateCpObservation(prior.id, { status })
         : await api.createCpObservation(route.getStationId(), {
             control_point_id: cpId,
             status,
-            reason,
           });
       cpObservationByCp.set(cpId, { id: o.id, status: o.status });
     } catch (err: unknown) {
@@ -608,6 +612,21 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
       else cpObservationByCp.delete(cpId);
       refreshControlPointColumns();
       alert('Update failed — see console.');
+    }
+  }
+
+  async function deleteCpObservation(cpId: string): Promise<void> {
+    const prior = cpObservationByCp.get(cpId);
+    if (!prior?.id) return;
+    cpObservationByCp.delete(cpId);
+    refreshControlPointColumns();
+    try {
+      await api.deleteCpObservation(prior.id);
+    } catch (err: unknown) {
+      console.error('cp_observation delete failed:', err);
+      cpObservationByCp.set(cpId, prior);
+      refreshControlPointColumns();
+      alert('Delete failed — see console.');
     }
   }
 
@@ -622,6 +641,8 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
     getOtherStations: () => otherStations,
     getOtherCameras: () => otherCameras,
     postCpObservation,
+    deleteCpObservation,
+    getCpObservationStatus: (cpId: string) => cpObservationByCp.get(cpId)?.status ?? null,
     setOtherStations: (s) => { otherStations = [...s]; },
     setShowAllCPs: (v) => {
       if (v === showAllCPs) return;

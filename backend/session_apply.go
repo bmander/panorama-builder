@@ -109,16 +109,11 @@ func insertEntityFromJSON(ctx context.Context, tx pgx.Tx, entityType string, bod
 		if err := json.Unmarshal(body, &o); err != nil {
 			return err
 		}
-		var reason *string
-		if o.Reason != nil {
-			s := string(*o.Reason)
-			reason = &s
-		}
 		_, err := tx.Exec(ctx, `
 			INSERT INTO cp_observations
-			  (id, station_id, control_point_id, status, reason, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-			o.ID, o.StationID, o.ControlPointID, string(o.Status), reason, o.CreatedAt)
+			  (id, station_id, control_point_id, status, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, NOW())`,
+			o.ID, o.StationID, o.ControlPointID, string(o.Status), o.CreatedAt)
 		return err
 	case entityCPConstraint:
 		var c CPConstraint
@@ -226,17 +221,12 @@ func updateEntityFromJSON(ctx context.Context, tx pgx.Tx, entityType, id string,
 		if err := json.Unmarshal(body, &o); err != nil {
 			return err
 		}
-		var reason *string
-		if o.Reason != nil {
-			s := string(*o.Reason)
-			reason = &s
-		}
 		_, err := tx.Exec(ctx, `
 			UPDATE cp_observations SET
-			  station_id=$2, control_point_id=$3, status=$4, reason=$5,
+			  station_id=$2, control_point_id=$3, status=$4,
 			  updated_at=NOW()
 			WHERE id=$1`,
-			id, o.StationID, o.ControlPointID, string(o.Status), reason)
+			id, o.StationID, o.ControlPointID, string(o.Status))
 		return err
 	case entityCPConstraint:
 		var c CPConstraint

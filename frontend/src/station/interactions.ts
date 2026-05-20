@@ -156,40 +156,45 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
   });
   getElement<HTMLButtonElement>('constraint-multiselect-clear').addEventListener('click', clearMultiSelectedConstraints);
 
-  // "Add observation here" is suppressed when this station already observes
-  // the CP (duplicates aren't useful) or when the click missed any photo
-  // body (no u/v anchor to attach the observation to).
   function openCpContextMenu(
     cpId: string, sx: number, sy: number, body: PhotoBodyHit | null,
   ): void {
     const cp = overlays.controlPoints.getById(cpId);
     const header = cpLabel(cp?.description ?? '');
     const info = cp ? formatLifespanLines(cp) : undefined;
-    const items: ContextMenuItem[] = [
-      { label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } },
-    ];
-    // Clicking the CP marker selects one of its measurements on this station
-    // so every observation reticule for the CP becomes visible at once.
+    // Selecting one of the CP's measurements reveals every reticule that
+    // shares the CP on this station, so the user can see the full match.
     const ownMeasurements = overlays.measurements.list()
       .filter(im => im.controlPointId === cpId);
     if (ownMeasurements.length > 0) {
       overlays.measurements.setSelected(ownMeasurements[0]!.handle);
     }
     const stationObserves = ownMeasurements.length > 0;
-    if (!stationObserves && body) {
-      items.push({
-        label: 'Add observation here',
-        onClick: () => { void data.handlers.onMatchImageMeasurement(body.overlay, body.u, body.v, cpId); },
-      });
-    }
-    // Negative-visibility submenu — missing / can't see (with reason).
-    if (!stationObserves) {
-      items.push(
-        { label: 'Mark missing', onClick: () => { void data.postCpObservation(cpId, 'missing', null); } },
-        { label: 'Can\'t see — occluded', onClick: () => { void data.postCpObservation(cpId, 'cant_see', 'occluded'); } },
-        { label: 'Can\'t see — unclear', onClick: () => { void data.postCpObservation(cpId, 'cant_see', 'unclear'); } },
-      );
-    }
+    const selected = stationObserves ? 'present' : data.getCpObservationStatus(cpId);
+    const items: ContextMenuItem[] = [
+      { label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } },
+      {
+        kind: 'radio-group',
+        legend: 'Visibility',
+        options: [
+          { value: 'present',  label: 'Present',  disabled: stationObserves || !body },
+          { value: 'absent',   label: 'Absent',   disabled: stationObserves },
+          { value: 'obscured', label: 'Obscured', disabled: stationObserves },
+        ],
+        selected,
+        onChange: (next) => {
+          if (next === null) {
+            void data.deleteCpObservation(cpId);
+            return;
+          }
+          if (next === 'present') {
+            void data.handlers.onMatchImageMeasurement(body!.overlay, body!.u, body!.v, cpId);
+            return;
+          }
+          void data.postCpObservation(cpId, next as api.ApiCpObservationStatus);
+        },
+      },
+    ];
     // Nudge the menu right so the CP marker (and any reticules just
     // revealed by the selection above) stays uncovered by the menu.
     panels.contextMenu.open(sx + 20, sy, items, header, info);

@@ -100,7 +100,12 @@ export function createStationPanels(opts: CreateStationPanelsOptions): StationPa
   const showAllCpsEl = getElement<HTMLInputElement>('show-all-cps');
   const initialShowAllCps = localStorage.getItem(SHOW_ALL_CPS_KEY) === '1';
   showAllCpsEl.checked = initialShowAllCps;
-  data.setShowAllCPs(initialShowAllCps);
+  // Deferred: data's getCapturedAt closure reaches back through
+  // panels.stationFields, which doesn't exist until createStationPanels
+  // returns. A microtask waits for both bindings.
+  if (initialShowAllCps) {
+    queueMicrotask(() => { data.setShowAllCPs(initialShowAllCps); });
+  }
   showAllCpsEl.addEventListener('change', () => {
     const v = showAllCpsEl.checked;
     if (v) localStorage.setItem(SHOW_ALL_CPS_KEY, '1');

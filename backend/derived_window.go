@@ -131,12 +131,12 @@ func buildDateGraph(cps []ControlPoint, stations []Station, obs []CpObservation)
 			continue
 		}
 		switch o.Status {
-		case Observed:
+		case Present:
 			g.addConstraint(stn.Leq[int64]{A: cv.start, B: ti},
 				constraintCtx{kind: kindObservedStart, cpID: o.ControlPointID, stationID: o.StationID})
 			g.addConstraint(stn.Leq[int64]{A: ti, B: cv.end},
 				constraintCtx{kind: kindObservedEnd, cpID: o.ControlPointID, stationID: o.StationID})
-		case Missing:
+		case Absent:
 			g.addConstraint(stn.Disjunction[int64]{Alts: []stn.Constraint[int64]{
 				stn.Leq[int64]{A: ti, B: cv.start},
 				stn.Leq[int64]{A: cv.end, B: ti},

@@ -421,17 +421,12 @@ function renderVisiblePhotosEmpty(text: string): void {
   list.appendChild(li);
 }
 
-// Human label for a per-station cp_observation, e.g. "marked missing" or
-// "can't see — occluded". Returned text drives the badge in the candidate
-// photos list so the user knows the photographer has already weighed in.
+// Human label for a per-station cp_observation, e.g. "marked absent" or
+// "obscured". Returned text drives the badge in the candidate photos list
+// so the user knows the photographer has already weighed in.
 function cpObservationLabel(o: api.ApiCpObservation): string | null {
-  if (o.status === 'missing') return 'marked missing';
-  if (o.status === 'cant_see') {
-    const r = o.reason;
-    if (r === 'occluded') return "can't see — occluded";
-    if (r === 'unclear')  return "can't see — unclear";
-    return "can't see";
-  }
+  if (o.status === 'absent') return 'marked absent';
+  if (o.status === 'obscured') return 'obscured';
   return null;
 }
 

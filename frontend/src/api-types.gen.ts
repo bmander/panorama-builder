@@ -333,7 +333,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Mark a CP as observed / missing / cant_see at this station
+         * Mark a CP as present / absent / obscured at this station
          * @description Creates a per-station-per-CP observation row. Each (station, CP)
          *     pair is unique — POST returns 409 if a row already exists; use
          *     PUT /cp-observations/{id} to change an existing one.
@@ -355,7 +355,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Change the status / reason on a cp_observation */
+        /** Change the status on a cp_observation */
         put: operations["updateCpObservation"];
         post?: never;
         /**
@@ -571,7 +571,7 @@ export interface paths {
          * List per-station observation rows for this control point
          * @description Returns every cp_observation row referencing this CP across
          *     every station. Used by the CP detail page to show which
-         *     stations have marked this CP observed / missing / cant_see.
+         *     stations have marked this CP present / absent / obscured.
          */
         get: operations["listCpObservationsByControlPoint"];
         put?: never;
@@ -1448,45 +1448,30 @@ export interface components {
             inconsistent: boolean;
         };
         /**
-         * @description observed — CP visible from at least one of the station's photos.
-         *     missing  — CP would be visible but isn't (born after / destroyed before).
-         *     cant_see — CP can't be observed for non-temporal reasons (occluded, etc.).
+         * @description present  — CP visible from at least one of the station's photos.
+         *     absent   — CP would be visible but isn't (born after / destroyed before).
+         *     obscured — CP can't be observed for non-temporal reasons (occluded, unclear, etc.).
          * @enum {string}
          */
-        CpObservationStatus: "observed" | "missing" | "cant_see";
-        /**
-         * @description Why the station can't see the CP. Required when status is
-         *     cant_see; null otherwise.
-         * @enum {string}
-         */
-        CpObservationReason: "occluded" | "unclear" | "other";
+        CpObservationStatus: "present" | "absent" | "obscured";
         CpObservation: {
             id: components["schemas"]["Id"];
             station_id: components["schemas"]["Id"];
             control_point_id: components["schemas"]["Id"];
             status: components["schemas"]["CpObservationStatus"];
-            reason: components["schemas"]["CpObservationReason"] | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             updated_at: string;
         };
-        /**
-         * @description POST body. station_id comes from the path. reason is required
-         *     iff status is cant_see.
-         */
+        /** @description POST body. station_id comes from the path. */
         CpObservationCreate: {
             control_point_id: components["schemas"]["Id"];
             status: components["schemas"]["CpObservationStatus"];
-            reason?: components["schemas"]["CpObservationReason"] | null;
         };
-        /**
-         * @description Partial-update body. Status and reason can be changed; the
-         *     reason-iff-cant_see invariant still applies.
-         */
+        /** @description Partial-update body. Only status can be changed. */
         CpObservationUpdate: {
             status?: components["schemas"]["CpObservationStatus"];
-            reason?: components["schemas"]["CpObservationReason"] | null;
         };
         /**
          * @description plumb: cp_a and cp_b share est_lat and est_lng (vertical line);

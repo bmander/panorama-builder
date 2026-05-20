@@ -467,7 +467,7 @@ paths:
       - $ref: '#/components/parameters/StationId'
     post:
       tags: [cp-observations]
-      summary: Mark a CP as observed / missing / cant_see at this station
+      summary: Mark a CP as present / absent / obscured at this station
       description: |
         Creates a per-station-per-CP observation row. Each (station, CP)
         pair is unique — POST returns 409 if a row already exists; use
@@ -500,7 +500,7 @@ paths:
         schema: { $ref: '#/components/schemas/Id' }
     put:
       tags: [cp-observations]
-      summary: Change the status / reason on a cp_observation
+      summary: Change the status on a cp_observation
       operationId: updateCpObservation
       requestBody:
         required: true
@@ -770,7 +770,7 @@ paths:
       description: |
         Returns every cp_observation row referencing this CP across
         every station. Used by the CP detail page to show which
-        stations have marked this CP observed / missing / cant_see.
+        stations have marked this CP present / absent / obscured.
       operationId: listCpObservationsByControlPoint
       responses:
         '200':
@@ -1724,30 +1724,20 @@ components:
 
     CpObservationStatus:
       type: string
-      enum: [observed, missing, cant_see]
+      enum: [present, absent, obscured]
       description: |
-        observed — CP visible from at least one of the station's photos.
-        missing  — CP would be visible but isn't (born after / destroyed before).
-        cant_see — CP can't be observed for non-temporal reasons (occluded, etc.).
-
-    CpObservationReason:
-      type: string
-      enum: [occluded, unclear, other]
-      description: |
-        Why the station can't see the CP. Required when status is
-        cant_see; null otherwise.
+        present  — CP visible from at least one of the station's photos.
+        absent   — CP would be visible but isn't (born after / destroyed before).
+        obscured — CP can't be observed for non-temporal reasons (occluded, unclear, etc.).
 
     CpObservation:
       type: object
-      required: [id, station_id, control_point_id, status, reason, created_at, updated_at]
+      required: [id, station_id, control_point_id, status, created_at, updated_at]
       properties:
         id:               { $ref: '#/components/schemas/Id' }
         station_id:       { $ref: '#/components/schemas/Id' }
         control_point_id: { $ref: '#/components/schemas/Id' }
         status:           { $ref: '#/components/schemas/CpObservationStatus' }
-        reason:
-          allOf: [{ $ref: '#/components/schemas/CpObservationReason' }]
-          nullable: true
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -1755,25 +1745,17 @@ components:
       type: object
       required: [control_point_id, status]
       description: |
-        POST body. station_id comes from the path. reason is required
-        iff status is cant_see.
+        POST body. station_id comes from the path.
       properties:
         control_point_id: { $ref: '#/components/schemas/Id' }
         status:           { $ref: '#/components/schemas/CpObservationStatus' }
-        reason:
-          allOf: [{ $ref: '#/components/schemas/CpObservationReason' }]
-          nullable: true
 
     CpObservationUpdate:
       type: object
       description: |
-        Partial-update body. Status and reason can be changed; the
-        reason-iff-cant_see invariant still applies.
+        Partial-update body. Only status can be changed.
       properties:
         status: { $ref: '#/components/schemas/CpObservationStatus' }
-        reason:
-          allOf: [{ $ref: '#/components/schemas/CpObservationReason' }]
-          nullable: true
 
     CPConstraintType:
       type: string

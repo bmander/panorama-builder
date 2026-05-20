@@ -43,42 +43,21 @@ func (e CommitKind) Valid() bool {
 	}
 }
 
-// Defines values for CpObservationReason.
-const (
-	Occluded CpObservationReason = "occluded"
-	Other    CpObservationReason = "other"
-	Unclear  CpObservationReason = "unclear"
-)
-
-// Valid indicates whether the value is a known member of the CpObservationReason enum.
-func (e CpObservationReason) Valid() bool {
-	switch e {
-	case Occluded:
-		return true
-	case Other:
-		return true
-	case Unclear:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for CpObservationStatus.
 const (
-	CantSee  CpObservationStatus = "cant_see"
-	Missing  CpObservationStatus = "missing"
-	Observed CpObservationStatus = "observed"
+	Absent   CpObservationStatus = "absent"
+	Obscured CpObservationStatus = "obscured"
+	Present  CpObservationStatus = "present"
 )
 
 // Valid indicates whether the value is a known member of the CpObservationStatus enum.
 func (e CpObservationStatus) Valid() bool {
 	switch e {
-	case CantSee:
+	case Absent:
 		return true
-	case Missing:
+	case Obscured:
 		return true
-	case Observed:
+	case Present:
 		return true
 	default:
 		return false
@@ -582,49 +561,39 @@ type CpObservation struct {
 	CreatedAt      time.Time `json:"created_at"`
 
 	// ID 13-character base32 server-assigned id
-	ID     ID                   `json:"id"`
-	Reason *CpObservationReason `json:"reason"`
+	ID ID `json:"id"`
 
 	// StationID 13-character base32 server-assigned id
 	StationID ID `json:"station_id"`
 
-	// Status observed — CP visible from at least one of the station's photos.
-	// missing  — CP would be visible but isn't (born after / destroyed before).
-	// cant_see — CP can't be observed for non-temporal reasons (occluded, etc.).
+	// Status present  — CP visible from at least one of the station's photos.
+	// absent   — CP would be visible but isn't (born after / destroyed before).
+	// obscured — CP can't be observed for non-temporal reasons (occluded, unclear, etc.).
 	Status    CpObservationStatus `json:"status"`
 	UpdatedAt time.Time           `json:"updated_at"`
 }
 
-// CpObservationCreate POST body. station_id comes from the path. reason is required
-// iff status is cant_see.
+// CpObservationCreate POST body. station_id comes from the path.
 type CpObservationCreate struct {
 	// ControlPointID 13-character base32 server-assigned id
-	ControlPointID ID                   `json:"control_point_id"`
-	Reason         *CpObservationReason `json:"reason,omitempty"`
+	ControlPointID ID `json:"control_point_id"`
 
-	// Status observed — CP visible from at least one of the station's photos.
-	// missing  — CP would be visible but isn't (born after / destroyed before).
-	// cant_see — CP can't be observed for non-temporal reasons (occluded, etc.).
+	// Status present  — CP visible from at least one of the station's photos.
+	// absent   — CP would be visible but isn't (born after / destroyed before).
+	// obscured — CP can't be observed for non-temporal reasons (occluded, unclear, etc.).
 	Status CpObservationStatus `json:"status"`
 }
 
-// CpObservationReason Why the station can't see the CP. Required when status is
-// cant_see; null otherwise.
-type CpObservationReason string
-
-// CpObservationStatus observed — CP visible from at least one of the station's photos.
-// missing  — CP would be visible but isn't (born after / destroyed before).
-// cant_see — CP can't be observed for non-temporal reasons (occluded, etc.).
+// CpObservationStatus present  — CP visible from at least one of the station's photos.
+// absent   — CP would be visible but isn't (born after / destroyed before).
+// obscured — CP can't be observed for non-temporal reasons (occluded, unclear, etc.).
 type CpObservationStatus string
 
-// CpObservationUpdate Partial-update body. Status and reason can be changed; the
-// reason-iff-cant_see invariant still applies.
+// CpObservationUpdate Partial-update body. Only status can be changed.
 type CpObservationUpdate struct {
-	Reason *CpObservationReason `json:"reason,omitempty"`
-
-	// Status observed — CP visible from at least one of the station's photos.
-	// missing  — CP would be visible but isn't (born after / destroyed before).
-	// cant_see — CP can't be observed for non-temporal reasons (occluded, etc.).
+	// Status present  — CP visible from at least one of the station's photos.
+	// absent   — CP would be visible but isn't (born after / destroyed before).
+	// obscured — CP can't be observed for non-temporal reasons (occluded, unclear, etc.).
 	Status *CpObservationStatus `json:"status,omitempty"`
 }
 

@@ -45,7 +45,6 @@ export type ApiCpObservation = Schemas['CpObservation'];
 export type ApiCpObservationCreate = Schemas['CpObservationCreate'];
 export type ApiCpObservationUpdate = Schemas['CpObservationUpdate'];
 export type ApiCpObservationStatus = Schemas['CpObservationStatus'];
-export type ApiCpObservationReason = Schemas['CpObservationReason'];
 export type SolveConfig = Schemas['SolveConfig'];
 export type SolveResult = Schemas['SolveResult'];
 export type EntityChange = Schemas['EntityChange'];
