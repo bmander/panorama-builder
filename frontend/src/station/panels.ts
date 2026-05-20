@@ -36,6 +36,7 @@ import type { StationFieldsHandle } from '../station-fields.js';
 import { photoAutoLockFor, stationAutoLockFor } from '../auto-lock.js';
 import type { PhotoAutoLock, StationAutoLock } from '../auto-lock.js';
 import { attachSolveActions } from '../solve-actions.js';
+import { createSolverPanel } from '../solver-panel.js';
 import type { StationScene } from './scene.js';
 import type { StationDataController } from './data-controller.js';
 import type { StationRouteState } from './route-state.js';
@@ -82,10 +83,9 @@ export function createStationPanels(opts: CreateStationPanelsOptions): StationPa
     rehydrate: () => data.rehydrateAfterSolve(),
     reportError: (label, err) => { sync.reportError(label, err); },
   });
+  createSolverPanel(getElement('solver-host'), () => { solveActions.open(); });
 
-  const sessionPanel = createSessionPanel(getElement('session-host'), {
-    onSolve: () => { solveActions.open(); },
-  });
+  const sessionPanel = createSessionPanel(getElement('session-host'));
 
   const settings = createSettingsPanel({
     viewer, terrain, sunMarker, sky,

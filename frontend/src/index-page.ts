@@ -21,6 +21,7 @@ import {
 } from './types.js';
 import { stationAutoLockFor } from './auto-lock.js';
 import { createSessionPanel } from './session-panel.js';
+import { createSolverPanel } from './solver-panel.js';
 import type { Cone, ControlPointView, LatLng } from './types.js';
 
 export interface MountIndexPageOptions {
@@ -507,7 +508,8 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   const openJointSolve = (): void => {
     solveModal.open({ start: api.solveJointStream, title: 'Solve all (joint)' });
   };
-  createSessionPanel(getElement('session-host'), { onSolve: openJointSolve });
+  createSolverPanel(getElement('solver-host'), openJointSolve);
+  createSessionPanel(getElement('session-host'));
   const stationsReady = loadStationMarkers();
   const cpsReady = showIndexControlPoints();
   // Push data-driven slider bounds in once both fetches resolve. The slider

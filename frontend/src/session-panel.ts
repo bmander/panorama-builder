@@ -1,12 +1,11 @@
-// Solver-aware session widget. Hidden when no session is active. When a
+// Session save/abandon widget. Hidden when no session is active. When a
 // session exists it shows a counter ("N pending" / "N pending · M solver")
-// and three buttons:
-//   - Solve   enabled when there are user-pending changes
+// and two buttons:
 //   - Save    enabled when a solve has run with no further user changes
 //   - Abandon always enabled while the widget is shown
 //
-// Save conflicts open the #session-conflict-modal block in index.html with a
-// single Abandon-session action.
+// Save conflicts open the #session-conflict-modal block in index.html
+// with a single Abandon-session action.
 
 import type { ApiEntityRef, RankDeficientAxis } from './api.js';
 import * as api from './api.js';
@@ -20,16 +19,7 @@ export interface SessionPanel {
   destroy(): void;
 }
 
-export interface CreateSessionPanelOptions {
-  // Click handler for the widget's Solve button. Hosts wire this to whichever
-  // solve modal is appropriate for the current view (joint vs. single-station).
-  onSolve: () => void;
-}
-
-export function createSessionPanel(
-  host: HTMLElement,
-  options: CreateSessionPanelOptions,
-): SessionPanel {
+export function createSessionPanel(host: HTMLElement): SessionPanel {
   const root = document.createElement('div');
   root.className = 'session-widget';
   root.hidden = true;
@@ -52,10 +42,6 @@ export function createSessionPanel(
   dropdown.className = 'session-widget-dropdown';
   dropdown.hidden = true;
   root.appendChild(dropdown);
-
-  const solveBtn = btn('Solve');
-  solveBtn.addEventListener('click', () => { options.onSolve(); });
-  root.appendChild(solveBtn);
 
   const saveBtn = btn('Save');
   saveBtn.addEventListener('click', () => { onSave(); });
@@ -139,7 +125,6 @@ export function createSessionPanel(
     counter.textContent = solverChanges === null
       ? `${userPending.toString()} pending`
       : `${userPending.toString()} pending · ${solverChanges.toString()} solver`;
-    solveBtn.disabled = userPending === 0;
     saveBtn.disabled = solverChanges === null || userPending !== 0;
     void refreshProblems();
   }
