@@ -27,7 +27,6 @@ export interface CreateSettingsPanelOptions {
   sunMarker: SunMarker;
   sky: Sky;
   getCameraLocation: () => LatLng | null;
-  onShowAllCPsChange: (value: boolean) => void;
   // null = no limit; otherwise distance in meters. Observed CPs bypass.
   onCpMaxDistanceChange: (meters: number | null) => void;
   onSurfaceOpacityChange: (opacity: number) => void;
@@ -40,7 +39,7 @@ function hazeSliderToDensity(v: number): number {
 
 export function createSettingsPanel({
   viewer, terrain, sunMarker, sky,
-  getCameraLocation, onShowAllCPsChange, onCpMaxDistanceChange,
+  getCameraLocation, onCpMaxDistanceChange,
   onSurfaceOpacityChange,
 }: CreateSettingsPanelOptions): SettingsPanel {
   const terrainToggleEl = getElement<HTMLInputElement>('terrain-toggle');
@@ -57,7 +56,6 @@ export function createSettingsPanel({
   const skyCloudElevationEl = getElement<HTMLInputElement>('sky-cloud-elevation');
   const curvatureToggleEl = getElement<HTMLInputElement>('curvature-toggle');
   const refractionToggleEl = getElement<HTMLInputElement>('refraction-toggle');
-  const showAllCPsEl = getElement<HTMLInputElement>('show-all-cps');
   const cpMaxDistanceEl = getElement<HTMLInputElement>('cp-max-distance');
   const surfaceOpacityEl = getElement<HTMLInputElement>('surface-opacity-slider');
   // Push the slider's HTML default into the renderer so it starts at the
@@ -153,10 +151,6 @@ export function createSettingsPanel({
 
   refractionToggleEl.addEventListener('change', () => {
     setRefractionEnabled(refractionToggleEl.checked);
-  });
-
-  showAllCPsEl.addEventListener('change', () => {
-    onShowAllCPsChange(showAllCPsEl.checked);
   });
 
   // 'input' (not 'change') so the cutoff updates live as the user types.

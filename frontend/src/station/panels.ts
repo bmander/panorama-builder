@@ -90,9 +90,22 @@ export function createStationPanels(opts: CreateStationPanelsOptions): StationPa
   const settings = createSettingsPanel({
     viewer, terrain, sunMarker, sky,
     getCameraLocation: () => worldCamera.getPose().stationAnchor,
-    onShowAllCPsChange: value => { data.setShowAllCPs(value); },
     onCpMaxDistanceChange: meters => { data.setCpMaxDistanceM(meters); },
     onSurfaceOpacityChange: opacity => { cpSurfacesRenderer.setOpacity(opacity); },
+  });
+
+  // "Show all control points" menu item — persisted across reloads.
+  const SHOW_ALL_CPS_KEY = 'panorama:show-all-cps';
+  getElement('show-all-cps-item').hidden = false;
+  const showAllCpsEl = getElement<HTMLInputElement>('show-all-cps');
+  const initialShowAllCps = localStorage.getItem(SHOW_ALL_CPS_KEY) === '1';
+  showAllCpsEl.checked = initialShowAllCps;
+  data.setShowAllCPs(initialShowAllCps);
+  showAllCpsEl.addEventListener('change', () => {
+    const v = showAllCpsEl.checked;
+    if (v) localStorage.setItem(SHOW_ALL_CPS_KEY, '1');
+    else localStorage.removeItem(SHOW_ALL_CPS_KEY);
+    data.setShowAllCPs(v);
   });
 
   const admin = createAdminModal({ getCurrentStationId: () => route.getStationId() });

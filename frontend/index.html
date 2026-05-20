@@ -21,6 +21,10 @@
     <button id="settings-btn" class="menu-item" role="menuitem" aria-expanded="false">Display</button>
     <button id="sun-dial-btn" class="menu-item" role="menuitem">Sun dial</button>
     <button id="download" class="menu-item" role="menuitem">Download PNG</button>
+    <label id="show-all-cps-item" class="menu-item" role="menuitemcheckbox" hidden
+           title="Show every control point with a known location, not just those observed by this station. Useful for adding observations for cross-station landmarks.">
+      <input type="checkbox" id="show-all-cps"> Show all control points
+    </label>
     <label id="index-show-cps-item" class="menu-item" role="menuitemcheckbox" hidden>
       <input type="checkbox" id="index-show-cps"> Show control points
     </label>
@@ -294,7 +298,6 @@
     </div>
     <label class="settings-check"><input type="checkbox" id="curvature-toggle" checked> Earth curvature</label>
     <label class="settings-check"><input type="checkbox" id="refraction-toggle" checked> Atmospheric refraction</label>
-    <label class="settings-check" title="Show every control point with a known location, not just those observed by this station. Useful for adding observations for cross-station landmarks."><input type="checkbox" id="show-all-cps"> Show all control points</label>
     <label class="settings-inline" title="Hide control points farther than this from the camera. Observed CPs always show."><input type="number" id="cp-max-distance" min="0" step="100" placeholder="no limit"> Max CP distance (m)</label>
   </div>
   <div id="hud"></div>

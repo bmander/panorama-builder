@@ -118,8 +118,9 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   // initial refresh (which would otherwise drop it under showCps=false).
   let focusedCpId: string | null = focusIndexControlPointId;
   // Master toggle: when off, the CP layer is empty except for preview
-  // overrides. Off by default — a freshly-loaded map shows stations only.
-  let showCps = false;
+  // overrides. Persisted across reloads via localStorage.
+  const INDEX_SHOW_CPS_KEY = 'panorama:index-show-cps';
+  let showCps = localStorage.getItem(INDEX_SHOW_CPS_KEY) === '1';
 
   function refreshIndexControlPoints(): void {
     const { startMs, endMs } = timeFilter.getRange();
@@ -421,8 +422,11 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   }
   getElement('index-show-cps-item').hidden = false;
   const showCpsCheckbox = getElement<HTMLInputElement>('index-show-cps');
+  showCpsCheckbox.checked = showCps;
   showCpsCheckbox.addEventListener('change', () => {
     showCps = showCpsCheckbox.checked;
+    if (showCps) localStorage.setItem(INDEX_SHOW_CPS_KEY, '1');
+    else localStorage.removeItem(INDEX_SHOW_CPS_KEY);
     refreshIndexControlPoints();
   });
   attachHamburgerMenu();
