@@ -94,24 +94,30 @@ export function createStationPanels(opts: CreateStationPanelsOptions): StationPa
     onSurfaceOpacityChange: opacity => { cpSurfacesRenderer.setOpacity(opacity); },
   });
 
-  // "Show all control points" menu item — persisted across reloads.
-  const SHOW_ALL_CPS_KEY = 'panorama:show-all-cps';
-  getElement('show-all-cps-item').hidden = false;
-  const showAllCpsEl = getElement<HTMLInputElement>('show-all-cps');
-  const initialShowAllCps = localStorage.getItem(SHOW_ALL_CPS_KEY) === '1';
-  showAllCpsEl.checked = initialShowAllCps;
-  // Deferred: data's getCapturedAt closure reaches back through
-  // panels.stationFields, which doesn't exist until createStationPanels
-  // returns. A microtask waits for both bindings.
-  if (initialShowAllCps) {
-    queueMicrotask(() => { data.setShowAllCPs(initialShowAllCps); });
+  // CP visibility toggles — persisted across reloads.
+  function wireCheckbox(
+    itemId: string, inputId: string, storageKey: string,
+    push: (v: boolean) => void,
+  ): void {
+    getElement(itemId).hidden = false;
+    const el = getElement<HTMLInputElement>(inputId);
+    const initial = localStorage.getItem(storageKey) === '1';
+    el.checked = initial;
+    // Deferred: data's getCapturedAt closure reaches back through
+    // panels.stationFields, which doesn't exist until createStationPanels
+    // returns. A microtask waits for both bindings.
+    if (initial) queueMicrotask(() => { push(initial); });
+    el.addEventListener('change', () => {
+      const v = el.checked;
+      if (v) localStorage.setItem(storageKey, '1');
+      else localStorage.removeItem(storageKey);
+      push(v);
+    });
   }
-  showAllCpsEl.addEventListener('change', () => {
-    const v = showAllCpsEl.checked;
-    if (v) localStorage.setItem(SHOW_ALL_CPS_KEY, '1');
-    else localStorage.removeItem(SHOW_ALL_CPS_KEY);
-    data.setShowAllCPs(v);
-  });
+  wireCheckbox('cp-show-uncited-item', 'cp-show-uncited',
+    'panorama:cp-show-uncited', v => { data.setShowUncitedCPs(v); });
+  wireCheckbox('cp-show-all-item', 'cp-show-all',
+    'panorama:cp-show-all', v => { data.setShowAllCPs(v); });
 
   const admin = createAdminModal({ getCurrentStationId: () => route.getStationId() });
 

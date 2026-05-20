@@ -16,6 +16,7 @@
 
 import * as THREE from 'three';
 import type { LatLng, ControlPointView } from './types.js';
+import type { ApiCpObservationStatus } from './api.js';
 import { curvatureDrop, subscribeCurvatureChange } from './curvature.js';
 import { latLngToCameraRelativeMeters } from './geo.js';
 import { createDotLayer } from './dot-layer.js';
@@ -28,6 +29,8 @@ import { norm2 } from './mathx.js';
 
 const MARKER_COLOR = 0x5080ff;
 const MARKER_COLOR_SELECTED = 0xffff66;
+const MARKER_COLOR_ABSENT = 0xff7878;     // light red
+const MARKER_COLOR_OBSCURED = 0x5e9a9a;   // desaturated teal
 
 // Half-height of the vertical line for a null-altitude CP, in viewer-relative
 // meters. The viewer camera's far plane is 1e6, so 1e4 is well inside it and
@@ -45,6 +48,9 @@ export interface ControlPointMarker {
   // null altitude → render as a vertical line at (lat,lng) instead of a dot.
   readonly altitude: number | null;
   readonly selected: boolean;
+  // Per-station visibility status; tints the marker (absent → red,
+  // obscured → teal).
+  readonly status: ApiCpObservationStatus | null;
   // Scene-graph handles for image measurements linked to this CP. World
   // positions are resolved during update() via getWorldPosition(). Ignored
   // when altitude is null (no defined endpoint to draw a residual to).
@@ -84,6 +90,14 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
   const lineMatSel = new THREE.LineBasicMaterial({ color: MARKER_COLOR_SELECTED, ...OVERLAY_LINE_BASE_PROPS });
   const colorDefault = new THREE.Color(MARKER_COLOR);
   const colorSelected = new THREE.Color(MARKER_COLOR_SELECTED);
+  const colorAbsent = new THREE.Color(MARKER_COLOR_ABSENT);
+  const colorObscured = new THREE.Color(MARKER_COLOR_OBSCURED);
+
+  function statusColor(status: ApiCpObservationStatus | null): THREE.Color {
+    if (status === 'absent') return colorAbsent;
+    if (status === 'obscured') return colorObscured;
+    return colorDefault;
+  }
 
   const lineGroup = new THREE.Group();
   scene.add(lineGroup);
@@ -112,7 +126,7 @@ export function createControlPointColumns(opts: CreateControlPointMarkersOptions
     const outlineList: Dot[] = [];
     for (const m of lastMarkers) {
       const highlighted = isHighlighted(m);
-      const color = highlighted ? colorSelected : colorDefault;
+      const color = highlighted ? colorSelected : statusColor(m.status);
       const lineMaterial = highlighted ? lineMatSel : lineMat;
       const { x, z } = latLngToCameraRelativeMeters(m.anchor, lastCamLoc);
       const drop = curvatureDrop(x * x + z * z);

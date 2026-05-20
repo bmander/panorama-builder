@@ -21,9 +21,13 @@
     <button id="settings-btn" class="menu-item" role="menuitem" aria-expanded="false">Display</button>
     <button id="sun-dial-btn" class="menu-item" role="menuitem">Sun dial</button>
     <button id="download" class="menu-item" role="menuitem">Download PNG</button>
-    <label id="show-all-cps-item" class="menu-item" role="menuitemcheckbox" hidden
-           title="Show every control point with a known location, not just those observed by this station. Useful for adding observations for cross-station landmarks.">
-      <input type="checkbox" id="show-all-cps"> Show all control points
+    <label id="cp-show-uncited-item" class="menu-item" role="menuitemcheckbox" hidden
+           title="Include control points that have no visibility status at this station yet. Useful for adding observations for cross-station landmarks.">
+      <input type="checkbox" id="cp-show-uncited"> Show uncited control points
+    </label>
+    <label id="cp-show-all-item" class="menu-item" role="menuitemcheckbox" hidden
+           title="Include uncited control points and ones marked absent or obscured at this station. Absent CPs are tinted red; obscured CPs are tinted teal.">
+      <input type="checkbox" id="cp-show-all"> Show all control points
     </label>
     <label id="index-show-cps-item" class="menu-item" role="menuitemcheckbox" hidden>
       <input type="checkbox" id="index-show-cps"> Show control points

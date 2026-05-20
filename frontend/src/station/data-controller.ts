@@ -93,6 +93,9 @@ export interface StationDataController {
   setOtherStations(stations: readonly StationMarker[]): void;
 
   // Visibility filter setters — settings panel writes these.
+  // showUncited: include CPs with no cp_observation row at this station.
+  // showAll:     superset — also include CPs marked absent or obscured.
+  setShowUncitedCPs(v: boolean): void;
   setShowAllCPs(v: boolean): void;
   setCpMaxDistanceM(v: number | null): void;
 
@@ -165,6 +168,7 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
   let otherCameras: readonly OtherCamera[] = [];
 
   // CP visibility filter flags.
+  let showUncitedCPs = false;
   let showAllCPs = false;
   let cpMaxDistanceM: number | null = null;
 
@@ -194,8 +198,9 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
       const forced = cp.id === focusedCpId;
       const isObserved = forced || observed.has(cp.id);
       const obs = cpObservationByCp.get(cp.id);
-      if (!isObserved && obs && obs.status !== 'present') return false;
-      if (!showAllCPs && !isObserved) return false;
+      // Uncited CPs need "show uncited" or "show all"; absent/obscured need "show all".
+      if (!isObserved && obs && obs.status !== 'present' && !showAllCPs) return false;
+      if (!isObserved && !obs && !showUncitedCPs && !showAllCPs) return false;
       if (capturedMs !== null && !isObserved && !isExtantAt(cp, capturedMs)) return false;
       if (maxD !== null && camLoc && !isObserved
           && groundDistance(camLoc, { lat: cp.estLat, lng: cp.estLng }) > maxD) {
@@ -249,6 +254,7 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
       anchor: { lat: cp.estLat!, lng: cp.estLng! },
       altitude: cp.estAlt,
       selected: cp.selected,
+      status: cpObservationByCp.get(cp.id)?.status ?? null,
       observations: handlesByCpId.get(cp.id) ?? [],
     }));
     cachedVisibleCps = cps;
@@ -644,6 +650,11 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
     deleteCpObservation,
     getCpObservationStatus: (cpId: string) => cpObservationByCp.get(cpId)?.status ?? null,
     setOtherStations: (s) => { otherStations = [...s]; },
+    setShowUncitedCPs: (v) => {
+      if (v === showUncitedCPs) return;
+      showUncitedCPs = v;
+      refreshControlPointColumns();
+    },
     setShowAllCPs: (v) => {
       if (v === showAllCPs) return;
       showAllCPs = v;
