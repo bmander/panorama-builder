@@ -885,7 +885,7 @@ type PhotoPosePatch struct {
 	LockDistK1 *bool `json:"lock_dist_k1,omitempty"`
 	LockDistK2 *bool `json:"lock_dist_k2,omitempty"`
 
-	// LockPhotoAz defaults to false when omitted
+	// LockPhotoAz defaults to true when omitted
 	LockPhotoAz   *bool    `json:"lock_photo_az,omitempty"`
 	LockPhotoRoll *bool    `json:"lock_photo_roll,omitempty"`
 	LockPhotoTilt *bool    `json:"lock_photo_tilt,omitempty"`

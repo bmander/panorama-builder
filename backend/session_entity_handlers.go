@@ -372,6 +372,7 @@ func (s *Server) postPhotoInSession(w http.ResponseWriter, r *http.Request, sess
 		ID: id, StationID: stationID,
 		Aspect: req.Aspect, PhotoAz: req.PhotoAz, PhotoTilt: req.PhotoTilt,
 		PhotoRoll: req.PhotoRoll, SizeRad: sizeRad, Opacity: opacity,
+		LockPhotoAz: true, LockPhotoTilt: true, LockPhotoRoll: true, LockSizeRad: true,
 		LockDistK1: true, LockDistK2: true,
 		CreatedAt: now, UpdatedAt: now,
 	}

@@ -1607,7 +1607,7 @@ components:
         photo_roll: { type: number, format: double }
         size_rad: { type: number, format: double }
         opacity: { type: number, format: double, minimum: 0, maximum: 1 }
-        lock_photo_az: { type: boolean, description: defaults to false when omitted }
+        lock_photo_az: { type: boolean, description: defaults to true when omitted }
         lock_photo_tilt: { type: boolean }
         lock_photo_roll: { type: boolean }
         lock_size_rad: { type: boolean }

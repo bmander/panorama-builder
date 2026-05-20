@@ -1315,7 +1315,7 @@ export interface components {
             size_rad: number;
             /** Format: double */
             opacity?: number;
-            /** @description defaults to false when omitted */
+            /** @description defaults to true when omitted */
             lock_photo_az?: boolean;
             lock_photo_tilt?: boolean;
             lock_photo_roll?: boolean;
