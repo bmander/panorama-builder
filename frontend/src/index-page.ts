@@ -337,6 +337,7 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     previewObservedCpIds = observedCpIds;
     refreshIndexControlPoints();
     view.setStationPreview({
+      stationId: id,
       origin: { lat: data.station.lat, lng: data.station.lng },
       cones,
       observedCpIds,

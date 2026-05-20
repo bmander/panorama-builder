@@ -50,6 +50,10 @@ export interface StationMarker {
 // Fetched-on-click summary of a station, used at the index view to preview
 // what's inside without navigating into it.
 export interface StationPreview {
+  // ID of the station this preview belongs to. Used to suppress that
+  // station marker's small icon-cones while the large preview cones are
+  // drawn for it, so the two don't overlap.
+  stationId: string;
   origin: LatLng;
   cones: Cone[];
   // CP IDs observed by this station — turns the matching index dots green
@@ -594,7 +598,15 @@ export function createMapView({
   function applyStationPreview(next: StationPreview | null): void {
     stationPreview = next;
     redrawStationPreview();
+    restyleStationMarkers();
     restyleIndexControlPoints();
+  }
+
+  function restyleStationMarkers(): void {
+    const previewedId = stationPreview?.stationId ?? null;
+    for (const [id, entry] of stationMarkers) {
+      entry.marker.getElement()?.classList.toggle('previewed', id === previewedId);
+    }
   }
 
   function clearStationDecorations(): void {
@@ -703,6 +715,7 @@ export function createMapView({
         m.addTo(map);
         stationMarkers.set(p.id, { marker: m, view: p });
       }
+      restyleStationMarkers();
     },
     focusStationMarker(id: string): boolean {
       const entry = stationMarkers.get(id);

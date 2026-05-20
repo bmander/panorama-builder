@@ -128,6 +128,9 @@ label.menu-item { display: flex; align-items: center; gap: 6px; }
   fill: #a050ff; fill-opacity: 0.45;
   stroke: rgba(0,0,0,0.6); stroke-width: 0.6; stroke-linejoin: round;
 }
+/* Hide the inner icon-cones on the previewed station so they don't overlap
+   the large preview cones drawn on the map for the same station. */
+.station-frustum-icon.previewed .station-frustum-wedges { display: none; }
 .station-frustum-apex {
   fill: #a050ff; stroke: rgba(0,0,0,0.85); stroke-width: 0.6;
   pointer-events: auto; cursor: pointer;
