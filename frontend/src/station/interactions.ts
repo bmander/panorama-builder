@@ -12,13 +12,14 @@ import type { PhotoBodyHit } from '../input.js';
 import { findHitColumn } from '../map-poi-columns.js';
 import { findHitDot } from '../dot-layer.js';
 import {
-  cpHref, cpLabel, formatLifespanLines, getElement, poiData,
+  cpHref, cpLabel, formatLifespanLines, getElement, overlayData, poiData,
 } from '../types.js';
 import { latLngToCameraRelativeMeters, tangentMetersToLatLng } from '../geo.js';
 import { vertexToLatLngAlt } from '../camera-anchored.js';
 import { radToDeg } from '../mathx.js';
 import { dirFromAzAlt } from '../overlay.js';
 import { locEq } from '../world-camera.js';
+import { triggerDownloadUrl } from '../ui.js';
 import type { ContextMenuItem } from '../context-menu.js';
 import type { StationScene } from './scene.js';
 import type { StationDataController } from './data-controller.js';
@@ -255,12 +256,17 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
     },
     onHoveredColumnChange: id => { cpColumns.setHoveredMarker(id); },
     onPhotoBodyContextMenu: (overlay, u, v, sx, sy) => {
+      const photoId = overlayData(overlay).id;
       panels.contextMenu.open(sx, sy, [
         { label: 'Add observation here', onClick: () => { panels.observationModal.open(overlay, u, v); } },
         { label: 'Replace image…', onClick: () => {
           void pickImageFile().then(file => {
             if (file) void data.handlers.onReplacePhoto(overlay, file);
           });
+        } },
+        { label: 'Download image', onClick: () => {
+          triggerDownloadUrl(`panorama-photo-${photoId}.jpg`,
+            api.photoBlobUrl({ id: photoId, blob_path: null }));
         } },
       ]);
     },

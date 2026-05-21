@@ -48,6 +48,16 @@ export function triggerDownload(filename: string, blob: Blob): void {
   setTimeout(() => { URL.revokeObjectURL(a.href); }, 1000);
 }
 
+// Trigger a browser download from a same-origin URL. The browser streams
+// the response straight to disk (no in-memory buffering), and there's no
+// object URL to revoke.
+export function triggerDownloadUrl(filename: string, url: string): void {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+}
+
 export function attachDownload({ baker }: { baker: Baker }): void {
   getElement('download').addEventListener('click', () => {
     const baked = baker.bake(8192);
