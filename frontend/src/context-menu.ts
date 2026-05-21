@@ -49,30 +49,30 @@ export function createContextMenu(): ContextMenu {
     legend.textContent = item.legend;
     fs.appendChild(legend);
     const groupName = `ctx-radio-${++radioGroupSeq}`;
+    // Tracks the live selection so a click on the already-selected radio is
+    // recognized as a toggle-off — native radios don't fire `change` when
+    // the state doesn't move.
+    let currentSelected = item.selected;
     for (const opt of item.options) {
       const label = document.createElement('label');
       const input = document.createElement('input');
       input.type = 'radio';
       input.name = groupName;
       input.value = opt.value;
-      input.checked = item.selected === opt.value;
+      input.checked = currentSelected === opt.value;
       if (opt.disabled) input.disabled = true;
-      // Mousedown so toggle-off works: a click on an already-checked radio
-      // emits no native `change` event. Intercepting mousedown lets us detect
-      // the same-value click before the radio re-affirms its checked state.
-      input.addEventListener('mousedown', e => {
-        if (input.disabled) return;
-        if (item.selected === opt.value) {
-          e.preventDefault();
-          close();
-          item.onChange(null);
-        }
-      });
       input.addEventListener('change', () => {
-        if (input.checked && item.selected !== opt.value) {
-          close();
-          item.onChange(opt.value);
-        }
+        if (!input.checked) return;
+        if (currentSelected === opt.value) return;
+        currentSelected = opt.value;
+        item.onChange(opt.value);
+      });
+      input.addEventListener('click', () => {
+        if (input.disabled) return;
+        if (currentSelected !== opt.value) return;
+        input.checked = false;
+        currentSelected = null;
+        item.onChange(null);
       });
       const span = document.createElement('span');
       span.textContent = opt.label;
