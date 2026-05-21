@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -313,12 +314,16 @@ func (s *Server) revertToBefore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// For each entity touched by any commit in [targetSeq, currentMaxSeq],
-	// pick the earliest touching commit's before_json — that's the entity's
-	// state immediately before the target, since nothing in the range is
-	// earlier than target.
+	// walk its ops in commit-seq order and accumulate the "earliest before"
+	// value per column. After session_ops switched to partial column diffs,
+	// the very-first op's before_json may only carry a subset of columns
+	// (the ones THAT op touched), so we have to merge across the range: for
+	// columns the first op didn't touch but a later delete op carries
+	// (deletes journal full rows), the later op's before_json fills in the
+	// pre-range value. First-seen-per-column always wins, since the goal is
+	// the state immediately before the earliest range commit.
 	rows, err = tx.Query(ctx, `
-		SELECT DISTINCT ON (so.entity_type, so.entity_id)
-		       so.entity_type, so.entity_id, so.before_json
+		SELECT so.entity_type, so.entity_id, so.op, so.before_json
 		FROM session_ops so
 		JOIN commits c ON c.source_session_id = so.session_id
 		WHERE c.seq BETWEEN $1 AND $2
@@ -327,28 +332,56 @@ func (s *Server) revertToBefore(w http.ResponseWriter, r *http.Request) {
 		writeErrorFromDB(w, err)
 		return
 	}
-	type entityBefore struct {
-		entityType string
-		entityID   string
-		beforeJSON []byte // nil ⇒ entity did not exist before the target
+	type entAgg struct {
+		entityType   string
+		entityID     string
+		targetExists bool // false ⇒ entity did not exist before the range (first op was an insert)
+		targetCols   map[string]json.RawMessage
 	}
-	var entities []entityBefore
-	idsByType := make(map[string][]string)
+	aggByKey := map[string]*entAgg{}
+	var entitiesInOrder []*entAgg
 	for rows.Next() {
-		var e entityBefore
-		if err := rows.Scan(&e.entityType, &e.entityID, &e.beforeJSON); err != nil {
+		var entityType, entityID, op string
+		var beforeJSON []byte
+		if err := rows.Scan(&entityType, &entityID, &op, &beforeJSON); err != nil {
 			rows.Close()
 			writeErrorFromDB(w, err)
 			return
 		}
-		entities = append(entities, e)
-		idsByType[e.entityType] = append(idsByType[e.entityType], e.entityID)
+		key := entityKey(entityType, entityID)
+		a, ok := aggByKey[key]
+		if !ok {
+			a = &entAgg{
+				entityType:   entityType,
+				entityID:     entityID,
+				targetExists: op != "insert",
+				targetCols:   map[string]json.RawMessage{},
+			}
+			aggByKey[key] = a
+			entitiesInOrder = append(entitiesInOrder, a)
+		}
+		if !a.targetExists || len(beforeJSON) == 0 {
+			continue
+		}
+		var beforeMap map[string]json.RawMessage
+		if err := json.Unmarshal(beforeJSON, &beforeMap); err != nil {
+			rows.Close()
+			writeErrorFromDB(w, err)
+			return
+		}
+		for k, v := range beforeMap {
+			if _, has := a.targetCols[k]; !has {
+				a.targetCols[k] = v
+			}
+		}
 	}
 	rows.Close()
 
-	// Bulk-load current state per entity type (one SELECT per type instead
-	// of one per entity).
-	currentByKey := make(map[string][]byte, len(entities))
+	idsByType := make(map[string][]string, len(entitiesInOrder))
+	for _, a := range entitiesInOrder {
+		idsByType[a.entityType] = append(idsByType[a.entityType], a.entityID)
+	}
+	currentByKey := make(map[string][]byte, len(entitiesInOrder))
 	for entityType, ids := range idsByType {
 		got, err := loadEntityJSONsByType(ctx, tx, entityType, ids)
 		if err != nil {
@@ -356,31 +389,43 @@ func (s *Server) revertToBefore(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for id, js := range got {
-			currentByKey[entityType+"\x00"+id] = js
+			currentByKey[entityKey(entityType, id)] = js
 		}
 	}
 
-	plan := make([]journalOp, 0, len(entities))
-	for _, e := range entities {
-		current, hasCurrent := currentByKey[e.entityType+"\x00"+e.entityID]
-		target := e.beforeJSON
+	plan := make([]journalOp, 0, len(entitiesInOrder))
+	for _, a := range entitiesInOrder {
+		key := entityKey(a.entityType, a.entityID)
+		current, hasCurrent := currentByKey[key]
 		switch {
-		case target == nil && !hasCurrent:
+		case !a.targetExists && !hasCurrent:
 			continue
-		case target == nil && hasCurrent:
+		case !a.targetExists && hasCurrent:
 			plan = append(plan, journalOp{
-				EntityType: e.entityType, EntityID: e.entityID,
+				EntityType: a.entityType, EntityID: a.entityID,
 				Op: "delete", BeforeJSON: current, AfterJSON: nil,
 			})
-		case target != nil && !hasCurrent:
+		case a.targetExists && !hasCurrent:
+			// Entity was deleted somewhere in the range; the delete op's
+			// before_json contributed the full pre-range row to targetCols.
 			plan = append(plan, journalOp{
-				EntityType: e.entityType, EntityID: e.entityID,
-				Op: "insert", BeforeJSON: nil, AfterJSON: target,
+				EntityType: a.entityType, EntityID: a.entityID,
+				Op: "insert", BeforeJSON: nil, AfterJSON: jsonMust(a.targetCols),
 			})
 		default:
+			// Update: restore exactly the columns the range moved away from
+			// their pre-range values. before_json is the current main slice
+			// for the same keys, so the resulting op is symmetric and a
+			// revert-of-revert can invert it cleanly.
+			afterPartial := jsonMust(a.targetCols)
+			beforePartial := sliceColumns(current, a.targetCols)
+			bb, ab := trimColumnDiffToChanged(beforePartial, afterPartial)
+			if bb == nil && ab == nil {
+				continue
+			}
 			plan = append(plan, journalOp{
-				EntityType: e.entityType, EntityID: e.entityID,
-				Op: "update", BeforeJSON: current, AfterJSON: target,
+				EntityType: a.entityType, EntityID: a.entityID,
+				Op: "update", BeforeJSON: bb, AfterJSON: ab,
 			})
 		}
 	}

@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Patch holds a JSON object decoded as raw values, so handlers can
@@ -187,4 +190,16 @@ func (b *UpdateBuilder) Query(table, cols string) string {
 	parts = append(parts, "updated_at = NOW()")
 	return fmt.Sprintf("UPDATE %s SET %s WHERE id = $1 RETURNING %s",
 		table, strings.Join(parts, ", "), cols)
+}
+
+// Exec runs the assembled UPDATE without a RETURNING clause. Used by the
+// session-apply path, which doesn't need the post-write row shape that
+// handlers fetch via Query.
+func (b *UpdateBuilder) Exec(ctx context.Context, tx pgx.Tx, table string) error {
+	parts := append([]string{}, b.sets...)
+	parts = append(parts, "updated_at = NOW()")
+	sql := fmt.Sprintf("UPDATE %s SET %s WHERE id = $1",
+		table, strings.Join(parts, ", "))
+	_, err := tx.Exec(ctx, sql, b.args...)
+	return err
 }

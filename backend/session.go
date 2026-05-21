@@ -85,6 +85,13 @@ func (o sessionOverlay) get(entityType, entityID string) entityState {
 	return o[entityType][entityID]
 }
 
+// entityKey joins (entity_type, entity_id) into a flat map key. Uses a NUL
+// separator because ids are base32 and types are lowercase identifiers, so
+// no real value can contain it.
+func entityKey(entityType, entityID string) string {
+	return entityType + "\x00" + entityID
+}
+
 // findSession looks up a session by id. Returns (nil, nil) if not found.
 func findSession(ctx context.Context, db *pgxpool.Pool, id string) (*Session, error) {
 	if !validID(id) {
@@ -171,6 +178,11 @@ func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (*Sessio
 // reduces them into per-entity terminal state. With recordOp coalescing
 // eagerly, each entity already has at most one row, but we re-fold here in
 // case ops are written through a future path that bypasses recordOp.
+//
+// For 'update' ops, after_json in session_ops is a partial column diff. We
+// reconstruct a full-row JSON for the overlay by bulk-loading the matching
+// main rows (one query per entity_type touched) and merging the diff on top,
+// so downstream readers see the same full-row shape they always have.
 func loadSessionOverlay(ctx context.Context, db queryerLike, sessionID string) (sessionOverlay, error) {
 	rows, err := db.Query(ctx, `
 		SELECT seq, entity_type, entity_id, op, before_json, after_json
@@ -182,6 +194,8 @@ func loadSessionOverlay(ctx context.Context, db queryerLike, sessionID string) (
 	}
 	defer rows.Close()
 	overlay := sessionOverlay{}
+	updateIDsByType := map[string][]string{}
+	updateOps := []journalOp{}
 	for rows.Next() {
 		var op journalOp
 		if err := rows.Scan(&op.Seq, &op.EntityType, &op.EntityID, &op.Op, &op.BeforeJSON, &op.AfterJSON); err != nil {
@@ -193,15 +207,39 @@ func loadSessionOverlay(ctx context.Context, db queryerLike, sessionID string) (
 			overlay[op.EntityType] = bucket
 		}
 		switch op.Op {
-		case "insert", "update":
+		case "insert":
 			bucket[op.EntityID] = entityState{after: op.AfterJSON}
+		case "update":
+			updateIDsByType[op.EntityType] = append(updateIDsByType[op.EntityType], op.EntityID)
+			updateOps = append(updateOps, op)
 		case "delete":
 			bucket[op.EntityID] = entityState{deleted: true}
 		default:
 			return nil, fmt.Errorf("unknown op kind %q", op.Op)
 		}
 	}
-	return overlay, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(updateOps) == 0 {
+		return overlay, nil
+	}
+	mainByKey := make(map[string][]byte, len(updateOps))
+	for entityType, ids := range updateIDsByType {
+		got, err := loadEntityJSONsByType(ctx, db, entityType, ids)
+		if err != nil {
+			return nil, err
+		}
+		for id, js := range got {
+			mainByKey[entityKey(entityType, id)] = js
+		}
+	}
+	for _, op := range updateOps {
+		main := mainByKey[entityKey(op.EntityType, op.EntityID)]
+		merged := mergeFullRowWithDiff(main, op.AfterJSON)
+		overlay[op.EntityType][op.EntityID] = entityState{after: merged}
+	}
+	return overlay, nil
 }
 
 // loadSessionOps reads the journal in seq order, without coalescing.
@@ -232,12 +270,18 @@ func loadSessionOps(ctx context.Context, db *pgxpool.Pool, sessionID string) ([]
 // most one row per (session, entity) — moving an observation ten times
 // leaves a single update op, not ten.
 //
+// For 'update' ops, before/after are shrunk to the column-level symmetric
+// difference via columnDiff before being written. An empty diff (no columns
+// actually changed) drops the op entirely. Inserts and deletes carry the
+// full row on their populated side.
+//
 // Compose rules (existing → new):
 //
-//	insert + update → insert (after replaced)
+//	insert + update → insert (after replaced with merged full row)
 //	insert + delete → drop the row entirely (no-op for merge)
-//	update + update → update (after replaced, before preserved)
-//	update + delete → delete (before preserved)
+//	update + update → update (per-column: before = earliest, after = latest;
+//	                          empty net diff drops the row)
+//	update + delete → delete (before promoted to full row from main snapshot)
 //
 // 'delete + anything' shouldn't reach here — once an entity is journaled
 // as deleted, current*() returns present=false and the caller exits early
@@ -245,15 +289,17 @@ func loadSessionOps(ctx context.Context, db *pgxpool.Pool, sessionID string) ([]
 func recordOp(ctx context.Context, tx pgx.Tx, sessionID, entityType, entityID, op string, before, after []byte) error {
 	// Find any existing op for this entity.
 	var (
-		existingSeq int64
-		existingOp  string
-		hasExisting bool
+		existingSeq        int64
+		existingOp         string
+		existingBeforeJSON []byte
+		existingAfterJSON  []byte
+		hasExisting        bool
 	)
 	err := tx.QueryRow(ctx, `
-		SELECT seq, op FROM session_ops
+		SELECT seq, op, before_json, after_json FROM session_ops
 		WHERE session_id=$1 AND entity_type=$2 AND entity_id=$3`,
 		sessionID, entityType, entityID,
-	).Scan(&existingSeq, &existingOp)
+	).Scan(&existingSeq, &existingOp, &existingBeforeJSON, &existingAfterJSON)
 	switch {
 	case err == nil:
 		hasExisting = true
@@ -264,6 +310,13 @@ func recordOp(ctx context.Context, tx pgx.Tx, sessionID, entityType, entityID, o
 	}
 
 	if !hasExisting {
+		if op == "update" {
+			beforeDiff, afterDiff := columnDiff(before, after)
+			if beforeDiff == nil && afterDiff == nil {
+				return nil
+			}
+			before, after = beforeDiff, afterDiff
+		}
 		return insertFreshOp(ctx, tx, sessionID, entityType, entityID, op, before, after)
 	}
 
@@ -275,26 +328,48 @@ func recordOp(ctx context.Context, tx pgx.Tx, sessionID, entityType, entityID, o
 			sessionID, existingSeq)
 		return err
 	case existingOp == "insert" && op == "update":
-		// Keep the insert, swap in the new after state.
+		// Keep the insert. The existing after_json is the inserted full row;
+		// merge the partial new-update on top so after_json stays a full row.
+		// If the update touches nothing, leave the existing row alone.
+		_, afterDiff := columnDiff(before, after)
+		if afterDiff == nil {
+			return nil
+		}
+		mergedAfter := mergeFullRowWithDiff(existingAfterJSON, afterDiff)
 		_, err := tx.Exec(ctx, `
 			UPDATE session_ops SET after_json=$3
 			WHERE session_id=$1 AND seq=$2`,
-			sessionID, existingSeq, after)
+			sessionID, existingSeq, mergedAfter)
 		return err
 	case existingOp == "update" && op == "update":
-		// Keep the update, swap in the new after state; before stays as the
-		// original main-row snapshot.
+		newBeforeDiff, newAfterDiff := columnDiff(before, after)
+		if newBeforeDiff == nil && newAfterDiff == nil {
+			return nil
+		}
+		mergedBefore, mergedAfter := coalesceUpdateDiff(
+			existingBeforeJSON, existingAfterJSON, newBeforeDiff, newAfterDiff)
+		if mergedBefore == nil && mergedAfter == nil {
+			_, err := tx.Exec(ctx,
+				`DELETE FROM session_ops WHERE session_id=$1 AND seq=$2`,
+				sessionID, existingSeq)
+			return err
+		}
 		_, err := tx.Exec(ctx, `
-			UPDATE session_ops SET after_json=$3
+			UPDATE session_ops SET before_json=$3, after_json=$4
 			WHERE session_id=$1 AND seq=$2`,
-			sessionID, existingSeq, after)
+			sessionID, existingSeq, mergedBefore, mergedAfter)
 		return err
 	case existingOp == "update" && op == "delete":
-		// Turn the update into a delete; before stays.
+		// Turn the update into a delete. The caller-supplied `before` is the
+		// live full row (= pre-session row with the prior update applied);
+		// overlay the partial pre-session values back onto it to recover the
+		// pre-session full row, which is what the delete needs to journal
+		// so revert can restore the entity in one step.
+		preSessionFull := mergeFullRowWithDiff(before, existingBeforeJSON)
 		_, err := tx.Exec(ctx, `
-			UPDATE session_ops SET op='delete', after_json=NULL
+			UPDATE session_ops SET op='delete', before_json=$3, after_json=NULL
 			WHERE session_id=$1 AND seq=$2`,
-			sessionID, existingSeq)
+			sessionID, existingSeq, preSessionFull)
 		return err
 	default:
 		return fmt.Errorf("unexpected op transition %s + %s", existingOp, op)
