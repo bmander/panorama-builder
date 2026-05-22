@@ -19,6 +19,7 @@ import {
 import type { LatLng } from './types.js';
 import { AUTO_LOCK_THRESHOLDS, applyLockState } from './auto-lock.js';
 import type { StationAutoLock } from './auto-lock.js';
+import { bindDisabledToSession, sessionStore } from './session-store.js';
 import {
   SIGMA_ALT_REFUSE_M, SIGMA_ALT_WARN_M,
   SIGMA_POS_REFUSE_M, SIGMA_POS_WARN_M,
@@ -79,6 +80,16 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
   const lockAltEl = getElement<HTMLInputElement>('station-lock-alt');
   const capturedAtEl = getElement<HTMLInputElement>('station-captured-at');
   const capturedAtEstEl = getElement<HTMLSpanElement>('station-captured-at-est');
+
+  // lockPosEl/lockAltEl intentionally omitted: applyLockState (called from
+  // render below) folds editingActive() with the per-axis auto-lock flag,
+  // and bindDisabledToSession would clobber the auto-lock bit on every
+  // session toggle.
+  for (const el of [latEl, lngEl, altEl, capturedAtEl]) {
+    bindDisabledToSession(el);
+  }
+  // Re-render on session toggle so applyLockState re-fires for the locks.
+  sessionStore.onChange(() => { render(); });
 
   const sigmaPosEl = createSigmaSpan(lngEl.parentElement!);
   const sigmaAltEl = createSigmaSpan(altEl.parentElement!);
@@ -183,7 +194,6 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
     if (patch.lat !== undefined) body.lat = patch.lat;
     if (patch.lng !== undefined) body.lng = patch.lng;
     if (patch.alt !== undefined) body.alt = patch.alt;
-    if (patch.name !== undefined) body.name = patch.name;
     if (patch.lockLat !== undefined) body.lock_lat = patch.lockLat;
     if (patch.lockLng !== undefined) body.lock_lng = patch.lockLng;
     if (patch.lockAlt !== undefined) body.lock_alt = patch.lockAlt;

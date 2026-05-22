@@ -10,6 +10,7 @@ import type { LatLng } from './types.js';
 import { degToRad, dist2, norm2 } from './mathx.js';
 import { snapshotPhoto, snapshotPoi } from './undo.js';
 import type { PhotoSnapshot, UndoAction, UndoManager } from './undo.js';
+import { editingActive } from './session-store.js';
 
 // Discriminated state machine for the active pointer drag. `null` = no drag in
 // progress. Each variant carries exactly the state its handler needs, so
@@ -626,6 +627,11 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
     // native browser text-edit undo and the inline-edit flows on the CP page.
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+
+    // Undo/redo and delete-selected are write operations — let the keystroke
+    // fall through in view mode so the browser's native behavior wins and we
+    // don't issue a write that the sync layer will silently drop.
+    if (!editingActive()) return;
 
     if (undoManager && (e.metaKey || e.ctrlKey)) {
       const k = e.key.toLowerCase();

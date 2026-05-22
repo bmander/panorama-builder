@@ -47,7 +47,10 @@ function writeStored(id: string | null): void {
 
 function create(): SessionStore {
   const handlers = new Set<() => void>();
-  const notify = (): void => { for (const h of handlers) h(); };
+  const notify = (): void => {
+    syncBodyEditingClass();
+    for (const h of handlers) h();
+  };
   let pendingStart: Promise<string> | null = null;
 
   function setCurrent(id: string | null): void {
@@ -84,3 +87,30 @@ function create(): SessionStore {
 }
 
 export const sessionStore: SessionStore = create();
+
+// True when a session is active — i.e. when writes are permitted. UI surfaces
+// gate their write affordances on this; the api.ts transport layer also
+// throws SessionNotStartedError when this is false.
+export function editingActive(): boolean {
+  return sessionStore.current() !== null;
+}
+
+// Disable a form control whenever no session is active. Subscribes once; the
+// returned unsubscribe is rarely needed since most controls live as long as
+// their page does.
+type Disableable =
+  | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement;
+export function bindDisabledToSession(el: Disableable): () => void {
+  const sync = (): void => { el.disabled = !editingActive(); };
+  sync();
+  return sessionStore.onChange(sync);
+}
+
+// Mirror editing state onto <body> as a class so CSS can dim / hide write
+// affordances without each module wiring its own listener. Module scripts
+// are deferred, so document.body is in place by the time this runs.
+function syncBodyEditingClass(): void {
+  document.body.classList.toggle('editing', editingActive());
+}
+
+syncBodyEditingClass();

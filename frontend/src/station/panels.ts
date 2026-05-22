@@ -35,6 +35,7 @@ import { createStationFields } from '../station-fields.js';
 import type { StationFieldsHandle } from '../station-fields.js';
 import { photoAutoLockFor, stationAutoLockFor } from '../auto-lock.js';
 import type { PhotoAutoLock, StationAutoLock } from '../auto-lock.js';
+import { editingActive } from '../session-store.js';
 import { attachSolveActions } from '../solve-actions.js';
 import { createSolverPanel } from '../solver-panel.js';
 import type { StationScene } from './scene.js';
@@ -219,8 +220,8 @@ export function createStationPanels(opts: CreateStationPanelsOptions): StationPa
     contextMenu, observationModal,
     photoHud, undoManager,
     stationFields, stationNavigation,
-    openConstraintCreate: (a, b) => { cpConstraintModal.openCreate(a, b); },
-    openConstraintEdit: (c) => { cpConstraintModal.openEdit(c); },
-    openSurfaceEdit: (id) => { cpSurfaceModal.open(id); },
+    openConstraintCreate: (a, b) => { if (editingActive()) cpConstraintModal.openCreate(a, b); },
+    openConstraintEdit: (c) => { if (editingActive()) cpConstraintModal.openEdit(c); },
+    openSurfaceEdit: (id) => { if (editingActive()) cpSurfaceModal.open(id); },
   };
 }

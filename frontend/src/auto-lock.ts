@@ -4,6 +4,8 @@
 // columns) stay as user intent; the effective lock the UI shows and the
 // solver applies is manual || auto.
 
+import { editingActive } from './session-store.js';
+
 // Minimum matched-observation count required to *unlock* each axis. Below
 // the threshold ⇒ axis is auto-locked. Photo-owned axes use the per-photo
 // count; station-owned axes use the station-total count.
@@ -80,6 +82,8 @@ export function countMatchedByPhoto(
 // Render one lock checkbox with the effective state (manual || auto).
 // When auto-locked, the checkbox is forced checked and disabled; the
 // tooltip names the threshold so the user knows what would unlock it.
+// Also forced disabled when no session is active (view mode), so
+// applyLockState and bindDisabledToSession don't fight on the same input.
 // Returns the effective bool so the caller can reuse it (e.g. to hide
 // the σ readout for an effectively-locked axis).
 export function applyLockState(
@@ -89,7 +93,7 @@ export function applyLockState(
   if (el.checked !== effective && document.activeElement !== el) {
     el.checked = effective;
   }
-  el.disabled = auto;
+  el.disabled = auto || !editingActive();
   el.title = auto
     ? `auto-locked: needs ${threshold.toString()} matched observations`
     : '';

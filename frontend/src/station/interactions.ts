@@ -21,6 +21,7 @@ import { dirFromAzAlt } from '../overlay.js';
 import { locEq } from '../world-camera.js';
 import { triggerDownloadUrl } from '../ui.js';
 import type { ContextMenuItem } from '../context-menu.js';
+import { editingActive } from '../session-store.js';
 import type { StationScene } from './scene.js';
 import type { StationDataController } from './data-controller.js';
 import type { StationRouteState } from './route-state.js';
@@ -174,7 +175,9 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
     const selected = stationObserves ? 'present' : data.getCpObservationStatus(cpId);
     const items: ContextMenuItem[] = [
       { label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } },
-      {
+    ];
+    if (editingActive()) {
+      items.push({
         kind: 'radio-group',
         legend: 'Visibility',
         options: [
@@ -194,8 +197,8 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
           }
           void data.postCpObservation(cpId, next as api.ApiCpObservationStatus);
         },
-      },
-    ];
+      });
+    }
     // Nudge the menu right so the CP marker (and any reticules just
     // revealed by the selection above) stays uncovered by the menu.
     panels.contextMenu.open(sx + 20, sy, items, header, info);
@@ -226,6 +229,7 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
       writeCameraToURL();
     },
     onPhotoDropped: (tex, blob, aspect, dir, revokeUrl) => {
+      if (!editingActive()) { revokeUrl(); return; }
       void data.handlers.onPhotoDropped(tex, blob, aspect, dir, revokeUrl);
     },
     onShiftWheel: deltaPx => {
@@ -257,18 +261,22 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
     onHoveredColumnChange: id => { cpColumns.setHoveredMarker(id); },
     onPhotoBodyContextMenu: (overlay, u, v, sx, sy) => {
       const photoId = overlayData(overlay).id;
-      panels.contextMenu.open(sx, sy, [
-        { label: 'Add observation here', onClick: () => { panels.observationModal.open(overlay, u, v); } },
-        { label: 'Replace image…', onClick: () => {
-          void pickImageFile().then(file => {
-            if (file) void data.handlers.onReplacePhoto(overlay, file);
-          });
-        } },
-        { label: 'Download image', onClick: () => {
-          triggerDownloadUrl(`panorama-photo-${photoId}.jpg`,
-            api.photoBlobUrl({ id: photoId, blob_path: null }));
-        } },
-      ]);
+      const items: ContextMenuItem[] = [];
+      if (editingActive()) {
+        items.push(
+          { label: 'Add observation here', onClick: () => { panels.observationModal.open(overlay, u, v); } },
+          { label: 'Replace image…', onClick: () => {
+            void pickImageFile().then(file => {
+              if (file) void data.handlers.onReplacePhoto(overlay, file);
+            });
+          } },
+        );
+      }
+      items.push({ label: 'Download image', onClick: () => {
+        triggerDownloadUrl(`panorama-photo-${photoId}.jpg`,
+          api.photoBlobUrl({ id: photoId, blob_path: null }));
+      } });
+      panels.contextMenu.open(sx, sy, items);
     },
     onImagePOIContextMenu: (poi, sx, sy) => {
       const cpId = poiData(poi).controlPointId;

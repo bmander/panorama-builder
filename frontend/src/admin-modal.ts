@@ -2,6 +2,7 @@
 // confirm() and a button-disabled latch to prevent double-submit.
 
 import * as api from './api.js';
+import { bindDisabledToSession, editingActive } from './session-store.js';
 import { getElement } from './types.js';
 
 export interface AdminModal {
@@ -26,7 +27,9 @@ export function createAdminModal({ getCurrentStationId }: CreateAdminModalOption
   adminModalEl.addEventListener('click', e => {
     if (e.target === adminModalEl) close();
   });
+  bindDisabledToSession(adminDeleteBtn);
   adminDeleteBtn.addEventListener('click', () => {
+    if (!editingActive()) return;
     const id = getCurrentStationId();
     if (!confirm('Delete this station? Photos, POIs, and matches will be removed permanently.')) return;
     adminDeleteBtn.disabled = true;

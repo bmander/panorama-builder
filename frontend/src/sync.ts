@@ -127,10 +127,11 @@ export function createSyncManager({
     const locId = getCurrentStationId();
     const tasks: Promise<unknown>[] = [];
 
-    // Any mutation triggers session creation. Reads (e.g. another tab
-    // refreshing) won't get a session, but the moment we'd POST/PUT/DELETE
-    // we want the session header injected.
-    await sessionStore.ensureStarted();
+    // The diff-based syncer only fires writes when a session is active. In
+    // view mode we drop the flush — there's no session to journal into and
+    // the overlay state will re-sync on the next user-initiated edit after
+    // the Edit button opens a session.
+    if (sessionStore.current() === null) return;
 
     // Station lat/lng/alt are now PUT directly from the settings-panel inputs
     // and the index-map marker drag, both of which round-trip the canonical

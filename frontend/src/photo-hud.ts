@@ -15,6 +15,7 @@ import type { PhotoSnapshot, UndoManager } from './undo.js';
 import type { PhotoLocks } from './types.js';
 import { AUTO_LOCK_THRESHOLDS, applyLockState } from './auto-lock.js';
 import type { PhotoAutoLock } from './auto-lock.js';
+import { bindDisabledToSession, sessionStore } from './session-store.js';
 import { SIGMA_ANGLE_REFUSE_RAD, SIGMA_ANGLE_WARN_RAD } from './sigma-thresholds.js';
 import type * as THREE from 'three';
 
@@ -49,6 +50,13 @@ export function createPhotoHud(
   const fovLockEl = getElement<HTMLInputElement>('photo-hud-fov-lock');
   const k1LockEl = getElement<HTMLInputElement>('photo-hud-k1-lock');
   const k2LockEl = getElement<HTMLInputElement>('photo-hud-k2-lock');
+
+  // Lock checkboxes are owned by applyLockState (in refresh below) since
+  // their disabled bit folds session state with the per-axis auto-lock flag.
+  // Mixing bindDisabledToSession in would clobber the auto-lock bit on every
+  // session toggle.
+  const editableInputs = [opacityEl, azEl, tiltEl, rollEl, fovEl, aspectEl, k1El, k2El];
+  for (const el of editableInputs) bindDisabledToSession(el);
 
   // K1/K2 σ is dimensionless; the angle threshold is the natural scale
   // (same convention as merge_gate.go).
@@ -108,6 +116,12 @@ export function createPhotoHud(
     if (changed) sectionEl.hidden = false;
     populate(overlay);
   }
+
+  // Re-run populate on session toggle so applyLockState gets a chance to
+  // fold the new editingActive() state into each lock checkbox's disabled
+  // bit. Without this, the lock checkboxes would keep their pre-toggle
+  // disabled value until the user re-selected a photo.
+  sessionStore.onChange(refresh);
 
   // onApplied fires after the PUT succeeds and is used by the per-field wire
   // helpers to force-write the canonical (e.g. clamped) value back into the

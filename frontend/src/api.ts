@@ -81,28 +81,41 @@ export class SessionConflictError extends Error {
   }
 }
 
+// SessionNotStartedError: thrown by the transport when a non-GET request is
+// dispatched while no session is active. UI surfaces gate themselves on
+// `editingActive()` and shouldn't reach this in normal use; if they do,
+// surface the error rather than silently auto-creating a session.
+export class SessionNotStartedError extends Error {
+  constructor() {
+    super('write attempted with no active session — click Edit to start one');
+    this.name = 'SessionNotStartedError';
+  }
+}
+
 // --- Helpers ---
 
-// Any non-GET request auto-starts a session before firing, so writes can't
-// silently land on main. The session/commit endpoints themselves are the
-// exception — otherwise creating a session would recurse.
+// Non-GET requests require an active session. The session/commit endpoints
+// themselves are the exception — they manage session state, so demanding one
+// would recurse. Anything else throws SessionNotStartedError so UI surfaces
+// that forgot to gate themselves surface the bug rather than silently
+// auto-creating a session behind the user's back.
 function pathManagesSession(path: string): boolean {
   return path.startsWith('/sessions') || path.startsWith('/commits');
 }
 
-async function ensureSessionForWrite(method: string, path: string): Promise<void> {
+function requireSessionForWrite(method: string, path: string): void {
   if (method === 'GET') return;
   if (pathManagesSession(path)) return;
-  await sessionStore.ensureStarted();
+  if (sessionStore.current() === null) throw new SessionNotStartedError();
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  await ensureSessionForWrite(method, path);
+  requireSessionForWrite(method, path);
   return apiRequest<T>(method, path, { body, sessionId: sessionStore.current() });
 }
 
 async function requestVoid(method: string, path: string): Promise<void> {
-  await ensureSessionForWrite(method, path);
+  requireSessionForWrite(method, path);
   return apiRequestVoid(method, path, { sessionId: sessionStore.current() });
 }
 
@@ -168,7 +181,7 @@ export function deletePhoto(id: string): Promise<void> {
 }
 
 export async function uploadPhotoBlob(id: string, blob: Blob): Promise<void> {
-  await sessionStore.ensureStarted();
+  if (sessionStore.current() === null) throw new SessionNotStartedError();
   const path = `/photos/${encodeURIComponent(id)}/blob`;
   const res = await apiFetch(path, {
     method: 'PUT',

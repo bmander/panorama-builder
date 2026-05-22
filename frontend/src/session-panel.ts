@@ -1,7 +1,9 @@
-// Session save/abandon widget. Hidden when no session is active or there
-// is no pending work. Carries two buttons:
-//   - Save    enabled when a solve has run with no further user changes
-//   - Abandon always enabled while the widget is shown
+// Session edit/save/abandon widget. Always visible; the three buttons swap
+// based on session state:
+//   - Edit     shown when no session is active. Clicking it starts one.
+//   - Save     shown once a session is active; enabled when a solve has run
+//              with no further user changes.
+//   - Abandon  shown once a session is active.
 //
 // The pending counter and the "⚠ N problems ▾" rank-deficiency dropdown
 // live on the sibling solver widget (see solver-panel.ts). Save conflicts
@@ -22,8 +24,17 @@ export interface SessionPanel {
 export function createSessionPanel(host: HTMLElement): SessionPanel {
   const root = document.createElement('div');
   root.className = 'session-widget';
-  root.hidden = true;
   host.appendChild(root);
+
+  const editBtn = btn('Edit');
+  editBtn.addEventListener('click', () => {
+    editBtn.disabled = true;
+    sessionStore.ensureStarted().catch((err: unknown) => {
+      console.error('start session failed:', err);
+      alert('Could not start an edit session — check your connection and try again.');
+    }).finally(() => { editBtn.disabled = false; });
+  });
+  root.appendChild(editBtn);
 
   const saveBtn = btn('Save');
   saveBtn.addEventListener('click', () => { onSave(); });
@@ -37,12 +48,9 @@ export function createSessionPanel(host: HTMLElement): SessionPanel {
   function render(): void {
     const sessionActive = sessionStore.current() !== null;
     const { userPending, solverChanges } = sessionPending.get();
-    const hasWork = userPending > 0 || solverChanges !== null;
-    if (!sessionActive || !hasWork) {
-      root.hidden = true;
-      return;
-    }
-    root.hidden = false;
+    editBtn.hidden = sessionActive;
+    saveBtn.hidden = !sessionActive;
+    abandonBtn.hidden = !sessionActive;
     saveBtn.disabled = solverChanges === null || userPending !== 0;
   }
 

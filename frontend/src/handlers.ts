@@ -70,7 +70,7 @@ export function createOrchestration({
 }: CreateOrchestrationOptions): OrchestrationHandlers {
   async function onStartStationHere(input: StartStationInput): Promise<void> {
     const { loc, name, capturedAt, photos } = input;
-    await sessionStore.ensureStarted();
+    if (sessionStore.current() === null) return;
     let created;
     try {
       created = await api.createStation(loc, capturedAt, name || undefined);
@@ -115,7 +115,7 @@ export function createOrchestration({
   async function onPhotoDropped(
     tex: THREE.Texture, blob: Blob, aspect: number, dir: THREE.Vector3, revokeUrl: () => void,
   ): Promise<void> {
-    await sessionStore.ensureStarted();
+    if (sessionStore.current() === null) return;
     const locId = getCurrentStationId();
     const az = Math.atan2(-dir.x, -dir.z);
     const alt = Math.asin(clamp(dir.y, -1, 1));
@@ -146,7 +146,7 @@ export function createOrchestration({
   async function createImageMeasurement(
     overlay: THREE.Group, u: number, v: number, controlPointId: string | null,
   ): Promise<THREE.Mesh | null> {
-    await sessionStore.ensureStarted();
+    if (sessionStore.current() === null) return null;
     const photoId = overlayData(overlay).id;
     let created;
     try {
@@ -177,7 +177,7 @@ export function createOrchestration({
   async function createControlPoint(
     payload: { description: string; est_lat: number | null; est_lng: number | null; est_alt: number | null },
   ): Promise<api.ApiControlPoint | null> {
-    await sessionStore.ensureStarted();
+    if (sessionStore.current() === null) return null;
     try {
       const cp = await api.createControlPoint(payload);
       pushControlPoint(cp);
@@ -227,7 +227,7 @@ export function createOrchestration({
   }
 
   async function onReplacePhoto(overlay: THREE.Group, file: File): Promise<void> {
-    await sessionStore.ensureStarted();
+    if (sessionStore.current() === null) return;
     const photoId = overlayData(overlay).id;
     let aspect: number;
     try {

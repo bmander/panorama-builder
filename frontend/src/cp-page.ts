@@ -1,5 +1,7 @@
 import * as api from './api.js';
 import { degToRad } from './mathx.js';
+import { createSessionPanel } from './session-panel.js';
+import { bindDisabledToSession, editingActive, sessionStore } from './session-store.js';
 import {
   appendSigmaMeters, appendSigmaScalar, cpLabel,
   createInconsistencyDetails, fmtAlt, fmtSigmaMeters,
@@ -67,11 +69,23 @@ interface InlineEditorOptions<V, El extends EditorEl> {
 function attachInlineEditor<V, El extends EditorEl>(opts: InlineEditorOptions<V, El>): () => void {
   const { host, read, render, makeInput, parse, save,
     enter = 'enter', equal = Object.is, afterAttach, onValueChanged } = opts;
-  host.classList.add('editable');
   const refresh = (): void => { render(read()); };
   refresh();
 
+  // The `editable` class drives the cursor / hover affordance in cp.css.
+  // It's only meaningful when a session is active; in view mode the field
+  // renders as plain text and the caller's "Click to ..." tooltip is hidden.
+  const editableTitle = host.title;
+  const syncEditableAffordance = (): void => {
+    const active = editingActive();
+    host.classList.toggle('editable', active);
+    host.title = active ? editableTitle : '';
+  };
+  syncEditableAffordance();
+  sessionStore.onChange(syncEditableAffordance);
+
   host.addEventListener('click', () => {
+    if (!editingActive()) return;
     if (host.querySelector('input, textarea')) return;
     const current = read();
     const input = makeInput(current);
@@ -352,7 +366,7 @@ function attachLifespanLabel(
 
 function attachDeleteButton(cp: api.ApiControlPoint, obsCount: number): void {
   const btn = getElement<HTMLButtonElement>('delete');
-  btn.disabled = false;
+  bindDisabledToSession(btn);
   btn.addEventListener('click', () => {
     const obsNote = obsCount === 0
       ? ''
@@ -589,6 +603,7 @@ type LockField = 'lock_est_lat' | 'lock_est_lng' | 'lock_est_alt';
 function attachLockToggle(cp: api.ApiControlPoint, elId: string, field: LockField): void {
   const el = getElement<HTMLInputElement>(elId);
   el.checked = cp[field];
+  bindDisabledToSession(el);
   el.addEventListener('change', () => {
     const next = el.checked;
     el.disabled = true;
@@ -613,6 +628,7 @@ function attachLocationLockToggle(cp: api.ApiControlPoint, elId: string): void {
     el.indeterminate = !both && !neither;
   };
   refresh();
+  bindDisabledToSession(el);
   el.addEventListener('change', () => {
     const next = el.checked;
     el.disabled = true;
@@ -633,6 +649,7 @@ function attachLocationLockToggle(cp: api.ApiControlPoint, elId: string): void {
 }
 
 async function main(): Promise<void> {
+  createSessionPanel(getElement('session-host'));
   const m = CP_ID_RE.exec(location.pathname);
   const nameEl = getElement('name');
   const idEl = getElement('id');

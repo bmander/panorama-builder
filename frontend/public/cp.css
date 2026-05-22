@@ -6,6 +6,19 @@
 }
 html, body { margin: 0; min-height: 100%; height: auto; overflow: visible;
               background: #111; color: #fff; font: 14px monospace; }
+.session-host { position: fixed; top: 8px; right: 8px; z-index: 1000; }
+.session-widget { display: inline-flex; gap: 6px; align-items: center;
+                  padding: 4px 8px; background: rgba(0,0,0,0.7);
+                  border: 1px solid rgba(255,255,255,0.4); color: #fff;
+                  font: 12px monospace; }
+.session-widget .btn { padding: 6px 10px; background: rgba(0,0,0,0.5);
+                       color: #fff; border: 1px solid #fff;
+                       font: 12px monospace; cursor: pointer; }
+.session-widget .btn[hidden] { display: none; }
+.session-widget .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.session-widget .btn.danger { color: #ff8080; border-color: #ff8080;
+                              background: rgba(0,0,0,0.5); }
+.session-widget .btn.danger:hover:not(:disabled) { background: rgba(255,80,80,0.2); }
 main { max-width: 640px; margin: 0 auto; padding: 32px; }
 .back { color: #5080ff; text-decoration: none; font-size: 12px; }
 .back:hover { text-decoration: underline; }

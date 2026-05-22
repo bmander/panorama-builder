@@ -21,6 +21,7 @@ import {
 } from './types.js';
 import { stationAutoLockFor } from './auto-lock.js';
 import { createSessionPanel } from './session-panel.js';
+import { editingActive } from './session-store.js';
 import { createSolverPanel } from './solver-panel.js';
 import type { Cone, ControlPointView, LatLng } from './types.js';
 
@@ -246,6 +247,7 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   }
 
   async function moveControlPointTo(id: string, latlng: LatLng): Promise<void> {
+    if (!editingActive()) { refreshIndexControlPoints(); return; }
     try {
       const updated = await api.updateControlPoint(id, {
         est_lat: latlng.lat, est_lng: latlng.lng,
@@ -261,6 +263,7 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   }
 
   async function moveStationTo(id: string, latlng: LatLng): Promise<void> {
+    if (!editingActive()) { await loadStationMarkers(); return; }
     try {
       await api.updateStation(id, { lat: latlng.lat, lng: latlng.lng });
     } catch (err) {
@@ -273,6 +276,7 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   }
 
   async function updateStationLocks(id: string, patch: { lockPos?: boolean; lockAlt?: boolean }): Promise<void> {
+    if (!editingActive()) { await loadStationMarkers(); return; }
     const body: api.StationUpdate = {};
     if (patch.lockPos !== undefined) { body.lock_lat = patch.lockPos; body.lock_lng = patch.lockPos; }
     if (patch.lockAlt !== undefined) body.lock_alt = patch.lockAlt;
@@ -287,6 +291,7 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   }
 
   async function updateControlPointLocks(id: string, patch: { lockPos?: boolean; lockAlt?: boolean }): Promise<void> {
+    if (!editingActive()) { refreshIndexControlPoints(); return; }
     const body: api.ControlPointPatch = {};
     if (patch.lockPos !== undefined) { body.lock_est_lat = patch.lockPos; body.lock_est_lng = patch.lockPos; }
     if (patch.lockAlt !== undefined) body.lock_est_alt = patch.lockAlt;
@@ -479,13 +484,13 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
     container: getElement('map'),
     onStationMarkerOpen: id => { location.assign(stationHref(id)); },
     onStationMarkerPreview: id => { void showStationPreview(id); },
-    onStartStationHere: loc => { startStationModal.open(loc); },
-    onAddControlPointHere: loc => { observationModal.openForMap(loc); },
+    onStartStationHere: loc => { if (editingActive()) startStationModal.open(loc); },
+    onAddControlPointHere: loc => { if (editingActive()) observationModal.openForMap(loc); },
     onStationMarkerMove: (id, latlng) => { void moveStationTo(id, latlng); },
     onControlPointMove: (id, latlng) => { void moveControlPointTo(id, latlng); },
     onStationLockChange: (id, patch) => { void updateStationLocks(id, patch); },
     onControlPointLockChange: (id, patch) => { void updateControlPointLocks(id, patch); },
-    onPhotoDroppedOnMap: (latlng, files) => { startStationModal.open(latlng, files); },
+    onPhotoDroppedOnMap: (latlng, files) => { if (editingActive()) startStationModal.open(latlng, files); },
     initialView: urlState.view ?? undefined,
     onViewChange: (v) => { writeUrlState({ view: v }); },
     onStationPreviewClose: () => {
