@@ -1,13 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"image"
 	"image/jpeg"
 	_ "image/png" // register PNG decoder for image.Decode
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp" // register WebP decoder for image.Decode
@@ -35,14 +34,9 @@ func (s *Server) getBlobPreview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "stat")
-		return
-	}
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	http.ServeContent(w, r, "", info.ModTime(), f)
+	http.ServeContent(w, r, "", f.ModTime(), f)
 }
 
 // makePreview returns ("", 0) on success. JPEG sources already within
@@ -61,32 +55,21 @@ func (s *Server) makePreview(hash string) (status int, msg string) {
 	if _, err := src.Seek(0, io.SeekStart); err != nil {
 		return http.StatusInternalServerError, "preview seek"
 	}
-	tmp, err := os.CreateTemp(filepath.Join(s.blobs.root, "tmp"), "preview-*")
-	if err != nil {
-		return http.StatusInternalServerError, "preview tmp"
-	}
-	tmpPath := tmp.Name()
-	var werr error
+	var buf bytes.Buffer
 	if format == "jpeg" && cfg.Width <= previewMaxWidth {
-		_, werr = io.Copy(tmp, src)
+		if _, err := io.Copy(&buf, src); err != nil {
+			return http.StatusInternalServerError, "preview encode"
+		}
 	} else {
 		img, _, derr := image.Decode(src)
 		if derr != nil {
-			tmp.Close()
-			os.Remove(tmpPath)
 			return http.StatusUnsupportedMediaType, "preview unsupported"
 		}
-		werr = jpeg.Encode(tmp, resizeMaxWidth(img, previewMaxWidth), &jpeg.Options{Quality: previewJPEGQuality})
+		if err := jpeg.Encode(&buf, resizeMaxWidth(img, previewMaxWidth), &jpeg.Options{Quality: previewJPEGQuality}); err != nil {
+			return http.StatusInternalServerError, "preview encode"
+		}
 	}
-	if cerr := tmp.Close(); werr == nil {
-		werr = cerr
-	}
-	if werr != nil {
-		os.Remove(tmpPath)
-		return http.StatusInternalServerError, "preview encode"
-	}
-	if _, err := s.blobs.placePreviewAtHash(tmpPath, hash); err != nil {
-		os.Remove(tmpPath)
+	if err := s.blobs.writePreview(hash, &buf); err != nil {
 		return http.StatusInternalServerError, "preview place"
 	}
 	return 0, ""

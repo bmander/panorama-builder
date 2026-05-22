@@ -45,7 +45,8 @@ Open <http://localhost:8080>. Setting a station pushes the URL to `/station/<id>
 | Var               | Default                                                                          |
 |-------------------|----------------------------------------------------------------------------------|
 | `DATABASE_URL`    | `postgres://panorama:panorama@localhost:5432/panorama?sslmode=disable`           |
-| `STORAGE_DIR`     | `./data`                                                                         |
+| `STORAGE_DIR`     | `./data` (ignored if `STORAGE_BUCKET` is set)                                    |
+| `STORAGE_BUCKET`  | unset (when set, blobs live in this GCS bucket instead of `STORAGE_DIR`; uses Application Default Credentials) |
 | `STATIC_DIR`      | `../frontend/dist`                                                               |
 | `LISTEN_ADDR`     | `:8080`                                                                          |
 | `ALLOWED_ORIGIN`  | `*` (loose for local dev — set to the frontend origin in prod)                   |

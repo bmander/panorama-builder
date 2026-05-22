@@ -16,7 +16,7 @@ import (
 
 type Server struct {
 	db             *pgxpool.Pool
-	blobs          *blobStore
+	blobs          blobStore
 	staticDir      string
 	allowedOrigin  string
 	maxBlobBytes   int64
@@ -46,6 +46,7 @@ func main() {
 	dbURL := envDefault("DATABASE_URL",
 		"postgres://panorama:panorama@localhost:5432/panorama?sslmode=disable")
 	storageDir := envDefault("STORAGE_DIR", "./data")
+	storageBucket := envDefault("STORAGE_BUCKET", "")
 	staticDir := envDefault("STATIC_DIR", "../frontend/dist")
 	allowedOrigin := envDefault("ALLOWED_ORIGIN", "*")
 	maxBlobBytes := envInt64("MAX_BLOB_BYTES", 25_000_000)
@@ -71,7 +72,7 @@ func main() {
 		log.Fatalf("migrations: %v", err)
 	}
 
-	blobs, err := newBlobStore(storageDir)
+	blobs, err := newBlobStore(ctx, storageDir, storageBucket)
 	if err != nil {
 		log.Fatalf("storage: %v", err)
 	}

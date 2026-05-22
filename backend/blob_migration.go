@@ -2,14 +2,8 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"io"
 	"log"
-	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -17,7 +11,7 @@ import (
 // migrateLegacyBlobs rewrites photos.blob_path from "photos/<id>" (id-keyed,
 // mutable) to "blobs/<hash>" (content-addressed, immutable). Idempotent —
 // once everything's migrated the WHERE clause matches nothing.
-func migrateLegacyBlobs(ctx context.Context, db *pgxpool.Pool, blobs *blobStore) error {
+func migrateLegacyBlobs(ctx context.Context, db *pgxpool.Pool, blobs blobStore) error {
 	rows, err := db.Query(ctx,
 		`SELECT id, blob_path FROM photos WHERE blob_path LIKE 'photos/%'`)
 	if err != nil {
@@ -43,7 +37,7 @@ func migrateLegacyBlobs(ctx context.Context, db *pgxpool.Pool, blobs *blobStore)
 
 	log.Printf("blob migration: rewriting %d legacy photo path(s) to content-addressed", len(todo))
 	for _, l := range todo {
-		newPath, err := rewriteLegacyBlob(blobs, l.path)
+		newPath, err := blobs.rewriteLegacyPath(l.path)
 		if err != nil {
 			log.Printf("blob migration: skip photo %s (%s): %v", l.id, l.path, err)
 			continue
@@ -57,25 +51,4 @@ func migrateLegacyBlobs(ctx context.Context, db *pgxpool.Pool, blobs *blobStore)
 		}
 	}
 	return nil
-}
-
-func rewriteLegacyBlob(b *blobStore, oldPath string) (string, error) {
-	if !strings.HasPrefix(oldPath, "photos/") {
-		return "", fmt.Errorf("unexpected legacy path %q", oldPath)
-	}
-	src := filepath.Join(b.root, oldPath)
-	f, err := os.Open(src)
-	if err != nil {
-		return "", err
-	}
-	hasher := sha256.New()
-	_, copyErr := io.Copy(hasher, f)
-	closeErr := f.Close()
-	if copyErr != nil {
-		return "", copyErr
-	}
-	if closeErr != nil {
-		return "", closeErr
-	}
-	return b.placeAtHash(src, hex.EncodeToString(hasher.Sum(nil)))
 }

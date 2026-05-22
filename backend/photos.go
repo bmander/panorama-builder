@@ -154,12 +154,7 @@ func (s *Server) getPhotoBlob(w http.ResponseWriter, r *http.Request) {
 	// Row may repoint to new bytes on next re-upload+merge; never let
 	// browsers cache the id-keyed URL.
 	w.Header().Set("Cache-Control", "no-cache")
-	info, err := f.Stat()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "stat")
-		return
-	}
-	http.ServeContent(w, r, "", info.ModTime(), f)
+	http.ServeContent(w, r, "", f.ModTime(), f)
 }
 
 // getBlob serves bytes content-addressed by sha256. Immutable forever.
@@ -171,13 +166,8 @@ func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "stat")
-		return
-	}
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	// ServeContent will sniff Content-Type from the first 512 bytes when
 	// the header isn't already set, and gives us range support + 304s.
-	http.ServeContent(w, r, "", info.ModTime(), f)
+	http.ServeContent(w, r, "", f.ModTime(), f)
 }
