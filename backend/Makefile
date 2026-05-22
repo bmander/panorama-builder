@@ -1,4 +1,4 @@
-.PHONY: run build fmt vet tidy generate dump restore
+.PHONY: run build build-reader build-editor docker-reader docker-editor run-reader run-editor fmt vet tidy generate dump restore
 
 DATABASE_URL ?= postgres://panorama:panorama@localhost:5432/panorama?sslmode=disable
 DUMP_FILE    ?= panorama_$(shell date -u +%Y%m%dT%H%M%SZ).sql
@@ -12,6 +12,44 @@ run:
 
 build:
 	go build -o bin/panorama-api .
+
+# Reader binary: no cgo, no Ceres linkage — for the read-only Cloud Run
+# service. Solver routes don't exist in this build (router_solve_stub.go).
+build-reader:
+	CGO_ENABLED=0 go build -tags noceres -o bin/panorama-reader .
+
+# Editor binary: full build, links Ceres-Solver via cgo. Same as `make build`
+# but with an explicit name to mirror build-reader.
+build-editor:
+	go build -o bin/panorama-editor .
+
+# Docker images for Cloud Run. Reader = distroless static (~55 MB). Editor =
+# debian-slim + libceres3 runtime (~240 MB). Built from backend/ context.
+docker-reader:
+	docker build -f Dockerfile.reader -t panorama-reader:dev .
+
+docker-editor:
+	docker build -f Dockerfile.editor -t panorama-editor:dev .
+
+# Run a built image locally against the host Postgres (Docker Desktop's
+# host.docker.internal) and the local data/ + ../frontend/dist mounts.
+# Override DATABASE_URL if pointing elsewhere.
+DOCKER_DB_URL ?= postgres://panorama:panorama@host.docker.internal:5432/panorama?sslmode=disable
+run-reader:
+	docker rm -f pan-reader 2>/dev/null; true
+	docker run --rm -it --name pan-reader -p 8080:8080 \
+	  -e DATABASE_URL='$(DOCKER_DB_URL)' \
+	  -e STORAGE_DIR=/data -e STATIC_DIR=/static \
+	  -v $(PWD)/data:/data -v $(PWD)/../frontend/dist:/static:ro \
+	  panorama-reader:dev
+
+run-editor:
+	docker rm -f pan-editor 2>/dev/null; true
+	docker run --rm -it --name pan-editor -p 8080:8080 \
+	  -e DATABASE_URL='$(DOCKER_DB_URL)' \
+	  -e STORAGE_DIR=/data -e STATIC_DIR=/static \
+	  -v $(PWD)/data:/data -v $(PWD)/../frontend/dist:/static:ro \
+	  panorama-editor:dev
 
 fmt:
 	go fmt ./...

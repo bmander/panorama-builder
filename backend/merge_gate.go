@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"math"
+	"net/http"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -165,4 +166,13 @@ func flaggedAxesFor(ctx context.Context, tx pgx.Tx, kind, id string) (*RankDefic
 		}, nil
 	}
 	return nil, nil
+}
+
+// writeRankDeficient emits the 422 body with the per-entity flagged-axes
+// list. Called from mergeSession when post-apply σ values exceed thresholds.
+func writeRankDeficient(w http.ResponseWriter, axes []RankDeficientAxis) {
+	writeJSON(w, http.StatusUnprocessableEntity, RankDeficientError{
+		Error:         RankDeficient,
+		DeficientAxes: axes,
+	})
 }

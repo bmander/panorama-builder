@@ -1,3 +1,5 @@
+//go:build !noceres
+
 // Ceres-Solver bridge. Builds and solves a bundle-adjustment problem matching
 // the math in solver/solve.go::computeOneObsResidual. Called via the C ABI in
 // bridge.h from bridge_ceres.go.

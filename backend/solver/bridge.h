@@ -1,3 +1,5 @@
+//go:build !noceres
+
 // Pure-C ABI for the Ceres-Solver bridge. Called from bridge_ceres.go via
 // cgo. Pre-allocate every output buffer on the Go side; C++ writes in place.
 //

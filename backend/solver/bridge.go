@@ -1,6 +1,10 @@
+//go:build !noceres
+
 package solver
 
-// #cgo CXXFLAGS: -std=c++17 -O2 -DGLOG_USE_GLOG_EXPORT -I/usr/local/include -I/usr/local/include/eigen3 -I/opt/homebrew/include -I/opt/homebrew/include/eigen3
+// #cgo CXXFLAGS: -std=c++17 -O2 -DGLOG_USE_GLOG_EXPORT
+// #cgo darwin CXXFLAGS: -I/usr/local/include -I/usr/local/include/eigen3 -I/opt/homebrew/include -I/opt/homebrew/include/eigen3
+// #cgo linux  CXXFLAGS: -I/usr/include/eigen3
 // #cgo darwin LDFLAGS: -L/usr/local/lib -L/opt/homebrew/lib -lceres -lglog
 // #cgo linux  LDFLAGS: -lceres -lglog
 // #include "bridge.h"

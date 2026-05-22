@@ -1,3 +1,5 @@
+//go:build !noceres
+
 // Solver entry point: builds the in-memory problem context and dispatches
 // into the Ceres-Solver bridge implemented in bridge.go + bridge.cc.
 package solver

@@ -1,3 +1,5 @@
+//go:build !noceres
+
 // Shared scaffolding for both the default (Ceres-backed) and the
 // `//go:build go_solver_gn` (legacy Gauss-Newton) solver implementations.
 //
@@ -37,8 +39,7 @@ const (
 	// dimensionless and typical recovered magnitudes sit in [1e-3, 5e-1];
 	// 1e-4 yields a residual change of the same order as the angle FD
 	// (∂residual/∂k ~ r² with r² ~ 0.01–0.25 across the image).
-	fdEpsK   = 1e-4
-	minCosEl = 1e-6 // floor on cos(el_target) so the polar singularity stays bounded
+	fdEpsK = 1e-4
 )
 
 // CP axis indices, mirroring the [3]float64 layout of cpENU / stationENU
@@ -574,24 +575,6 @@ func (c *solveContext) readState() []float64 {
 		out[k] = c.readSlot(k)
 	}
 	return out
-}
-
-// ResidualFromBearings combines predicted and target viewer-frame
-// directions into the two-row angular residual the solver minimizes,
-// matching the math the C++ cost functor in cost_functor.h implements.
-// The az row is weighted by cos(el_target) so 1° at the horizon weighs
-// more arc-length than 1° near the zenith; the floor on cos(el) keeps
-// the polar singularity bounded. Exported for control_point_fits.go,
-// which fits per-CP surfaces using the same residual definition.
-func ResidualFromBearings(azPred, elPred, azTgt, elTgt float64) (azRow, elRow float64) {
-	cosEl := math.Cos(elTgt)
-	if math.Abs(cosEl) < minCosEl {
-		cosEl = math.Copysign(minCosEl, cosEl)
-		if cosEl == 0 {
-			cosEl = minCosEl
-		}
-	}
-	return WrapPi(azPred-azTgt) * cosEl, elPred - elTgt
 }
 
 // scopedStationLocks reports the per-axis lock state used by the Ceres

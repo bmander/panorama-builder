@@ -1,3 +1,5 @@
+//go:build !noceres
+
 package solver
 
 type cpSnap struct{ lat, lng, alt float64 }

@@ -1,3 +1,5 @@
+//go:build !noceres
+
 package solver_test
 
 import (

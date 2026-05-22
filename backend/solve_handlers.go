@@ -1,3 +1,5 @@
+//go:build !noceres
+
 package main
 
 import (
@@ -87,17 +89,6 @@ func parseSolveConfig(w http.ResponseWriter, r *http.Request) (solver.Config, bo
 		cfg.PositionRegLambda = *req.PositionRegLambda
 	}
 	return cfg, true
-}
-
-// writeRankDeficient emits the 422 body with the per-entity flagged-axes list.
-// Used by the merge gate when post-apply σ values exceed thresholds; the
-// solve endpoints no longer pre-check (they always run, and the cached σ
-// values surfaced through the listings + merge gate enforce the policy).
-func writeRankDeficient(w http.ResponseWriter, axes []RankDeficientAxis) {
-	writeJSON(w, http.StatusUnprocessableEntity, RankDeficientError{
-		Error:         RankDeficient,
-		DeficientAxes: axes,
-	})
 }
 
 func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg solver.Config, sess *Session) {

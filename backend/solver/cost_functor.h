@@ -1,3 +1,5 @@
+//go:build !noceres
+
 // Templated math used inside Ceres autodiff cost functors. Mirrors
 // solver/project.go::ProjectPOI and solver/geo.go::BearingENU so the
 // residual matches the Go reference implementation observation-for-observation.
