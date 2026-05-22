@@ -10,5 +10,47 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  # Reader + editor are opt-in under the `app` profile so a plain
+  # `docker compose up` still brings up just Postgres (the old behavior).
+  # Bring up the full split with:  docker compose --profile app up --build
+  # Reader serves the static frontend at :8080, editor handles writes/solves
+  # at :8081 (cross-origin from the frontend; CORS allows the reader origin).
+  reader:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: Dockerfile.reader
+    image: panorama-reader:dev
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: postgres://panorama:panorama@postgres:5432/panorama?sslmode=disable
+      STATIC_DIR: /static
+      STORAGE_DIR: /data
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+      - ../frontend/dist:/static:ro
+
+  editor:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: Dockerfile.editor
+    image: panorama-editor:dev
+    depends_on:
+      - postgres
+    environment:
+      DATABASE_URL: postgres://panorama:panorama@postgres:5432/panorama?sslmode=disable
+      STATIC_DIR: /static
+      STORAGE_DIR: /data
+      ALLOWED_ORIGIN: http://localhost:8080
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./data:/data
+      - ../frontend/dist:/static:ro
+
 volumes:
   pgdata:

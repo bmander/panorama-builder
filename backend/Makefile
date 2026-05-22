@@ -1,4 +1,4 @@
-.PHONY: run build build-reader build-editor docker-reader docker-editor run-reader run-editor fmt vet tidy generate dump restore
+.PHONY: run build build-reader build-editor docker-reader docker-editor run-reader run-editor split-up split-down fmt vet tidy generate dump restore
 
 DATABASE_URL ?= postgres://panorama:panorama@localhost:5432/panorama?sslmode=disable
 DUMP_FILE    ?= panorama_$(shell date -u +%Y%m%dT%H%M%SZ).sql
@@ -50,6 +50,16 @@ run-editor:
 	  -e STORAGE_DIR=/data -e STATIC_DIR=/static \
 	  -v $(PWD)/data:/data -v $(PWD)/../frontend/dist:/static:ro \
 	  panorama-editor:dev
+
+# Bring up the prod-like split locally: postgres + reader (:8080, serves
+# frontend + GETs) + editor (:8081, writes + solves, CORS-allowed from
+# reader). Frontend must be built with the docker URLs first:
+#   (cd ../frontend && npm run build:docker-split)
+split-up:
+	docker compose --profile app up -d --build
+
+split-down:
+	docker compose --profile app down
 
 fmt:
 	go fmt ./...

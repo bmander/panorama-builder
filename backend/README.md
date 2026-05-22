@@ -40,6 +40,28 @@ Make sure the frontend has been built once: `cd ../frontend && npm install && np
 
 Open <http://localhost:8080>. Setting a station pushes the URL to `/station/<id>`.
 
+## Containerized dev (reader + editor split)
+
+The production architecture runs two backends behind the same `bmander.com`
+domain: a scale-to-zero reader (`photos.bmander.com`, no Ceres, fast cold
+start) and an on-demand editor (`edit.photos.bmander.com`, full solver).
+You can run the same split locally:
+
+```sh
+(cd ../frontend && npm run build:docker-split)   # build with absolute URLs
+make split-up                                    # postgres + reader + editor
+
+# Browse http://localhost:8080 — reader serves frontend + all GETs.
+# Writes go cross-origin to http://localhost:8081 (editor); CORS allows it.
+
+make split-down                                  # stop the split
+```
+
+The reader image strips the Ceres-Solver binding via the `noceres` build
+tag, so `/api/solve/*` routes simply don't exist there (any solve attempt
+falls through to the SPA fallback and returns 405). Solve POSTs from the
+frontend route to the editor instead.
+
 ## Env vars
 
 | Var               | Default                                                                          |
