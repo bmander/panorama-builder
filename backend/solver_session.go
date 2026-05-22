@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
 	"time"
 
@@ -414,6 +415,7 @@ func snapshotForChange(ctx context.Context, db *pgxpool.Pool, overlay sessionOve
 		if !present {
 			return nil, nil, fmt.Errorf("station %s missing", c.ID)
 		}
+		filterNoiseStationSigma(c.After, &st)
 		before = jsonMust(st)
 		applyChangeToStation(&st, c.After)
 		st.UpdatedAt = now
@@ -426,6 +428,7 @@ func snapshotForChange(ctx context.Context, db *pgxpool.Pool, overlay sessionOve
 		if !present {
 			return nil, nil, fmt.Errorf("photo %s missing", c.ID)
 		}
+		filterNoisePhotoSigma(c.After, &p)
 		before = jsonMust(p)
 		applyChangeToPhoto(&p, c.After)
 		p.UpdatedAt = now
@@ -438,6 +441,7 @@ func snapshotForChange(ctx context.Context, db *pgxpool.Pool, overlay sessionOve
 		if !present {
 			return nil, nil, fmt.Errorf("control_point %s missing", c.ID)
 		}
+		filterNoiseControlPointSigma(c.After, &cp)
 		before = jsonMust(cp)
 		applyChangeToControlPoint(&cp, c.After)
 		cp.UpdatedAt = now
@@ -446,6 +450,93 @@ func snapshotForChange(ctx context.Context, db *pgxpool.Pool, overlay sessionOve
 		return nil, nil, fmt.Errorf("unknown change kind %q", c.Kind)
 	}
 	return before, after, nil
+}
+
+// noiseCloseSigma reports whether a freshly-computed σ/cov value is close
+// enough to the prior pointer value to be treated as floating-point jitter
+// from re-solving the same problem. A nil prior always returns false so a
+// first-time σ population still surfaces.
+//
+// Tolerance: 1e-9 relative ‖ 1e-12 absolute. σ values are uncertainties in
+// meters (station/CP position) or radians (photo angles); the smallest
+// user-visible change is mm/µrad, well above this floor. Re-solve jitter
+// from Ceres' covariance estimator typically lands in the 1e-13 to 1e-14
+// range, comfortably below.
+func noiseCloseSigma(prior *float64, fresh float64) bool {
+	if prior == nil {
+		return false
+	}
+	const relTol = 1e-9
+	const absTol = 1e-12
+	diff := math.Abs(fresh - *prior)
+	return diff <= math.Max(relTol*math.Abs(*prior), absTol)
+}
+
+func filterNoiseStationSigma(after map[string]float64, st *Station) {
+	for k, v := range after {
+		var prior *float64
+		switch k {
+		case "sigma_lat":
+			prior = st.SigmaLat
+		case "sigma_lng":
+			prior = st.SigmaLng
+		case "sigma_alt":
+			prior = st.SigmaAlt
+		case "cov_lat_lng":
+			prior = st.CovLatLng
+		default:
+			continue
+		}
+		if noiseCloseSigma(prior, v) {
+			delete(after, k)
+		}
+	}
+}
+
+func filterNoisePhotoSigma(after map[string]float64, p *Photo) {
+	for k, v := range after {
+		var prior *float64
+		switch k {
+		case "sigma_photo_az":
+			prior = p.SigmaPhotoAz
+		case "sigma_photo_tilt":
+			prior = p.SigmaPhotoTilt
+		case "sigma_photo_roll":
+			prior = p.SigmaPhotoRoll
+		case "sigma_size_rad":
+			prior = p.SigmaSizeRad
+		case "sigma_dist_k1":
+			prior = p.SigmaDistK1
+		case "sigma_dist_k2":
+			prior = p.SigmaDistK2
+		default:
+			continue
+		}
+		if noiseCloseSigma(prior, v) {
+			delete(after, k)
+		}
+	}
+}
+
+func filterNoiseControlPointSigma(after map[string]float64, cp *ControlPoint) {
+	for k, v := range after {
+		var prior *float64
+		switch k {
+		case "sigma_est_lat":
+			prior = cp.SigmaEstLat
+		case "sigma_est_lng":
+			prior = cp.SigmaEstLng
+		case "sigma_est_alt":
+			prior = cp.SigmaEstAlt
+		case "cov_est_lat_lng":
+			prior = cp.CovEstLatLng
+		default:
+			continue
+		}
+		if noiseCloseSigma(prior, v) {
+			delete(after, k)
+		}
+	}
 }
 
 func applyChangeToStation(st *Station, after map[string]float64) {
