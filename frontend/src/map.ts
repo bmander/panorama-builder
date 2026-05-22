@@ -16,6 +16,7 @@ import type { Cone, CPLifespan, LatLng } from './types.js';
 import { SIGMA_POS_REFUSE_M, SIGMA_POS_WARN_M } from './sigma-thresholds.js';
 import { TILE_PX, fetchTileElevations, tileYToLat } from './dem.js';
 import { NULL_CP_RAY_CSS, NULL_CP_RAY_LENGTH_M } from './null-cp-rays.js';
+import { editingActive, sessionStore } from './session-store.js';
 
 export interface StationMarker {
   id: string;
@@ -502,8 +503,17 @@ export function createMapView({
   function wirePopupLocks(popup: L.Popup, onChange: (patch: MarkerLockPatch) => void): void {
     const root = popup.getElement();
     if (!root) return;
-    for (const cb of root.querySelectorAll<HTMLInputElement>('.popup-lock')) {
+    const cbs = Array.from(root.querySelectorAll<HTMLInputElement>('.popup-lock'));
+    const syncDisabled = (): void => {
+      const disabled = !editingActive();
+      for (const cb of cbs) cb.disabled = disabled;
+    };
+    syncDisabled();
+    const unsub = sessionStore.onChange(syncDisabled);
+    popup.on('remove', unsub);
+    for (const cb of cbs) {
       cb.addEventListener('change', () => {
+        if (!editingActive()) { cb.checked = !cb.checked; return; }
         const which = cb.dataset.lock;
         if (which === 'pos') onChange({ lockPos: cb.checked });
         else if (which === 'alt') onChange({ lockAlt: cb.checked });
