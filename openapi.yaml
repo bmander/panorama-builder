@@ -1572,9 +1572,9 @@ components:
         lng: { type: number, format: double, minimum: -180, maximum: 180 }
         alt: { type: number, format: double, description: defaults to 0 when omitted }
         name: { type: string, nullable: true }
-        lock_lat: { type: boolean, description: defaults to false when omitted }
-        lock_lng: { type: boolean }
-        lock_alt: { type: boolean }
+        lock_lat: { type: boolean, description: defaults to true when omitted }
+        lock_lng: { type: boolean, description: defaults to true when omitted }
+        lock_alt: { type: boolean, description: defaults to true when omitted }
         captured_at: { type: string, format: date-time, nullable: true }
 
     StationUpdate:

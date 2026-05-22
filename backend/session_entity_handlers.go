@@ -33,7 +33,8 @@ func (s *Server) postStationInSession(w http.ResponseWriter, r *http.Request, se
 	st := Station{
 		ID: id, Lat: req.Lat, Lng: req.Lng,
 		CapturedAt: req.CapturedAt,
-		CreatedAt:  now, UpdatedAt: now,
+		LockLat:    true, LockLng: true, LockAlt: true,
+		CreatedAt: now, UpdatedAt: now,
 	}
 	if req.Alt != nil {
 		st.Alt = *req.Alt
