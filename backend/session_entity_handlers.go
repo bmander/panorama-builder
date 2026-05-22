@@ -547,7 +547,7 @@ func (s *Server) putPhotoBlobInSession(w http.ResponseWriter, r *http.Request, s
 		return
 	}
 	body := http.MaxBytesReader(w, r.Body, s.maxBlobBytes)
-	path, n, err := s.blobs.writeBlob(body, s.maxBlobBytes)
+	path, n, err := s.blobs.writeBlob(ctx, body, s.maxBlobBytes)
 	if err != nil {
 		if errors.Is(err, errPayloadTooLarge) {
 			writeError(w, http.StatusRequestEntityTooLarge, "blob too large")
@@ -561,7 +561,7 @@ func (s *Server) putPhotoBlobInSession(w http.ResponseWriter, r *http.Request, s
 	// storage means we can't safely os.Remove — a concurrent legitimate
 	// upload may share the hash. Orphan-on-abandon is already part of the
 	// trust model.
-	if msg := s.checkImageDims(filepath.Base(path)); msg != "" {
+	if msg := s.checkImageDims(ctx, filepath.Base(path)); msg != "" {
 		writeError(w, http.StatusRequestEntityTooLarge, msg)
 		return
 	}

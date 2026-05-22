@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/jpeg"
 	_ "image/png" // register PNG decoder for image.Decode
@@ -21,13 +22,14 @@ func (s *Server) getBlobPreview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "blob missing")
 		return
 	}
-	f, err := s.blobs.openPreviewByHash(hash)
+	ctx := r.Context()
+	f, err := s.blobs.openPreviewByHash(ctx, hash)
 	if err != nil {
-		if status, msg := s.makePreview(hash); msg != "" {
+		if status, msg := s.makePreview(ctx, hash); msg != "" {
 			writeError(w, status, msg)
 			return
 		}
-		f, err = s.blobs.openPreviewByHash(hash)
+		f, err = s.blobs.openPreviewByHash(ctx, hash)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "preview reopen")
 			return
@@ -42,8 +44,8 @@ func (s *Server) getBlobPreview(w http.ResponseWriter, r *http.Request) {
 // makePreview returns ("", 0) on success. JPEG sources already within
 // previewMaxWidth bypass decode/resize/encode via a byte copy — saves a
 // full RGBA buffer for legacy thumbnail uploads.
-func (s *Server) makePreview(hash string) (status int, msg string) {
-	src, err := s.blobs.openByHash(hash)
+func (s *Server) makePreview(ctx context.Context, hash string) (status int, msg string) {
+	src, err := s.blobs.openByHash(ctx, hash)
 	if err != nil {
 		return http.StatusNotFound, "blob missing"
 	}
@@ -69,7 +71,7 @@ func (s *Server) makePreview(hash string) (status int, msg string) {
 			return http.StatusInternalServerError, "preview encode"
 		}
 	}
-	if err := s.blobs.writePreview(hash, &buf); err != nil {
+	if err := s.blobs.writePreview(ctx, hash, &buf); err != nil {
 		return http.StatusInternalServerError, "preview place"
 	}
 	return 0, ""
@@ -83,8 +85,8 @@ func (s *Server) makePreview(hash string) (status int, msg string) {
 // preview path will return 415 for unrecognized formats later. This check
 // exists to gate recognized PNG/JPEG/WebP bombs, not to enforce format
 // support.
-func (s *Server) checkImageDims(hash string) string {
-	f, err := s.blobs.openByHash(hash)
+func (s *Server) checkImageDims(ctx context.Context, hash string) string {
+	f, err := s.blobs.openByHash(ctx, hash)
 	if err != nil {
 		return ""
 	}

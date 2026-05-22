@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -30,27 +31,36 @@ var errPayloadTooLarge = errors.New("payload too large")
 // local disk root (dev, and prod absent STORAGE_BUCKET) or a GCS bucket.
 // Paths returned by writeBlob are stored verbatim in photos.blob_path, so
 // view-mode clients can resolve them against any base URL.
+//
+// Every method takes a context.Context so the GCS impl can cancel
+// in-flight uploads/downloads when the originating HTTP request is torn
+// down. The disk impl ignores ctx (filesystem ops are not natively
+// ctx-aware) but accepts it for interface uniformity.
 type blobStore interface {
 	// writeBlob streams up to maxBytes through SHA-256 and stores the bytes
 	// at blobs/<hash>. Identical bytes converge on the same path. Returns
 	// errPayloadTooLarge if more than maxBytes are read.
-	writeBlob(r io.Reader, maxBytes int64) (path string, n int64, err error)
+	writeBlob(ctx context.Context, r io.Reader, maxBytes int64) (path string, n int64, err error)
 	// writePreview stores preview bytes at previews/<hash>, where hash is
 	// the SHA-256 of the *source* blob (not of the preview bytes).
-	writePreview(hash string, r io.Reader) error
+	writePreview(ctx context.Context, hash string, r io.Reader) error
 	// openByHash opens the content-addressed original at blobs/<hash>.
-	openByHash(hash string) (blobReader, error)
+	openByHash(ctx context.Context, hash string) (blobReader, error)
 	// openPreviewByHash opens previews/<hash>, or returns os.ErrNotExist if
 	// the preview has not been generated yet.
-	openPreviewByHash(hash string) (blobReader, error)
+	openPreviewByHash(ctx context.Context, hash string) (blobReader, error)
 	// openByPath opens a blob by its stored relative path. Accepts the
 	// content-addressed "blobs/<hash>" and the legacy "photos/<id>" forms;
 	// anything else is rejected as not-exist (path-traversal defense).
-	openByPath(blobPath string) (blobReader, error)
-	// rewriteLegacyPath reads the bytes at a "photos/<id>" location,
-	// hashes them, and moves the object to "blobs/<hash>". Returns the new
-	// relative path. Used once at startup by migrateLegacyBlobs.
-	rewriteLegacyPath(oldPath string) (newPath string, err error)
+	openByPath(ctx context.Context, blobPath string) (blobReader, error)
+	// rewriteLegacyPath reads bytes at a "photos/<id>" location, hashes
+	// them, and writes them to "blobs/<hash>". Returns the new path.
+	// Used by migrateLegacyBlobs at startup. NOTE: the legacy object is
+	// intentionally NOT deleted — deleting it before photos.blob_path is
+	// updated would orphan the row on a crash between the two operations.
+	// The migration accepts the residual storage cost in exchange for
+	// crash-safety (CLAUDE.md trust-model invariant).
+	rewriteLegacyPath(ctx context.Context, oldPath string) (newPath string, err error)
 }
 
 // blobReader is the surface http handlers need from an open blob: a seekable
@@ -86,7 +96,7 @@ func newDiskBlobStore(root string) (*diskBlobStore, error) {
 	return &diskBlobStore{root: root}, nil
 }
 
-func (b *diskBlobStore) writeBlob(r io.Reader, maxBytes int64) (string, int64, error) {
+func (b *diskBlobStore) writeBlob(_ context.Context, r io.Reader, maxBytes int64) (string, int64, error) {
 	tmp, err := os.CreateTemp(filepath.Join(b.root, "tmp"), "upload-*")
 	if err != nil {
 		return "", 0, fmt.Errorf("create temp: %w", err)
@@ -115,7 +125,7 @@ func (b *diskBlobStore) writeBlob(r io.Reader, maxBytes int64) (string, int64, e
 	return rel, n, nil
 }
 
-func (b *diskBlobStore) writePreview(hash string, r io.Reader) error {
+func (b *diskBlobStore) writePreview(_ context.Context, hash string, r io.Reader) error {
 	tmp, err := os.CreateTemp(filepath.Join(b.root, "tmp"), "preview-*")
 	if err != nil {
 		return err
@@ -157,11 +167,11 @@ func (b *diskBlobStore) placeAt(subdir, src, hash string) (string, error) {
 	return rel, nil
 }
 
-func (b *diskBlobStore) openByHash(hash string) (blobReader, error) {
+func (b *diskBlobStore) openByHash(_ context.Context, hash string) (blobReader, error) {
 	return b.openAt(blobDir, hash)
 }
 
-func (b *diskBlobStore) openPreviewByHash(hash string) (blobReader, error) {
+func (b *diskBlobStore) openPreviewByHash(_ context.Context, hash string) (blobReader, error) {
 	return b.openAt(previewDir, hash)
 }
 
@@ -172,7 +182,7 @@ func (b *diskBlobStore) openAt(subdir, hash string) (blobReader, error) {
 	return openDiskBlob(filepath.Join(b.root, subdir, hash))
 }
 
-func (b *diskBlobStore) openByPath(blobPath string) (blobReader, error) {
+func (b *diskBlobStore) openByPath(_ context.Context, blobPath string) (blobReader, error) {
 	clean := filepath.Clean(blobPath)
 	base := filepath.Base(clean)
 	if clean != blobDir+"/"+base && clean != "photos/"+base {
@@ -181,7 +191,12 @@ func (b *diskBlobStore) openByPath(blobPath string) (blobReader, error) {
 	return openDiskBlob(filepath.Join(b.root, clean))
 }
 
-func (b *diskBlobStore) rewriteLegacyPath(oldPath string) (string, error) {
+// rewriteLegacyPath hashes the bytes at the legacy "photos/<id>" location
+// and writes them to "blobs/<hash>" via a staging copy. The source file
+// is intentionally NOT deleted — migrateLegacyBlobs must be able to retry
+// safely if the post-rewrite DB UPDATE fails, and deleting the source
+// before the UPDATE commits would orphan the photo row on a crash.
+func (b *diskBlobStore) rewriteLegacyPath(ctx context.Context, oldPath string) (string, error) {
 	if !strings.HasPrefix(oldPath, "photos/") {
 		return "", fmt.Errorf("unexpected legacy path %q", oldPath)
 	}
@@ -190,16 +205,12 @@ func (b *diskBlobStore) rewriteLegacyPath(oldPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	hasher := sha256.New()
-	_, copyErr := io.Copy(hasher, f)
-	closeErr := f.Close()
-	if copyErr != nil {
-		return "", copyErr
-	}
-	if closeErr != nil {
-		return "", closeErr
-	}
-	return b.placeAt(blobDir, src, hex.EncodeToString(hasher.Sum(nil)))
+	defer f.Close()
+	// Stream the legacy bytes through writeBlob — same hash + temp-file +
+	// rename machinery as a fresh upload, but pointed at an existing file
+	// on disk. Leaves the source file in place.
+	path, _, err := b.writeBlob(ctx, f, math.MaxInt64-1)
+	return path, err
 }
 
 // diskBlobReader wraps *os.File and remembers the mtime captured at Open

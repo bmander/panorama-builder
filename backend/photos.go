@@ -142,7 +142,7 @@ func (s *Server) getPhotoBlob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "blob missing")
 		return
 	}
-	f, err := s.blobs.openByPath(*p.BlobPath)
+	f, err := s.blobs.openByPath(r.Context(), *p.BlobPath)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "blob missing")
 		return
@@ -160,7 +160,7 @@ func (s *Server) getPhotoBlob(w http.ResponseWriter, r *http.Request) {
 // getBlob serves bytes content-addressed by sha256. Immutable forever.
 func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
 	hash := r.PathValue("hash")
-	f, err := s.blobs.openByHash(hash)
+	f, err := s.blobs.openByHash(r.Context(), hash)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "blob missing")
 		return

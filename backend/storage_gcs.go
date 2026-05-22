@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -45,7 +46,7 @@ func newGCSBlobStore(ctx context.Context, bucketName string) (*gcsBlobStore, err
 	return &gcsBlobStore{bucket: bucket, tmpDir: os.TempDir()}, nil
 }
 
-func (b *gcsBlobStore) writeBlob(r io.Reader, maxBytes int64) (string, int64, error) {
+func (b *gcsBlobStore) writeBlob(ctx context.Context, r io.Reader, maxBytes int64) (string, int64, error) {
 	// Stage to a local temp file so we can hash before naming the object,
 	// then upload to blobs/<hash>. Cloud Run /tmp is tmpfs so this is
 	// effectively a memory buffer.
@@ -57,7 +58,14 @@ func (b *gcsBlobStore) writeBlob(r io.Reader, maxBytes int64) (string, int64, er
 	defer func() { _ = os.Remove(tmpPath) }()
 
 	hasher := sha256.New()
-	n, err := io.Copy(io.MultiWriter(tmp, hasher), io.LimitReader(r, maxBytes+1))
+	// maxBytes can be near-MaxInt64 from rewriteLegacyPath; guard the +1
+	// to avoid overflow into a negative limit (which io.LimitReader treats
+	// as "read nothing").
+	limit := maxBytes
+	if limit < math.MaxInt64 {
+		limit++
+	}
+	n, err := io.Copy(io.MultiWriter(tmp, hasher), io.LimitReader(r, limit))
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
@@ -85,14 +93,14 @@ func (b *gcsBlobStore) writeBlob(r io.Reader, maxBytes int64) (string, int64, er
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return "", 0, err
 	}
-	if err := b.upload(context.Background(), objName, f, contentType); err != nil {
+	if err := b.upload(ctx, objName, f, contentType); err != nil {
 		return "", 0, err
 	}
 	return objName, n, nil
 }
 
-func (b *gcsBlobStore) writePreview(hash string, r io.Reader) error {
-	return b.upload(context.Background(), previewDir+"/"+hash, r, "image/jpeg")
+func (b *gcsBlobStore) writePreview(ctx context.Context, hash string, r io.Reader) error {
+	return b.upload(ctx, previewDir+"/"+hash, r, "image/jpeg")
 }
 
 // upload writes r to objName with Content-Type and an immutable long-cache
@@ -110,31 +118,30 @@ func (b *gcsBlobStore) upload(ctx context.Context, objName string, r io.Reader, 
 	return w.Close()
 }
 
-func (b *gcsBlobStore) openByHash(hash string) (blobReader, error) {
+func (b *gcsBlobStore) openByHash(ctx context.Context, hash string) (blobReader, error) {
 	if !blobHashRegexp.MatchString(hash) {
 		return nil, os.ErrNotExist
 	}
-	return b.read(blobDir + "/" + hash)
+	return b.read(ctx, blobDir+"/"+hash)
 }
 
-func (b *gcsBlobStore) openPreviewByHash(hash string) (blobReader, error) {
+func (b *gcsBlobStore) openPreviewByHash(ctx context.Context, hash string) (blobReader, error) {
 	if !blobHashRegexp.MatchString(hash) {
 		return nil, os.ErrNotExist
 	}
-	return b.read(previewDir + "/" + hash)
+	return b.read(ctx, previewDir+"/"+hash)
 }
 
-func (b *gcsBlobStore) openByPath(blobPath string) (blobReader, error) {
+func (b *gcsBlobStore) openByPath(ctx context.Context, blobPath string) (blobReader, error) {
 	clean := filepath.Clean(blobPath)
 	base := filepath.Base(clean)
 	if clean != blobDir+"/"+base && clean != "photos/"+base {
 		return nil, os.ErrNotExist
 	}
-	return b.read(clean)
+	return b.read(ctx, clean)
 }
 
-func (b *gcsBlobStore) read(objName string) (blobReader, error) {
-	ctx := context.Background()
+func (b *gcsBlobStore) read(ctx context.Context, objName string) (blobReader, error) {
 	rc, err := b.bucket.Object(objName).NewReader(ctx)
 	if err != nil {
 		if errors.Is(err, storage.ErrObjectNotExist) {
@@ -150,34 +157,25 @@ func (b *gcsBlobStore) read(objName string) (blobReader, error) {
 	return &gcsBlobReader{Reader: bytes.NewReader(buf), mtime: rc.Attrs.LastModified}, nil
 }
 
-func (b *gcsBlobStore) rewriteLegacyPath(oldPath string) (string, error) {
+// rewriteLegacyPath hashes the bytes at a "photos/<id>" object and writes
+// them to "blobs/<hash>" without deleting the source. migrateLegacyBlobs
+// updates the DB row before any cleanup so a crash between rewrite and
+// UPDATE leaves the row pointing at a still-existing legacy object —
+// preserving the trust-model invariant that every photo row references
+// readable bytes.
+func (b *gcsBlobStore) rewriteLegacyPath(ctx context.Context, oldPath string) (string, error) {
 	if !strings.HasPrefix(oldPath, "photos/") {
 		return "", fmt.Errorf("unexpected legacy path %q", oldPath)
 	}
-	ctx := context.Background()
-	src := b.bucket.Object(oldPath)
-	rc, err := src.NewReader(ctx)
+	rc, err := b.bucket.Object(oldPath).NewReader(ctx)
 	if err != nil {
 		return "", err
 	}
-	buf, err := io.ReadAll(rc)
-	_ = rc.Close()
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(buf)
-	objName := blobDir + "/" + hex.EncodeToString(sum[:])
-	sniff := buf
-	if len(sniff) > 512 {
-		sniff = sniff[:512]
-	}
-	if err := b.upload(ctx, objName, bytes.NewReader(buf), http.DetectContentType(sniff)); err != nil {
-		return "", err
-	}
-	if err := src.Delete(ctx); err != nil && !errors.Is(err, storage.ErrObjectNotExist) {
-		return "", err
-	}
-	return objName, nil
+	defer rc.Close()
+	// Stream legacy bytes through writeBlob — stages locally, hashes,
+	// uploads to blobs/<hash>. Source object is intentionally untouched.
+	path, _, err := b.writeBlob(ctx, rc, math.MaxInt64-1)
+	return path, err
 }
 
 // gcsBlobReader holds object bytes in memory; Close is a no-op (GC handles

@@ -37,7 +37,12 @@ func migrateLegacyBlobs(ctx context.Context, db *pgxpool.Pool, blobs blobStore) 
 
 	log.Printf("blob migration: rewriting %d legacy photo path(s) to content-addressed", len(todo))
 	for _, l := range todo {
-		newPath, err := blobs.rewriteLegacyPath(l.path)
+		// rewriteLegacyPath leaves the legacy object in place. Order
+		// matters: any crash between this call and the UPDATE below will
+		// re-run the migration on next boot with the row still readable
+		// at its old location. The downside is a residual orphan object
+		// per row; acceptable for a one-time migration.
+		newPath, err := blobs.rewriteLegacyPath(ctx, l.path)
 		if err != nil {
 			log.Printf("blob migration: skip photo %s (%s): %v", l.id, l.path, err)
 			continue
