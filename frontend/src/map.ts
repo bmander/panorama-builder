@@ -503,17 +503,22 @@ export function createMapView({
   function wirePopupLocks(popup: L.Popup, onChange: (patch: MarkerLockPatch) => void): void {
     const root = popup.getElement();
     if (!root) return;
-    const cbs = Array.from(root.querySelectorAll<HTMLInputElement>('.popup-lock'));
+    // Snapshot each checkbox's auto-lock state from the markup: paramRowsHtml
+    // renders `disabled` when the axis is auto-locked at threshold, and that
+    // bit must survive session toggles — the solver derivation says the lock
+    // is forced regardless of edit mode.
+    const cbs = Array.from(root.querySelectorAll<HTMLInputElement>('.popup-lock'))
+      .map(cb => ({ cb, autoLocked: cb.disabled }));
     const syncDisabled = (): void => {
-      const disabled = !editingActive();
-      for (const cb of cbs) cb.disabled = disabled;
+      const noSession = !editingActive();
+      for (const { cb, autoLocked } of cbs) cb.disabled = autoLocked || noSession;
     };
     syncDisabled();
     const unsub = sessionStore.onChange(syncDisabled);
     popup.on('remove', unsub);
-    for (const cb of cbs) {
+    for (const { cb, autoLocked } of cbs) {
       cb.addEventListener('change', () => {
-        if (!editingActive()) { cb.checked = !cb.checked; return; }
+        if (autoLocked || !editingActive()) { cb.checked = !cb.checked; return; }
         const which = cb.dataset.lock;
         if (which === 'pos') onChange({ lockPos: cb.checked });
         else if (which === 'alt') onChange({ lockAlt: cb.checked });
