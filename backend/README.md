@@ -40,27 +40,28 @@ Make sure the frontend has been built once: `cd ../frontend && npm install && np
 
 Open <http://localhost:8080>. Setting a station pushes the URL to `/station/<id>`.
 
-## Containerized dev (reader + editor split)
+## Containerized dev (api + private solver)
 
-The production architecture runs two backends behind the same `bmander.com`
-domain: a scale-to-zero reader (`photos.bmander.com`, no Ceres, fast cold
-start) and an on-demand editor (`edit.photos.bmander.com`, full solver).
-You can run the same split locally:
+The production architecture is one public API service plus a private
+solver microservice that the API calls server-to-server. The browser only
+talks to the API. The solver scales to zero independently; cold-start cost
+is paid when a user-triggered solve fires.
 
 ```sh
-(cd ../frontend && npm run build:docker-split)   # build with absolute URLs
-make split-up                                    # postgres + reader + editor
+(cd ../frontend && npm run build)   # plain build — single /api origin
+make split-up                       # postgres + api + solver
 
-# Browse http://localhost:8080 — reader serves frontend + all GETs.
-# Writes go cross-origin to http://localhost:8081 (editor); CORS allows it.
+# Browse http://localhost:8080 — api serves frontend + every /api/* route.
+# The solver has no host port — only api reaches it on the docker network.
 
-make split-down                                  # stop the split
+make split-down                     # stop the cluster
 ```
 
-The reader image strips the Ceres-Solver binding via the `noceres` build
-tag, so `/api/solve/*` routes simply don't exist there (any solve attempt
-falls through to the SPA fallback and returns 405). Solve POSTs from the
-frontend route to the editor instead.
+The api binary is built with `-tags noceres` (no cgo, no Ceres) and
+forwards `/api/solve/*` calls to the solver service via `SOLVER_URL`. The
+solver binary lives at `cmd/solver/` and exposes `POST /solve`,
+`POST /solve/stream`, and `POST /stop` — see `solver_client.go` and
+`solver/dto.go` for the wire contract.
 
 ## Env vars
 
@@ -77,6 +78,7 @@ frontend route to the editor instead.
 | `RATE_LIMIT_READ_PER_MIN`  | `600` (per-IP GET/HEAD budget; burst is 10% of this)                    |
 | `RATE_LIMIT_WRITE_PER_MIN` | `60` (per-IP POST/PUT/PATCH/DELETE budget; burst is 10% of this)        |
 | `TRUSTED_PROXY_HOPS` | `0` (number of trusted L7 proxies in front of this binary; e.g. `1` for Cloud Run / Cloud Run + GFE — client IP is then read from X-Forwarded-For) |
+| `SOLVER_URL`      | `http://localhost:8081` (base URL of the private solver service — see `cmd/solver/`)                                                                |
 
 ## Routes
 

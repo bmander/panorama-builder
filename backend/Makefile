@@ -1,4 +1,4 @@
-.PHONY: run build build-reader build-editor docker-reader docker-editor run-reader run-editor split-up split-down fmt vet tidy generate dump restore
+.PHONY: run build build-api build-solver docker-api docker-solver split-up split-down fmt vet tidy generate dump restore
 
 DATABASE_URL ?= postgres://panorama:panorama@localhost:5432/panorama?sslmode=disable
 DUMP_FILE    ?= panorama_$(shell date -u +%Y%m%dT%H%M%SZ).sql
@@ -7,54 +7,38 @@ DUMP_FILE    ?= panorama_$(shell date -u +%Y%m%dT%H%M%SZ).sql
 #   macOS:  brew install ceres-solver eigen suite-sparse glog gflags
 #   Linux:  apt install libceres-dev libeigen3-dev libsuitesparse-dev \
 #                       libgoogle-glog-dev libgflags-dev
+#
+# Note: `go run .` here builds the API binary, which proxies solves to a
+# separate solver process via SOLVER_URL. For the full app locally use
+# `make split-up` (docker compose) instead.
 run:
 	DATABASE_URL='$(DATABASE_URL)' go run .
 
 build:
 	go build -o bin/panorama-api .
 
-# Reader binary: no cgo, no Ceres linkage — for the read-only Cloud Run
-# service. Solver routes don't exist in this build (router_solve_stub.go).
-build-reader:
-	CGO_ENABLED=0 go build -tags noceres -o bin/panorama-reader .
+# API binary: pure-Go, no cgo, no Ceres. Forwards solves to the private
+# solver service via SOLVER_URL. Suitable for distroless-static.
+build-api:
+	CGO_ENABLED=0 go build -tags noceres -o bin/panorama-api .
 
-# Editor binary: full build, links Ceres-Solver via cgo. Same as `make build`
-# but with an explicit name to mirror build-reader.
-build-editor:
-	go build -o bin/panorama-editor .
+# Solver binary: full build with cgo + Ceres. Private microservice (no DB,
+# no sessions); only the api service calls it. See cmd/solver/.
+build-solver:
+	go build -o bin/panorama-solver ./cmd/solver
 
-# Docker images for Cloud Run. Reader = distroless static (~55 MB). Editor =
-# debian-slim + libceres3 runtime (~240 MB). Built from backend/ context.
-docker-reader:
-	docker build -f Dockerfile.reader -t panorama-reader:dev .
+# Docker images for Cloud Run.
+#   api    = distroless-static, ~55 MB.
+#   solver = debian-slim + libceres3, ~240 MB.
+docker-api:
+	docker build -f Dockerfile.api -t panorama-api:dev .
 
-docker-editor:
-	docker build -f Dockerfile.editor -t panorama-editor:dev .
+docker-solver:
+	docker build -f Dockerfile.solver -t panorama-solver:dev .
 
-# Run a built image locally against the host Postgres (Docker Desktop's
-# host.docker.internal) and the local data/ + ../frontend/dist mounts.
-# Override DATABASE_URL if pointing elsewhere.
-DOCKER_DB_URL ?= postgres://panorama:panorama@host.docker.internal:5432/panorama?sslmode=disable
-run-reader:
-	docker rm -f pan-reader 2>/dev/null; true
-	docker run --rm -it --name pan-reader -p 8080:8080 \
-	  -e DATABASE_URL='$(DOCKER_DB_URL)' \
-	  -e STORAGE_DIR=/data -e STATIC_DIR=/static \
-	  -v $(PWD)/data:/data -v $(PWD)/../frontend/dist:/static:ro \
-	  panorama-reader:dev
-
-run-editor:
-	docker rm -f pan-editor 2>/dev/null; true
-	docker run --rm -it --name pan-editor -p 8080:8080 \
-	  -e DATABASE_URL='$(DOCKER_DB_URL)' \
-	  -e STORAGE_DIR=/data -e STATIC_DIR=/static \
-	  -v $(PWD)/data:/data -v $(PWD)/../frontend/dist:/static:ro \
-	  panorama-editor:dev
-
-# Bring up the prod-like split locally: postgres + reader (:8080, serves
-# frontend + GETs) + editor (:8081, writes + solves, CORS-allowed from
-# reader). Frontend must be built with the docker URLs first:
-#   (cd ../frontend && npm run build:docker-split)
+# Bring up the prod-like layout locally: postgres + api (:8080, browser
+# origin) + solver (no host port, private network only). Frontend must be
+# built first:  (cd ../frontend && npm run build)
 split-up:
 	docker compose --profile app up -d --build
 

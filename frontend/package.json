@@ -6,7 +6,6 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:docker-split": "VITE_READ_API_BASE=http://localhost:8080/api VITE_WRITE_API_BASE=http://localhost:8081/api vite build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "lint:fix": "eslint src --fix",

@@ -1,5 +1,3 @@
-//go:build !noceres
-
 package main
 
 // Solver writeback always goes through the session journal in

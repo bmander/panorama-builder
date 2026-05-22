@@ -1,5 +1,3 @@
-//go:build !noceres
-
 package main
 
 import (
@@ -13,7 +11,12 @@ import (
 
 // Synchronous solver handlers (joint + single-station + single-CP). The
 // streaming joint variant lives in solve_stream.go. All four take
-// Server.solveMu so only one solve runs at a time.
+// Server.solveMu so only one solve runs at a time on this api instance.
+//
+// Each handler loads the Problem from the DB (session-overlay-aware), then
+// hands it to the private solver service via s.solver. The solver service
+// (cmd/solver) runs Ceres and returns a solver.Result; the api writes
+// resulting changes back through the session journal.
 
 func (s *Server) postSolveJoint(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.requireSession(w, r)
@@ -107,12 +110,7 @@ func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg solver.Con
 		return
 	}
 
-	var res solver.Result
-	if cfg.Mode == solver.ModeJoint {
-		res, err = solver.SolveJointWithSeed(prob, seededCPIDs, cfg)
-	} else {
-		res, err = solver.Solve(prob, cfg)
-	}
+	res, err := s.solver.Solve(ctx, prob, cfg, seededCPIDs)
 	if err != nil {
 		switch {
 		case errors.Is(err, solver.ErrUnderconstrainedGauge):

@@ -1,8 +1,10 @@
 # syntax=docker/dockerfile:1
 
-# Pure-Go reader image: no cgo, no Ceres, no glibc. Result is a static binary
-# that drops onto distroless-static. Use for the photos.bmander.com Cloud Run
-# service (min-instances=1, all GETs, no solver routes).
+# API service: pure-Go HTTP frontend for the panorama app. No cgo, no Ceres,
+# no glibc — drops onto distroless-static. Frontend's only origin in prod
+# (photos.bmander.com); forwards solve calls to the private solver service
+# via SOLVER_URL. Designed for min-instances=1 — fast cold start, warm
+# always.
 #
 # Build context is backend/. The frontend's static files are mounted at
 # runtime via STATIC_DIR — the image stays tiny and storage-agnostic.
@@ -15,11 +17,11 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build \
       -tags noceres \
       -ldflags '-s -w' \
-      -o /out/panorama-reader .
+      -o /out/panorama-api .
 
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/panorama-reader /panorama-reader
+COPY --from=build /out/panorama-api /panorama-api
 EXPOSE 8080
 ENV LISTEN_ADDR=:8080
 USER nonroot:nonroot
-ENTRYPOINT ["/panorama-reader"]
+ENTRYPOINT ["/panorama-api"]

@@ -17,6 +17,7 @@ import (
 type Server struct {
 	db             *pgxpool.Pool
 	blobs          blobStore
+	solver         *solverClient
 	staticDir      string
 	allowedOrigin  string
 	maxBlobBytes   int64
@@ -47,6 +48,7 @@ func main() {
 		"postgres://panorama:panorama@localhost:5432/panorama?sslmode=disable")
 	storageDir := envDefault("STORAGE_DIR", "./data")
 	storageBucket := envDefault("STORAGE_BUCKET", "")
+	solverURL := envDefault("SOLVER_URL", "http://localhost:8081")
 	staticDir := envDefault("STATIC_DIR", "../frontend/dist")
 	allowedOrigin := envDefault("ALLOWED_ORIGIN", "*")
 	maxBlobBytes := envInt64("MAX_BLOB_BYTES", 25_000_000)
@@ -84,6 +86,7 @@ func main() {
 	s := &Server{
 		db:             pool,
 		blobs:          blobs,
+		solver:         newSolverClient(solverURL),
 		staticDir:      staticDir,
 		allowedOrigin:  allowedOrigin,
 		maxBlobBytes:   maxBlobBytes,

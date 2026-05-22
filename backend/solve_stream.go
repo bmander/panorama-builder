@@ -1,12 +1,12 @@
-//go:build !noceres
-
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/bmander/panorama-builder/backend/solver"
 )
@@ -20,7 +20,10 @@ import (
 //	data: {"kind":"error","message":"..."}\n\n
 //
 // /api/solve/stop signals the current run to break gracefully — see
-// postSolveStop. Only one solve is in flight at a time (Server.solveMu).
+// postSolveStop. Only one solve is in flight at a time on this api
+// instance (Server.solveMu); the api forwards the actual Ceres run to the
+// private solver service via s.solver.SolveStream.
+
 func (s *Server) postSolveJointStream(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.requireSession(w, r)
 	if !ok {
@@ -107,31 +110,53 @@ func (s *Server) streamSolve(w http.ResponseWriter, r *http.Request, sess *Sessi
 		s.activeStopMu.Unlock()
 	}()
 
-	stopRequested := false
-	cfg.OnIteration = func(iter int, rms float64, accepted bool) {
+	// When the user-facing /api/solve/stop fires, relay it to the solver
+	// service via a side-channel POST /stop. Tracking stopRequested locally
+	// lets us emit the browser-facing "stopped" terminal kind while still
+	// receiving a normal `done` event (with the best iterate) from the
+	// solver — so writeback proceeds on the same path as a natural finish.
+	//
+	// solveDone closes when the main goroutine is finished with the solver
+	// so the relay can exit even on natural completion (ctx isn't canceled
+	// until ServeHTTP returns, and ServeHTTP can't return until the relay
+	// exits — closing solveDone is what breaks that cycle). stopRequested
+	// is atomic because the main goroutine reads it concurrently with the
+	// relay's write window.
+	var stopRequested atomic.Bool
+	solveDone := make(chan struct{})
+	stopRelay := make(chan struct{})
+	go func() {
+		defer close(stopRelay)
+		select {
+		case <-ctx.Done():
+			return
+		case <-solveDone:
+			return
+		case <-stopCh:
+			stopRequested.Store(true)
+			// Best-effort: a 404 means the solver already returned.
+			if err := s.solver.Stop(context.WithoutCancel(ctx)); err != nil {
+				log.Printf("solver stop relay: %v", err)
+			}
+		}
+	}()
+	defer func() {
+		close(solveDone)
+		<-stopRelay
+	}()
+
+	onIter := func(iter int, rms float64, accepted bool) {
 		sendEvent(map[string]any{
 			"kind": "iter", "iter": iter, "rms": rms, "accepted": accepted,
 		})
 	}
-	cfg.ShouldStop = func() bool {
-		select {
-		case <-ctx.Done():
-			return true
-		case <-stopCh:
-			stopRequested = true
-			return true
-		default:
-			return false
-		}
-	}
 
-	var res solver.Result
-	if cfg.Mode == solver.ModeJoint {
-		res, err = solver.SolveJointWithSeed(prob, seededCPIDs, cfg)
-	} else {
-		res, err = solver.Solve(prob, cfg)
-	}
+	res, err := s.solver.SolveStream(ctx, prob, cfg, seededCPIDs, onIter)
 	if err != nil {
+		if ctx.Err() != nil {
+			sendEvent(map[string]string{"kind": "cancelled"})
+			return
+		}
 		sendError(err.Error())
 		return
 	}
@@ -151,7 +176,7 @@ func (s *Server) streamSolve(w http.ResponseWriter, r *http.Request, sess *Sessi
 	}
 
 	terminalKind := "done"
-	if stopRequested {
+	if stopRequested.Load() {
 		terminalKind = "stopped"
 	}
 	sendEvent(map[string]any{"kind": terminalKind, "result": toAPISolveResult(res)})
@@ -161,7 +186,7 @@ func (s *Server) streamSolve(w http.ResponseWriter, r *http.Request, sess *Sessi
 // iteration boundary. The handler then emits a "stopped" terminal event
 // with the best iterate so far; no writeback. Shared across all streaming
 // endpoints since only one solve runs at a time.
-func (s *Server) postSolveStop(w http.ResponseWriter, r *http.Request) {
+func (s *Server) postSolveStop(w http.ResponseWriter, _ *http.Request) {
 	s.activeStopMu.Lock()
 	ch := s.activeStop
 	s.activeStopMu.Unlock()
