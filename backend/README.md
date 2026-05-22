@@ -49,7 +49,11 @@ Open <http://localhost:8080>. Setting a station pushes the URL to `/station/<id>
 | `STATIC_DIR`      | `../frontend/dist`                                                               |
 | `LISTEN_ADDR`     | `:8080`                                                                          |
 | `ALLOWED_ORIGIN`  | `*` (loose for local dev — set to the frontend origin in prod)                   |
-| `MAX_BLOB_BYTES`  | `50000000` (50 MB)                                                               |
+| `MAX_BLOB_BYTES`  | `25000000` (25 MB)                                                               |
+| `MAX_IMAGE_MEGAPIXELS` | `50` (header-only decode bomb gate on photo uploads)                        |
+| `RATE_LIMIT_READ_PER_MIN`  | `600` (per-IP GET/HEAD budget; burst is 10% of this)                    |
+| `RATE_LIMIT_WRITE_PER_MIN` | `60` (per-IP POST/PUT/PATCH/DELETE budget; burst is 10% of this)        |
+| `TRUSTED_PROXY_HOPS` | `0` (number of trusted L7 proxies in front of this binary; e.g. `1` for Cloud Run / Cloud Run + GFE — client IP is then read from X-Forwarded-For) |
 
 ## Routes
 

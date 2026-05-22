@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -553,6 +554,15 @@ func (s *Server) putPhotoBlobInSession(w http.ResponseWriter, r *http.Request, s
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	// Reject decompression bombs by header inspection. The blob bytes stay
+	// on disk as an orphan (no DB reference written); content-addressed
+	// storage means we can't safely os.Remove — a concurrent legitimate
+	// upload may share the hash. Orphan-on-abandon is already part of the
+	// trust model.
+	if msg := s.checkImageDims(filepath.Base(path)); msg != "" {
+		writeError(w, http.StatusRequestEntityTooLarge, msg)
 		return
 	}
 	before := jsonMust(cur)

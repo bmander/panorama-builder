@@ -92,6 +92,30 @@ func (s *Server) makePreview(hash string) (status int, msg string) {
 	return 0, ""
 }
 
+// checkImageDims inspects a just-written blob's header to reject decompression
+// bombs before any pixel buffer is allocated downstream (preview path).
+// Returns "" on accept; a non-empty message on reject.
+//
+// Fail-open on DecodeConfig errors: stdlib doesn't decode HEIC/AVIF, and the
+// preview path will return 415 for unrecognized formats later. This check
+// exists to gate recognized PNG/JPEG/WebP bombs, not to enforce format
+// support.
+func (s *Server) checkImageDims(hash string) string {
+	f, err := s.blobs.openByHash(hash)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		return ""
+	}
+	if int64(cfg.Width)*int64(cfg.Height) > s.maxImagePixels {
+		return "image too large"
+	}
+	return ""
+}
+
 func resizeMaxWidth(src image.Image, maxW int) image.Image {
 	b := src.Bounds()
 	srcW, srcH := b.Dx(), b.Dy()

@@ -81,7 +81,7 @@ func (s *Server) routes() http.Handler {
 	// Catch-all: serve static frontend with SPA fallback for unknown paths.
 	mux.HandleFunc("/", s.spaFallback)
 
-	return cors(s.allowedOrigin, mux)
+	return cors(s.allowedOrigin, s.limiter.middleware(mux))
 }
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {

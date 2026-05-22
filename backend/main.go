@@ -15,11 +15,13 @@ import (
 )
 
 type Server struct {
-	db            *pgxpool.Pool
-	blobs         *blobStore
-	staticDir     string
-	allowedOrigin string
-	maxBlobBytes  int64
+	db             *pgxpool.Pool
+	blobs          *blobStore
+	staticDir      string
+	allowedOrigin  string
+	maxBlobBytes   int64
+	maxImagePixels int64
+	limiter        *limiter
 	// solveMu serializes /api/solve/* runs. The solver is solo-user-scale and
 	// runs at most a few seconds; a single global mutex avoids the complexity
 	// of per-station locking without measurable contention cost.
@@ -46,7 +48,15 @@ func main() {
 	storageDir := envDefault("STORAGE_DIR", "./data")
 	staticDir := envDefault("STATIC_DIR", "../frontend/dist")
 	allowedOrigin := envDefault("ALLOWED_ORIGIN", "*")
-	maxBlobBytes := envInt64("MAX_BLOB_BYTES", 50_000_000)
+	maxBlobBytes := envInt64("MAX_BLOB_BYTES", 25_000_000)
+	maxMegapixels := envInt64("MAX_IMAGE_MEGAPIXELS", 50)
+	if maxMegapixels < 1 {
+		maxMegapixels = 50
+	}
+	maxImagePixels := maxMegapixels * 1_000_000
+	readPerMin := envInt64("RATE_LIMIT_READ_PER_MIN", 600)
+	writePerMin := envInt64("RATE_LIMIT_WRITE_PER_MIN", 60)
+	trustedProxyHops := int(envInt64("TRUSTED_PROXY_HOPS", 0))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -71,12 +81,17 @@ func main() {
 	}
 
 	s := &Server{
-		db:            pool,
-		blobs:         blobs,
-		staticDir:     staticDir,
-		allowedOrigin: allowedOrigin,
-		maxBlobBytes:  maxBlobBytes,
+		db:             pool,
+		blobs:          blobs,
+		staticDir:      staticDir,
+		allowedOrigin:  allowedOrigin,
+		maxBlobBytes:   maxBlobBytes,
+		maxImagePixels: maxImagePixels,
+		limiter:        newLimiter(readPerMin, writePerMin, trustedProxyHops),
 	}
+
+	janitorStop := make(chan struct{})
+	go s.limiter.janitor(janitorStop)
 
 	srv := &http.Server{
 		Addr:              listenAddr,
@@ -93,6 +108,7 @@ func main() {
 
 	<-ctx.Done()
 	log.Println("shutting down")
+	close(janitorStop)
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
