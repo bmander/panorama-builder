@@ -75,9 +75,15 @@ type SolverIterEvent struct {
 	Accepted bool    `json:"accepted"`
 }
 
+// SolverDoneEvent is the terminal frame of a streaming solve. Aborted is
+// true iff the iter loop broke early because ShouldStop returned true
+// (the api side maps this to the browser-facing "stopped" kind; false
+// becomes "done"). Result carries the best iterate either way, so the
+// api's writeback path is identical.
 type SolverDoneEvent struct {
-	Kind   string `json:"kind"`
-	Result Result `json:"result"`
+	Kind    string `json:"kind"`
+	Aborted bool   `json:"aborted,omitempty"`
+	Result  Result `json:"result"`
 }
 
 type SolverErrorEvent struct {

@@ -1,12 +1,10 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"sync/atomic"
 
 	"github.com/bmander/panorama-builder/backend/solver"
 )
@@ -19,10 +17,11 @@ import (
 //	data: {"kind":"cancelled"}\n\n
 //	data: {"kind":"error","message":"..."}\n\n
 //
-// /api/solve/stop signals the current run to break gracefully — see
-// postSolveStop. Only one solve is in flight at a time on this api
-// instance (Server.solveMu); the api forwards the actual Ceres run to the
-// private solver service via s.solver.SolveStream.
+// The api proxies these to the private solver service. Iter frames are
+// forwarded verbatim (the byte shape is identical on both sides). The
+// terminal `done` / `stopped` kinds are picked from solver.SolverDoneEvent's
+// Aborted bit; `cancelled` fires when the api's own request context dies
+// (browser disconnect) before the solver could land a terminal frame.
 
 func (s *Server) postSolveJointStream(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.requireSession(w, r)
@@ -100,58 +99,15 @@ func (s *Server) streamSolve(w http.ResponseWriter, r *http.Request, sess *Sessi
 		sendEvent(map[string]string{"kind": "error", "message": msg})
 	}
 
-	stopCh := make(chan struct{}, 1)
-	s.activeStopMu.Lock()
-	s.activeStop = stopCh
-	s.activeStopMu.Unlock()
-	defer func() {
-		s.activeStopMu.Lock()
-		s.activeStop = nil
-		s.activeStopMu.Unlock()
-	}()
-
-	// When the user-facing /api/solve/stop fires, relay it to the solver
-	// service via a side-channel POST /stop. Tracking stopRequested locally
-	// lets us emit the browser-facing "stopped" terminal kind while still
-	// receiving a normal `done` event (with the best iterate) from the
-	// solver — so writeback proceeds on the same path as a natural finish.
-	//
-	// solveDone closes when the main goroutine is finished with the solver
-	// so the relay can exit even on natural completion (ctx isn't canceled
-	// until ServeHTTP returns, and ServeHTTP can't return until the relay
-	// exits — closing solveDone is what breaks that cycle). stopRequested
-	// is atomic because the main goroutine reads it concurrently with the
-	// relay's write window.
-	var stopRequested atomic.Bool
-	solveDone := make(chan struct{})
-	stopRelay := make(chan struct{})
-	go func() {
-		defer close(stopRelay)
-		select {
-		case <-ctx.Done():
-			return
-		case <-solveDone:
-			return
-		case <-stopCh:
-			stopRequested.Store(true)
-			// Best-effort: a 404 means the solver already returned.
-			if err := s.solver.Stop(context.WithoutCancel(ctx)); err != nil {
-				log.Printf("solver stop relay: %v", err)
-			}
-		}
-	}()
-	defer func() {
-		close(solveDone)
-		<-stopRelay
-	}()
-
-	onIter := func(iter int, rms float64, accepted bool) {
-		sendEvent(map[string]any{
-			"kind": "iter", "iter": iter, "rms": rms, "accepted": accepted,
-		})
+	// Iter events have the same JSON shape on both internal (solver→api) and
+	// external (api→browser) wires, so we relay the raw bytes — no parse,
+	// no re-marshal per iter.
+	onIter := func(raw []byte) {
+		fmt.Fprintf(w, "data: %s\n\n", raw)
+		flusher.Flush()
 	}
 
-	res, err := s.solver.SolveStream(ctx, prob, cfg, seededCPIDs, onIter)
+	res, aborted, err := s.solver.SolveStream(ctx, prob, cfg, seededCPIDs, onIter)
 	if err != nil {
 		if ctx.Err() != nil {
 			sendEvent(map[string]string{"kind": "cancelled"})
@@ -176,27 +132,23 @@ func (s *Server) streamSolve(w http.ResponseWriter, r *http.Request, sess *Sessi
 	}
 
 	terminalKind := "done"
-	if stopRequested.Load() {
+	if aborted {
 		terminalKind = "stopped"
 	}
 	sendEvent(map[string]any{"kind": terminalKind, "result": toAPISolveResult(res)})
 }
 
-// postSolveStop signals the in-flight streaming solve to break at the next
-// iteration boundary. The handler then emits a "stopped" terminal event
-// with the best iterate so far; no writeback. Shared across all streaming
-// endpoints since only one solve runs at a time.
-func (s *Server) postSolveStop(w http.ResponseWriter, _ *http.Request) {
-	s.activeStopMu.Lock()
-	ch := s.activeStop
-	s.activeStopMu.Unlock()
-	if ch == nil {
-		writeError(w, http.StatusNotFound, "no active solve")
+// postSolveStop forwards the stop signal to the solver service. The solver
+// breaks its current iter loop at the next boundary and returns its best
+// iterate via a normal `done` event with Aborted=true; the streamSolve
+// handler then emits "stopped" to the browser. A 404 from the solver
+// (no active solve) is treated as a benign no-op — same response either
+// way.
+func (s *Server) postSolveStop(w http.ResponseWriter, r *http.Request) {
+	if err := s.solver.Stop(r.Context()); err != nil {
+		log.Printf("solver stop: %v", err)
+		writeError(w, http.StatusInternalServerError, "stop failed")
 		return
-	}
-	select {
-	case ch <- struct{}{}:
-	default:
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

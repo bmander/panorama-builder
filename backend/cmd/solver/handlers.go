@@ -103,11 +103,20 @@ func (s *server) postSolveStream(w http.ResponseWriter, r *http.Request) {
 			Accepted: accepted,
 		})
 	}
+	// aborted tracks whether the iter loop exited because ShouldStop
+	// returned true (caller-initiated /stop, or this request's context
+	// cancelling). The done event carries this bit so the api side can
+	// pick the right browser-facing terminal kind without keeping its
+	// own per-solve state. Safe to capture as a plain bool — ShouldStop
+	// runs synchronously on the cgo-calling goroutine.
+	aborted := false
 	cfg.ShouldStop = func() bool {
 		select {
 		case <-ctx.Done():
+			aborted = true
 			return true
 		case <-stopCh:
+			aborted = true
 			return true
 		default:
 			return false
@@ -119,7 +128,11 @@ func (s *server) postSolveStream(w http.ResponseWriter, r *http.Request) {
 		sendEvent(solver.SolverErrorEvent{Kind: solver.SolverEventError, Message: err.Error()})
 		return
 	}
-	sendEvent(solver.SolverDoneEvent{Kind: solver.SolverEventDone, Result: res})
+	sendEvent(solver.SolverDoneEvent{
+		Kind:    solver.SolverEventDone,
+		Aborted: aborted,
+		Result:  res,
+	})
 }
 
 // postStop signals the in-flight streaming solve to break at the next

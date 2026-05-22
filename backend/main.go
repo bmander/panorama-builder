@@ -23,16 +23,13 @@ type Server struct {
 	maxBlobBytes   int64
 	maxImagePixels int64
 	limiter        *limiter
-	// solveMu serializes /api/solve/* runs. The solver is solo-user-scale and
-	// runs at most a few seconds; a single global mutex avoids the complexity
-	// of per-station locking without measurable contention cost.
+	// solveMu serializes /api/solve/* runs on this api instance. The solver
+	// service has its own serialization too; the api-side mutex keeps each
+	// instance's load+writeback wrapper single-threaded so concurrent
+	// session writebacks don't interleave. /api/solve/stop targets the
+	// solver service directly (POST /stop), so it doesn't need
+	// per-handler state on the api side.
 	solveMu sync.Mutex
-	// activeStop is non-nil while a streaming solve is running; sending on it
-	// signals the solver loop to break gracefully (the "stop here" button).
-	// Guarded by activeStopMu (separate from solveMu so a /stop request can
-	// fire while the streaming solve still holds solveMu).
-	activeStopMu sync.Mutex
-	activeStop   chan struct{}
 }
 
 func main() {

@@ -69,41 +69,47 @@ func (c *solverClient) Solve(ctx context.Context, prob solver.Problem, cfg solve
 	return res, nil
 }
 
-// SolveStream runs a streaming solve and forwards each iter event to onIter.
-// Caller cancels ctx to break the loop early — the solver service's
-// ShouldStop derives from request-context cancellation, so the loop breaks
-// at the next iteration boundary. Returns the final Result (best iterate
-// so far if interrupted).
+// SolveStream runs a streaming solve and forwards each iter event's raw
+// JSON payload to onIter — the api side rebroadcasts those bytes verbatim
+// to the browser, so there's no reason to parse-then-re-marshal them on
+// the relay hop. Returns the final Result plus an aborted flag indicating
+// the solver's loop broke early because ShouldStop returned true.
+//
+// Caller can break the loop early by either (a) POST /stop to the solver
+// (handled by solverClient.Stop) — landing on the solver's `aborted=true`
+// path — or (b) cancelling ctx, which propagates through the outgoing
+// connection. In (b) the solver's ShouldStop also fires but the connection
+// closes before the done event lands, so the caller sees errSolverStreamClosed.
 func (c *solverClient) SolveStream(
 	ctx context.Context,
 	prob solver.Problem,
 	cfg solver.Config,
 	seededCPIDs []string,
-	onIter func(iter int, rms float64, accepted bool),
-) (solver.Result, error) {
+	onIter func(rawIterEvent []byte),
+) (res solver.Result, aborted bool, err error) {
 	body, err := json.Marshal(solver.SolveRequest{
 		Problem:     prob,
 		Config:      solver.ConfigToDTO(cfg),
 		SeededCPIDs: seededCPIDs,
 	})
 	if err != nil {
-		return solver.Result{}, fmt.Errorf("solver req marshal: %w", err)
+		return solver.Result{}, false, fmt.Errorf("solver req marshal: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/solve/stream", bytes.NewReader(body))
 	if err != nil {
-		return solver.Result{}, err
+		return solver.Result{}, false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return solver.Result{}, fmt.Errorf("solver stream request: %w", err)
+		return solver.Result{}, false, fmt.Errorf("solver stream request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(resp.Body)
-		return solver.Result{}, sentinelFromMessage(strings.TrimSpace(string(msg)), resp.StatusCode)
+		return solver.Result{}, false, sentinelFromMessage(strings.TrimSpace(string(msg)), resp.StatusCode)
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -113,6 +119,7 @@ func (c *solverClient) SolveStream(
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 
 	var final solver.Result
+	var doneAborted bool
 	var solverErr error
 	gotDone := false
 
@@ -125,47 +132,53 @@ func (c *solverClient) SolveStream(
 		if payload == "" {
 			continue
 		}
-		var head struct {
-			Kind string `json:"kind"`
-		}
-		if err := json.Unmarshal([]byte(payload), &head); err != nil {
-			continue
-		}
-		switch head.Kind {
+		// Cheap kind discriminator without unmarshaling the whole payload —
+		// iter events go through unparsed, only done/error are decoded.
+		kind := peekKind(payload)
+		switch kind {
 		case solver.SolverEventIter:
-			if onIter == nil {
-				continue
+			if onIter != nil {
+				onIter([]byte(payload))
 			}
-			var ev solver.SolverIterEvent
-			if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-				continue
-			}
-			onIter(ev.Iter, ev.RMS, ev.Accepted)
 		case solver.SolverEventDone:
 			var ev solver.SolverDoneEvent
 			if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-				return solver.Result{}, fmt.Errorf("decode done event: %w", err)
+				return solver.Result{}, false, fmt.Errorf("decode done event: %w", err)
 			}
 			final = ev.Result
+			doneAborted = ev.Aborted
 			gotDone = true
 		case solver.SolverEventError:
 			var ev solver.SolverErrorEvent
 			if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-				return solver.Result{}, fmt.Errorf("decode error event: %w", err)
+				return solver.Result{}, false, fmt.Errorf("decode error event: %w", err)
 			}
 			solverErr = sentinelFromMessage(ev.Message, http.StatusInternalServerError)
 		}
 	}
 	if err := scanner.Err(); err != nil && !errors.Is(err, context.Canceled) {
-		return solver.Result{}, fmt.Errorf("solver stream read: %w", err)
+		return solver.Result{}, false, fmt.Errorf("solver stream read: %w", err)
 	}
 	if solverErr != nil {
-		return solver.Result{}, solverErr
+		return solver.Result{}, false, solverErr
 	}
 	if !gotDone {
-		return solver.Result{}, errSolverStreamClosed
+		return solver.Result{}, false, errSolverStreamClosed
 	}
-	return final, nil
+	return final, doneAborted, nil
+}
+
+// peekKind extracts the "kind" field from a JSON event payload without
+// allocating a full struct decode. Returns "" on malformed input —
+// callers skip unknown kinds.
+func peekKind(payload string) string {
+	var head struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal([]byte(payload), &head); err != nil {
+		return ""
+	}
+	return head.Kind
 }
 
 // Stop signals the in-flight solver-service streaming solve to break at the
