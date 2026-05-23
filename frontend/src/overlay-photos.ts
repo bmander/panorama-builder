@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { vecToAzAlt } from './geo.js';
 import { lineMat, meshMat, overlayData } from './types.js';
+import { editingActive, sessionStore } from './session-store.js';
 import { makeCanvasTexture } from './canvas-texture.js';
 import { clamp, degToRad } from './mathx.js';
 import type {
@@ -378,12 +379,17 @@ export function createPhotoStore(
   }
 
   function addSelectionVisuals(o: THREE.Group): void {
-    const data = overlayData(o);
-    data.dragHandle = makeActionHandle(ROLE_HANDLE_DRAG, getDragIconTexture());
-    data.rotateHandle = makeActionHandle(ROLE_HANDLE_ROTATE, getRotateIconTexture());
-    data.fovHandle = makeActionHandle(ROLE_HANDLE_FOV, getFovIconTexture());
-    o.add(data.dragHandle, data.rotateHandle, data.fovHandle);
-    applySize(o);
+    // The move / rotate / FOV handles are write affordances, so they exist
+    // only in edit mode. The outline (selection highlight) is a view
+    // affordance and always shows — applyOverlayDecoration handles it.
+    if (editingActive()) {
+      const data = overlayData(o);
+      data.dragHandle = makeActionHandle(ROLE_HANDLE_DRAG, getDragIconTexture());
+      data.rotateHandle = makeActionHandle(ROLE_HANDLE_ROTATE, getRotateIconTexture());
+      data.fovHandle = makeActionHandle(ROLE_HANDLE_FOV, getFovIconTexture());
+      o.add(data.dragHandle, data.rotateHandle, data.fovHandle);
+      applySize(o);
+    }
     applyOverlayDecoration(o);
   }
 
@@ -625,5 +631,19 @@ export function createPhotoStore(
       }
     },
   };
+
+  // Clicking "Edit" starts a session without a page reload, so add the write
+  // handles to the already-selected photo the moment edit mode turns on (and
+  // strip them if it turns off). Leaving edit mode reloads, but we handle both
+  // directions for completeness.
+  sessionStore.onChange(() => {
+    if (!selected) return;
+    const hasHandles = overlayData(selected).dragHandle !== undefined;
+    if (editingActive() === hasHandles) return;
+    if (editingActive()) addSelectionVisuals(selected);
+    else clearSelectionVisuals(selected);
+    notifyLight();
+  });
+
   return store;
 }
