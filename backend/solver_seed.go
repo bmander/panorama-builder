@@ -1,12 +1,10 @@
 package main
 
-import (
-	"github.com/bmander/panorama-builder/backend/solver"
-)
+import "github.com/bmander/panorama-builder/shared/wire"
 
 // meanStationLatLng returns the unweighted mean of the given stations'
 // lat/lng. ok=false when stations is empty (caller decides what to do).
-func meanStationLatLng(stations []solver.Station) (lat, lng float64, ok bool) {
+func meanStationLatLng(stations []wire.Station) (lat, lng float64, ok bool) {
 	if len(stations) == 0 {
 		return 0, 0, false
 	}
@@ -28,10 +26,10 @@ func meanStationLatLng(stations []solver.Station) (lat, lng float64, ok bool) {
 // for each so the joint phase starts from triangulated guesses rather than
 // the centroid.
 func seedNullLocationCPs(
-	cps []solver.ControlPoint, nullLoc map[string]bool,
-	obs []solver.Observation,
-	photos []solver.Photo, stations []solver.Station,
-) ([]solver.ControlPoint, []solver.Observation, []string) {
+	cps []wire.ControlPoint, nullLoc map[string]bool,
+	obs []wire.Observation,
+	photos []wire.Photo, stations []wire.Station,
+) ([]wire.ControlPoint, []wire.Observation, []string) {
 	if len(nullLoc) == 0 {
 		return cps, obs, nil
 	}
@@ -40,7 +38,7 @@ func seedNullLocationCPs(
 	for _, p := range photos {
 		photoStation[p.ID] = p.StationID
 	}
-	stationByID := make(map[string]solver.Station, len(stations))
+	stationByID := make(map[string]wire.Station, len(stations))
 	for _, st := range stations {
 		stationByID[st.ID] = st
 	}
@@ -69,7 +67,7 @@ func seedNullLocationCPs(
 			drop[cpID] = true
 			continue
 		}
-		contributing := make([]solver.Station, 0, len(stIDs))
+		contributing := make([]wire.Station, 0, len(stIDs))
 		for stID := range stIDs {
 			if st, ok := stationByID[stID]; ok {
 				contributing = append(contributing, st)
@@ -84,7 +82,7 @@ func seedNullLocationCPs(
 		seedLng[cpID] = lng
 	}
 
-	keptCPs := make([]solver.ControlPoint, 0, len(cps))
+	keptCPs := make([]wire.ControlPoint, 0, len(cps))
 	seeded := make([]string, 0, len(seedLat))
 	for _, cp := range cps {
 		if drop[cp.ID] {
@@ -98,7 +96,7 @@ func seedNullLocationCPs(
 		keptCPs = append(keptCPs, cp)
 	}
 
-	keptObs := make([]solver.Observation, 0, len(obs))
+	keptObs := make([]wire.Observation, 0, len(obs))
 	for _, o := range obs {
 		if drop[o.ControlPointID] {
 			continue

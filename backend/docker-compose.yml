@@ -20,7 +20,7 @@ services:
     profiles: [app]
     build:
       context: ..
-      dockerfile: backend/Dockerfile.api
+      dockerfile: backend/Dockerfile
     image: panorama-api:dev
     depends_on:
       - postgres
@@ -42,7 +42,7 @@ services:
     profiles: [app]
     build:
       context: ..
-      dockerfile: backend/Dockerfile.solver
+      dockerfile: solver/Dockerfile
     image: panorama-solver:dev
     # No `ports:` — solver is private; only api inside the docker network
     # reaches it on the service name `solver` at port 8080.

@@ -4,11 +4,14 @@ go 1.25.0
 
 require (
 	cloud.google.com/go/storage v1.62.2
+	github.com/bmander/panorama-builder/shared v0.0.0-00010101000000-000000000000
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/oapi-codegen/oapi-codegen/v2 v2.7.0
 	golang.org/x/image v0.30.0
 	google.golang.org/api v0.274.0
 )
+
+replace github.com/bmander/panorama-builder/shared => ../shared
 
 require (
 	cel.dev/expr v0.25.1 // indirect

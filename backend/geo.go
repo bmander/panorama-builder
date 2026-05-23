@@ -8,7 +8,7 @@ package main
 import (
 	"math"
 
-	"github.com/bmander/panorama-builder/backend/solver"
+	"github.com/bmander/panorama-builder/shared/geom"
 )
 
 func bearingDeg(lat1, lng1, lat2, lng2 float64) float64 {
@@ -39,7 +39,7 @@ func inHorizontalViewshed(stLat, stLng, cpLat, cpLng, photoAz, sizeRad float64) 
 // proximity.
 func equirectDistMeters(lat1, lng1, lat2, lng2 float64) float64 {
 	cosLat := math.Cos(((lat1 + lat2) / 2) * math.Pi / 180)
-	dN := (lat2 - lat1) * solver.MPerDegLat
-	dE := (lng2 - lng1) * solver.MPerDegLat * cosLat
+	dN := (lat2 - lat1) * geom.MPerDegLat
+	dE := (lng2 - lng1) * geom.MPerDegLat * cosLat
 	return math.Sqrt(dN*dN + dE*dE)
 }

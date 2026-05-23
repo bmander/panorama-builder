@@ -12,7 +12,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/bmander/panorama-builder/backend/solver"
+	"github.com/bmander/panorama-builder/shared/wire"
 	"google.golang.org/api/idtoken"
 )
 
@@ -62,34 +62,34 @@ func isCloudRunHost(rawURL string) bool {
 
 // Solve runs a synchronous solve against the solver service. Maps the three
 // sentinel solver errors back from the wire so callers can errors.Is against
-// solver.ErrUnderconstrainedGauge etc. exactly as if they'd called
+// wire.ErrUnderconstrainedGauge etc. exactly as if they'd called
 // solver.Solve directly.
-func (c *solverClient) Solve(ctx context.Context, prob solver.Problem, cfg solver.Config, seededCPIDs []string) (solver.Result, error) {
-	body, err := json.Marshal(solver.SolveRequest{
+func (c *solverClient) Solve(ctx context.Context, prob wire.Problem, cfg wire.SolveConfigDTO, seededCPIDs []string) (wire.Result, error) {
+	body, err := json.Marshal(wire.SolveRequest{
 		Problem:     prob,
-		Config:      solver.ConfigToDTO(cfg),
+		Config:      cfg,
 		SeededCPIDs: seededCPIDs,
 	})
 	if err != nil {
-		return solver.Result{}, fmt.Errorf("solver req marshal: %w", err)
+		return wire.Result{}, fmt.Errorf("solver req marshal: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/solve", bytes.NewReader(body))
 	if err != nil {
-		return solver.Result{}, err
+		return wire.Result{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return solver.Result{}, fmt.Errorf("solver request: %w", err)
+		return wire.Result{}, fmt.Errorf("solver request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(resp.Body)
-		return solver.Result{}, sentinelFromMessage(strings.TrimSpace(string(msg)), resp.StatusCode)
+		return wire.Result{}, sentinelFromMessage(strings.TrimSpace(string(msg)), resp.StatusCode)
 	}
-	var res solver.Result
+	var res wire.Result
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return solver.Result{}, fmt.Errorf("solver response decode: %w", err)
+		return wire.Result{}, fmt.Errorf("solver response decode: %w", err)
 	}
 	return res, nil
 }
@@ -107,34 +107,34 @@ func (c *solverClient) Solve(ctx context.Context, prob solver.Problem, cfg solve
 // closes before the done event lands, so the caller sees errSolverStreamClosed.
 func (c *solverClient) SolveStream(
 	ctx context.Context,
-	prob solver.Problem,
-	cfg solver.Config,
+	prob wire.Problem,
+	cfg wire.SolveConfigDTO,
 	seededCPIDs []string,
 	onIter func(rawIterEvent []byte),
-) (res solver.Result, aborted bool, err error) {
-	body, err := json.Marshal(solver.SolveRequest{
+) (res wire.Result, aborted bool, err error) {
+	body, err := json.Marshal(wire.SolveRequest{
 		Problem:     prob,
-		Config:      solver.ConfigToDTO(cfg),
+		Config:      cfg,
 		SeededCPIDs: seededCPIDs,
 	})
 	if err != nil {
-		return solver.Result{}, false, fmt.Errorf("solver req marshal: %w", err)
+		return wire.Result{}, false, fmt.Errorf("solver req marshal: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/solve/stream", bytes.NewReader(body))
 	if err != nil {
-		return solver.Result{}, false, err
+		return wire.Result{}, false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return solver.Result{}, false, fmt.Errorf("solver stream request: %w", err)
+		return wire.Result{}, false, fmt.Errorf("solver stream request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(resp.Body)
-		return solver.Result{}, false, sentinelFromMessage(strings.TrimSpace(string(msg)), resp.StatusCode)
+		return wire.Result{}, false, sentinelFromMessage(strings.TrimSpace(string(msg)), resp.StatusCode)
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -143,7 +143,7 @@ func (c *solverClient) SolveStream(
 	// tens of KB on large problems).
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 
-	var final solver.Result
+	var final wire.Result
 	var doneAborted bool
 	var solverErr error
 	gotDone := false
@@ -161,34 +161,34 @@ func (c *solverClient) SolveStream(
 		// iter events go through unparsed, only done/error are decoded.
 		kind := peekKind(payload)
 		switch kind {
-		case solver.SolverEventIter:
+		case wire.SolverEventIter:
 			if onIter != nil {
 				onIter([]byte(payload))
 			}
-		case solver.SolverEventDone:
-			var ev solver.SolverDoneEvent
+		case wire.SolverEventDone:
+			var ev wire.SolverDoneEvent
 			if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-				return solver.Result{}, false, fmt.Errorf("decode done event: %w", err)
+				return wire.Result{}, false, fmt.Errorf("decode done event: %w", err)
 			}
 			final = ev.Result
 			doneAborted = ev.Aborted
 			gotDone = true
-		case solver.SolverEventError:
-			var ev solver.SolverErrorEvent
+		case wire.SolverEventError:
+			var ev wire.SolverErrorEvent
 			if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-				return solver.Result{}, false, fmt.Errorf("decode error event: %w", err)
+				return wire.Result{}, false, fmt.Errorf("decode error event: %w", err)
 			}
 			solverErr = sentinelFromMessage(ev.Message, http.StatusInternalServerError)
 		}
 	}
 	if err := scanner.Err(); err != nil && !errors.Is(err, context.Canceled) {
-		return solver.Result{}, false, fmt.Errorf("solver stream read: %w", err)
+		return wire.Result{}, false, fmt.Errorf("solver stream read: %w", err)
 	}
 	if solverErr != nil {
-		return solver.Result{}, false, solverErr
+		return wire.Result{}, false, solverErr
 	}
 	if !gotDone {
-		return solver.Result{}, false, errSolverStreamClosed
+		return wire.Result{}, false, errSolverStreamClosed
 	}
 	return final, doneAborted, nil
 }
@@ -255,12 +255,12 @@ func (c *solverClient) Warmup(ctx context.Context) error {
 // working for the three known cases.
 func sentinelFromMessage(msg string, status int) error {
 	switch {
-	case strings.Contains(msg, solver.ErrUnderconstrainedGauge.Error()):
-		return solver.ErrUnderconstrainedGauge
-	case strings.Contains(msg, solver.ErrFocusNotFound.Error()):
-		return solver.ErrFocusNotFound
-	case strings.Contains(msg, solver.ErrInsufficientObservations.Error()):
-		return solver.ErrInsufficientObservations
+	case strings.Contains(msg, wire.ErrUnderconstrainedGauge.Error()):
+		return wire.ErrUnderconstrainedGauge
+	case strings.Contains(msg, wire.ErrFocusNotFound.Error()):
+		return wire.ErrFocusNotFound
+	case strings.Contains(msg, wire.ErrInsufficientObservations.Error()):
+		return wire.ErrInsufficientObservations
 	default:
 		return fmt.Errorf("solver service: %d %s", status, msg)
 	}

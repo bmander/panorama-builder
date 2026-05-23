@@ -4,7 +4,8 @@ import (
 	"math"
 	"net/http"
 
-	"github.com/bmander/panorama-builder/backend/solver"
+	"github.com/bmander/panorama-builder/shared/geom"
+	"github.com/bmander/panorama-builder/shared/wire"
 )
 
 // listControlPointFits returns the per-CP RMS angular residual of every
@@ -33,7 +34,7 @@ func (s *Server) listControlPointFits(w http.ResponseWriter, r *http.Request) {
 
 	type stationFrame struct {
 		ecef  [3]float64
-		basis solver.ENUBasis
+		basis geom.ENUBasis
 	}
 	stationCache := map[string]stationFrame{}
 	cpECEF := map[string][3]float64{}
@@ -48,7 +49,7 @@ func (s *Server) listControlPointFits(w http.ResponseWriter, r *http.Request) {
 		var cpID, stID string
 		var cpLat, cpLng, cpAlt float64
 		var stLat, stLng, stAlt float64
-		var pose solver.Pose
+		var pose wire.Pose
 		var u, v float64
 		if err := rows.Scan(&cpID, &cpLat, &cpLng, &cpAlt,
 			&stID, &stLat, &stLng, &stAlt,
@@ -61,23 +62,23 @@ func (s *Server) listControlPointFits(w http.ResponseWriter, r *http.Request) {
 
 		sf, ok := stationCache[stID]
 		if !ok {
-			sx, sy, sz := solver.LLAToECEF(stLat, stLng, stAlt)
-			sf = stationFrame{ecef: [3]float64{sx, sy, sz}, basis: solver.LocalENUBasis(stLat, stLng)}
+			sx, sy, sz := geom.LLAToECEF(stLat, stLng, stAlt)
+			sf = stationFrame{ecef: [3]float64{sx, sy, sz}, basis: geom.LocalENUBasis(stLat, stLng)}
 			stationCache[stID] = sf
 		}
 		cECEF, ok := cpECEF[cpID]
 		if !ok {
-			cx, cy, cz := solver.LLAToECEF(cpLat, cpLng, cpAlt)
+			cx, cy, cz := geom.LLAToECEF(cpLat, cpLng, cpAlt)
 			cECEF = [3]float64{cx, cy, cz}
 			cpECEF[cpID] = cECEF
 		}
 
-		dE, dN, dU := solver.ProjectECEFDeltaToLocalENU(
+		dE, dN, dU := geom.ProjectECEFDeltaToLocalENU(
 			cECEF[0]-sf.ecef[0], cECEF[1]-sf.ecef[1], cECEF[2]-sf.ecef[2], sf.basis)
-		dU += solver.RefractionK * (dE*dE + dN*dN) / (2 * sf.basis.Rlocal)
-		azTgt, elTgt := solver.BearingENU(dE, dN, dU)
-		azPred, elPred := solver.ProjectPOI(pose, u, v)
-		azRow, elRow := solver.ResidualFromBearings(azPred, elPred, azTgt, elTgt)
+		dU += geom.RefractionK * (dE*dE + dN*dN) / (2 * sf.basis.Rlocal)
+		azTgt, elTgt := geom.BearingENU(dE, dN, dU)
+		azPred, elPred := geom.ProjectPOI(pose, u, v)
+		azRow, elRow := geom.ResidualFromBearings(azPred, elPred, azTgt, elTgt)
 
 		a, ok := byCP[cpID]
 		if !ok {

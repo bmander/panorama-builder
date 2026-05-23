@@ -1,42 +1,27 @@
-.PHONY: run build build-api build-solver docker-api docker-solver split-up split-down fmt vet tidy generate dump restore
+.PHONY: run build docker-api docker-solver split-up split-down fmt vet tidy generate dump restore
 
 DATABASE_URL ?= postgres://panorama:panorama@localhost:5432/panorama?sslmode=disable
 DUMP_FILE    ?= panorama_$(shell date -u +%Y%m%dT%H%M%SZ).sql
 
-# Links Ceres-Solver via cgo (see backend/solver/bridge.cc). Prereqs:
-#   macOS:  brew install ceres-solver eigen suite-sparse glog gflags
-#   Linux:  apt install libceres-dev libeigen3-dev libsuitesparse-dev \
-#                       libgoogle-glog-dev libgflags-dev
-#
-# Note: `go run .` here builds the API binary, which proxies solves to a
+# The api binary is pure-Go — no cgo, no Ceres. It proxies solves to a
 # separate solver process via SOLVER_URL. For the full app locally use
 # `make split-up` (docker compose) instead.
 run:
 	DATABASE_URL='$(DATABASE_URL)' go run .
 
 build:
-	go build -o bin/panorama-api .
-
-# API binary: pure-Go, no cgo, no Ceres. Forwards solves to the private
-# solver service via SOLVER_URL. Suitable for distroless-static.
-build-api:
-	CGO_ENABLED=0 go build -tags noceres -o bin/panorama-api .
-
-# Solver binary: full build with cgo + Ceres. Private microservice (no DB,
-# no sessions); only the api service calls it. See cmd/solver/.
-build-solver:
-	go build -o bin/panorama-solver ./cmd/solver
+	CGO_ENABLED=0 go build -o bin/panorama-api .
 
 # Docker images for Cloud Run.
 #   api    = distroless-static + bundled frontend, ~60 MB.
 #   solver = debian-slim + libceres3, ~240 MB.
-# Build context = repo root so the api image's node stage can build the
-# frontend without bind mounts.
+# Build context = repo root so each image can see its sibling shared/ for
+# the `replace ../shared` directive.
 docker-api:
-	cd .. && docker build -f backend/Dockerfile.api -t panorama-api:dev .
+	cd .. && docker build -f backend/Dockerfile -t panorama-api:dev .
 
 docker-solver:
-	cd .. && docker build -f backend/Dockerfile.solver -t panorama-solver:dev .
+	cd .. && docker build -f solver/Dockerfile -t panorama-solver:dev .
 
 # Bring up the prod-like layout locally: postgres + api (:8080, browser
 # origin) + solver (no host port, private network only). Frontend must be

@@ -6,7 +6,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/bmander/panorama-builder/backend/solver"
+	"github.com/bmander/panorama-builder/shared/wire"
 )
 
 // SSE solver streams. Both endpoints emit:
@@ -19,7 +19,7 @@ import (
 //
 // The api proxies these to the private solver service. Iter frames are
 // forwarded verbatim (the byte shape is identical on both sides). The
-// terminal `done` / `stopped` kinds are picked from solver.SolverDoneEvent's
+// terminal `done` / `stopped` kinds are picked from wire.SolverDoneEvent's
 // Aborted bit; `cancelled` fires when the api's own request context dies
 // (browser disconnect) before the solver could land a terminal frame.
 
@@ -32,7 +32,7 @@ func (s *Server) postSolveJointStream(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cfg.Mode = solver.ModeJoint
+	cfg.Mode = wire.ModeJoint
 	s.streamSolve(w, r, sess, cfg)
 }
 
@@ -49,12 +49,12 @@ func (s *Server) postSolveStationStream(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	cfg.Mode = solver.ModeSingleStation
+	cfg.Mode = wire.ModeSingleStation
 	cfg.FocusID = id
 	s.streamSolve(w, r, sess, cfg)
 }
 
-func (s *Server) streamSolve(w http.ResponseWriter, r *http.Request, sess *Session, cfg solver.Config) {
+func (s *Server) streamSolve(w http.ResponseWriter, r *http.Request, sess *Session, cfg wire.SolveConfigDTO) {
 	// Streaming runs are user-cancellable via Cancel/Stop, so the cap mainly
 	// guards against pathological non-converging configurations.
 	if cfg.MaxIters == 0 {

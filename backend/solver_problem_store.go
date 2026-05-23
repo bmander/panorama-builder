@@ -4,10 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/bmander/panorama-builder/shared/wire"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-
-	"github.com/bmander/panorama-builder/backend/solver"
 )
 
 // loadProblem reads everything in scope through the active session's overlay
@@ -17,19 +16,19 @@ import (
 // lists the CPs that came from the DB with NULL est_lat/est_lng and
 // survived the ≥2-station seeding filter; the joint orchestrator runs a
 // per-CP refinement on each before the joint solve.
-func (s *Server) loadProblem(ctx context.Context, cfg solver.Config, sess *Session) (solver.Problem, []string, bool, error) {
+func (s *Server) loadProblem(ctx context.Context, cfg wire.SolveConfigDTO, sess *Session) (wire.Problem, []string, bool, error) {
 	switch cfg.Mode {
-	case solver.ModeJoint:
+	case wire.ModeJoint:
 		p, seeded, err := s.loadJointProblemSession(ctx, sess)
 		return p, seeded, true, err
-	case solver.ModeSingleStation:
+	case wire.ModeSingleStation:
 		p, ok, err := s.loadSingleStationProblemSession(ctx, sess, cfg.FocusID)
 		return p, nil, ok, err
-	case solver.ModeSingleControlPoint:
+	case wire.ModeSingleControlPoint:
 		p, ok, err := s.loadSingleCPProblemSession(ctx, sess, cfg.FocusID)
 		return p, nil, ok, err
 	}
-	return solver.Problem{}, nil, false, fmt.Errorf("unknown solve mode")
+	return wire.Problem{}, nil, false, fmt.Errorf("unknown solve mode")
 }
 
 // --- DB loaders. Each one fills in the solver-side type directly so the
@@ -38,20 +37,20 @@ func (s *Server) loadProblem(ctx context.Context, cfg solver.Config, sess *Sessi
 
 const stationLoadCols = `id, lat, lng, alt, lock_lat, lock_lng, lock_alt, updated_at`
 
-func scanSolverStation(row pgx.Row) (solver.Station, error) {
-	var s solver.Station
+func scanSolverStation(row pgx.Row) (wire.Station, error) {
+	var s wire.Station
 	err := row.Scan(&s.ID, &s.Lat, &s.Lng, &s.Alt,
 		&s.Locks.Lat, &s.Locks.Lng, &s.Locks.Alt, &s.UpdatedAt)
 	return s, err
 }
 
-func loadAllStations(ctx context.Context, db *pgxpool.Pool) ([]solver.Station, error) {
+func loadAllStations(ctx context.Context, db *pgxpool.Pool) ([]wire.Station, error) {
 	rows, err := db.Query(ctx, `SELECT `+stationLoadCols+` FROM stations`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []solver.Station
+	var out []wire.Station
 	for rows.Next() {
 		s, err := scanSolverStation(rows)
 		if err != nil {
@@ -66,8 +65,8 @@ const photoLoadCols = `id, station_id, aspect, photo_az, photo_tilt, photo_roll,
 	lock_photo_az, lock_photo_tilt, lock_photo_roll, lock_size_rad,
 	dist_k1, dist_k2, lock_dist_k1, lock_dist_k2, updated_at`
 
-func scanSolverPhoto(row pgx.Row) (solver.Photo, error) {
-	var p solver.Photo
+func scanSolverPhoto(row pgx.Row) (wire.Photo, error) {
+	var p wire.Photo
 	err := row.Scan(&p.ID, &p.StationID, &p.Pose.Aspect, &p.Pose.PhotoAz, &p.Pose.PhotoTilt,
 		&p.Pose.PhotoRoll, &p.Pose.SizeRad,
 		&p.Locks.PhotoAz, &p.Locks.PhotoTilt, &p.Locks.PhotoRoll, &p.Locks.SizeRad,
@@ -76,13 +75,13 @@ func scanSolverPhoto(row pgx.Row) (solver.Photo, error) {
 	return p, err
 }
 
-func loadAllPhotos(ctx context.Context, db *pgxpool.Pool) ([]solver.Photo, error) {
+func loadAllPhotos(ctx context.Context, db *pgxpool.Pool) ([]wire.Photo, error) {
 	rows, err := db.Query(ctx, `SELECT `+photoLoadCols+` FROM photos`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []solver.Photo
+	var out []wire.Photo
 	for rows.Next() {
 		p, err := scanSolverPhoto(rows)
 		if err != nil {
@@ -101,8 +100,8 @@ const cpLoadCols = `id, est_lat, est_lng, est_alt, lock_est_lat, lock_est_lng, l
 // here so the solver always has a 3D guess; if the user hasn't locked
 // est_alt, the solver will refine it from observations and writeback persists
 // the new value.
-func scanSolverControlPoint(row pgx.Row) (solver.ControlPoint, error) {
-	var cp solver.ControlPoint
+func scanSolverControlPoint(row pgx.Row) (wire.ControlPoint, error) {
+	var cp wire.ControlPoint
 	var lat, lng, alt *float64
 	err := row.Scan(&cp.ID, &lat, &lng, &alt,
 		&cp.Locks.EstLat, &cp.Locks.EstLng, &cp.Locks.EstAlt, &cp.UpdatedAt)
@@ -125,16 +124,16 @@ func scanSolverControlPoint(row pgx.Row) (solver.ControlPoint, error) {
 // or est_lng came back NULL. Joint mode seeds those before handing the
 // problem to the solver (using the mean station location of the CP's
 // observations) so the solver can triangulate them as free parameters.
-func loadAllControlPoints(ctx context.Context, db *pgxpool.Pool) ([]solver.ControlPoint, map[string]bool, error) {
+func loadAllControlPoints(ctx context.Context, db *pgxpool.Pool) ([]wire.ControlPoint, map[string]bool, error) {
 	rows, err := db.Query(ctx, `SELECT `+cpLoadCols+` FROM control_points`)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer rows.Close()
-	var out []solver.ControlPoint
+	var out []wire.ControlPoint
 	nullLoc := map[string]bool{}
 	for rows.Next() {
-		var cp solver.ControlPoint
+		var cp wire.ControlPoint
 		var lat, lng, alt *float64
 		if err := rows.Scan(&cp.ID, &lat, &lng, &alt,
 			&cp.Locks.EstLat, &cp.Locks.EstLng, &cp.Locks.EstAlt, &cp.UpdatedAt); err != nil {
@@ -154,16 +153,16 @@ func loadAllControlPoints(ctx context.Context, db *pgxpool.Pool) ([]solver.Contr
 	return out, nullLoc, rows.Err()
 }
 
-func loadAllObservations(ctx context.Context, db *pgxpool.Pool) ([]solver.Observation, error) {
+func loadAllObservations(ctx context.Context, db *pgxpool.Pool) ([]wire.Observation, error) {
 	rows, err := db.Query(ctx,
 		`SELECT id, photo_id, control_point_id, u, v FROM image_measurements WHERE control_point_id IS NOT NULL`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []solver.Observation
+	var out []wire.Observation
 	for rows.Next() {
-		var o solver.Observation
+		var o wire.Observation
 		var cpID *string
 		if err := rows.Scan(&o.ID, &o.PhotoID, &cpID, &o.U, &o.V); err != nil {
 			return nil, err
@@ -208,11 +207,11 @@ func filterByIDSet[T any](xs []T, id func(T) string, ids map[string]struct{}) []
 // in the given CP slice. Single-station and single-CP modes restrict the
 // active CP set, so a half-loaded constraint has no anchor and would be
 // silently ignored by the solver anyway.
-func filterCPConstraintsByCPSet(cons []solver.CPConstraint, cps []solver.ControlPoint) []solver.CPConstraint {
+func filterCPConstraintsByCPSet(cons []wire.CPConstraint, cps []wire.ControlPoint) []wire.CPConstraint {
 	if len(cons) == 0 {
 		return nil
 	}
-	in := idSet(cps, func(cp solver.ControlPoint) string { return cp.ID })
+	in := idSet(cps, func(cp wire.ControlPoint) string { return cp.ID })
 	out := cons[:0:0]
 	for _, c := range cons {
 		if _, ok := in[c.CpAID]; !ok {

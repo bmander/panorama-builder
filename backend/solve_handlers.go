@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/bmander/panorama-builder/backend/solver"
+	"github.com/bmander/panorama-builder/shared/wire"
 )
 
 // Synchronous solver handlers (joint + single-station + single-CP). The
@@ -16,7 +16,7 @@ import (
 //
 // Each handler loads the Problem from the DB (session-overlay-aware), then
 // hands it to the private solver service via s.solver. The solver service
-// (cmd/solver) runs Ceres and returns a solver.Result; the api writes
+// (cmd/solver) runs Ceres and returns a wire.Result; the api writes
 // resulting changes back through the session journal.
 
 // postSolveWarmup nudges the private solver service awake when the user enters
@@ -49,7 +49,7 @@ func (s *Server) postSolveJoint(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cfg.Mode = solver.ModeJoint
+	cfg.Mode = wire.ModeJoint
 	s.runSolve(w, r, cfg, sess)
 }
 
@@ -66,7 +66,7 @@ func (s *Server) postSolveStation(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cfg.Mode = solver.ModeSingleStation
+	cfg.Mode = wire.ModeSingleStation
 	cfg.FocusID = id
 	s.runSolve(w, r, cfg, sess)
 }
@@ -84,13 +84,13 @@ func (s *Server) postSolveControlPoint(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cfg.Mode = solver.ModeSingleControlPoint
+	cfg.Mode = wire.ModeSingleControlPoint
 	cfg.FocusID = id
 	s.runSolve(w, r, cfg, sess)
 }
 
-func parseSolveConfig(w http.ResponseWriter, r *http.Request) (solver.Config, bool) {
-	cfg := solver.Config{}
+func parseSolveConfig(w http.ResponseWriter, r *http.Request) (wire.SolveConfigDTO, bool) {
+	cfg := wire.SolveConfigDTO{}
 	if r.ContentLength == 0 {
 		return cfg, true
 	}
@@ -116,7 +116,7 @@ func parseSolveConfig(w http.ResponseWriter, r *http.Request) (solver.Config, bo
 	return cfg, true
 }
 
-func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg solver.Config, sess *Session) {
+func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg wire.SolveConfigDTO, sess *Session) {
 	s.solveMu.Lock()
 	defer s.solveMu.Unlock()
 
@@ -135,11 +135,11 @@ func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg solver.Con
 	res, err := s.solver.Solve(ctx, prob, cfg, seededCPIDs)
 	if err != nil {
 		switch {
-		case errors.Is(err, solver.ErrUnderconstrainedGauge):
+		case errors.Is(err, wire.ErrUnderconstrainedGauge):
 			writeError(w, http.StatusBadRequest, err.Error())
-		case errors.Is(err, solver.ErrFocusNotFound):
+		case errors.Is(err, wire.ErrFocusNotFound):
 			writeError(w, http.StatusNotFound, err.Error())
-		case errors.Is(err, solver.ErrInsufficientObservations):
+		case errors.Is(err, wire.ErrInsufficientObservations):
 			writeError(w, http.StatusBadRequest, err.Error())
 		default:
 			log.Printf("solver: %v", err)
@@ -168,7 +168,7 @@ func (s *Server) recordSolveRMS(ctx context.Context, sessionID string, rms float
 	return err
 }
 
-func toAPISolveResult(r solver.Result) SolveResult {
+func toAPISolveResult(r wire.Result) SolveResult {
 	out := SolveResult{
 		Iterations:         r.Iterations,
 		InitialResidualRms: r.InitialResidualRMS,

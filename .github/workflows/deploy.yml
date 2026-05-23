@@ -46,7 +46,7 @@ jobs:
         run: |
           docker build \
             --platform=linux/amd64 \
-            -f backend/Dockerfile.api \
+            -f backend/Dockerfile \
             -t ${{ env.REGISTRY }}/api:${{ github.sha }} \
             -t ${{ env.REGISTRY }}/api:latest \
             .
@@ -57,7 +57,7 @@ jobs:
         run: |
           docker build \
             --platform=linux/amd64 \
-            -f backend/Dockerfile.solver \
+            -f solver/Dockerfile \
             -t ${{ env.REGISTRY }}/solver:${{ github.sha }} \
             -t ${{ env.REGISTRY }}/solver:latest \
             .
