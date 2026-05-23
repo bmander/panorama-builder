@@ -227,6 +227,28 @@ func (c *solverClient) Stop(ctx context.Context) error {
 	return fmt.Errorf("solver stop: %d %s", resp.StatusCode, strings.TrimSpace(string(msg)))
 }
 
+// Warmup sends a best-effort, side-effect-free ping to the solver service so a
+// scaled-to-zero instance starts spinning up ahead of an imminent solve. It
+// runs no Ceres and takes no solve lock; the response status carries no
+// meaning beyond "the nudge landed" — a real solve will cold-start the solver
+// regardless if this missed.
+func (c *solverClient) Warmup(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/warmup", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("solver warmup: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("solver warmup: status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // sentinelFromMessage maps the solver service's plain-text error body back
 // to one of solver/'s sentinel errors when the message matches. Falls back
 // to a generic wrapped error otherwise. Keeps errors.Is on the api side

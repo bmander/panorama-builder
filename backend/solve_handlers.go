@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/bmander/panorama-builder/backend/solver"
 )
@@ -17,6 +18,27 @@ import (
 // hands it to the private solver service via s.solver. The solver service
 // (cmd/solver) runs Ceres and returns a solver.Result; the api writes
 // resulting changes back through the session journal.
+
+// postSolveWarmup nudges the private solver service awake when the user enters
+// edit mode, so a scaled-to-zero instance is already spinning up by the time a
+// solve actually fires. It mutates no shared state — no journal op, no commit —
+// so unlike the real solve handlers it skips requireSession entirely.
+//
+// The nudge is fire-and-forget: we hand it to a detached, time-bounded context
+// and 202 immediately rather than holding the request open for the solver's
+// cold start. There's deliberately no keep-alive loop — a single ping per edit
+// click is the whole mechanism, so an idle edit session lets the solver fall
+// back asleep on its own.
+func (s *Server) postSolveWarmup(w http.ResponseWriter, _ *http.Request) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := s.solver.Warmup(ctx); err != nil {
+			log.Printf("solver warmup: %v", err)
+		}
+	}()
+	w.WriteHeader(http.StatusAccepted)
+}
 
 func (s *Server) postSolveJoint(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.requireSession(w, r)

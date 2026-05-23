@@ -45,6 +45,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
+	mux.HandleFunc("POST /warmup", s.warmup)
 	mux.HandleFunc("POST /solve", s.postSolve)
 	mux.HandleFunc("POST /solve/stream", s.postSolveStream)
 	mux.HandleFunc("POST /stop", s.postStop)
@@ -74,6 +75,16 @@ func main() {
 func (s *server) healthz(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+// warmup is a side-effect-free nudge the api forwards when a user enters edit
+// mode: receiving the request is itself the point, since it forces a
+// scaled-to-zero instance to cold-start ahead of a likely solve. It
+// deliberately skips solveMu and never runs Ceres, so it returns instantly and
+// can't block an in-flight solve. No keep-alive on either side — once the user
+// stops poking it, the instance idles back down on its own.
+func (s *server) warmup(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func envDefault(key, def string) string {

@@ -7,6 +7,7 @@ import "net/http"
 // solver_client.go + cmd/solver/). Always registered — the api ships no
 // in-process Ceres, just the HTTP forwarding.
 func (s *Server) registerSolveRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/solve/warmup", s.postSolveWarmup)
 	mux.HandleFunc("POST /api/solve/joint", s.postSolveJoint)
 	mux.HandleFunc("POST /api/solve/joint/stream", s.postSolveJointStream)
 	mux.HandleFunc("POST /api/solve/stop", s.postSolveStop)
