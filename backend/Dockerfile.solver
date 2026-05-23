@@ -5,8 +5,8 @@
 # cold-start cost is paid when a user-triggered solve fires. Surface is two
 # endpoints (/solve and /solve/stream) plus /stop.
 #
-# Build context is backend/. Binary built from ./cmd/solver — the api's
-# main lives at the package root and is intentionally NOT in this image.
+# Build context is the REPO ROOT to match Dockerfile.api: `docker build -f
+# backend/Dockerfile.solver -t panorama-solver:dev .` from repo root.
 
 FROM golang:1.25-bookworm AS build
 WORKDIR /src
@@ -19,10 +19,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       pkg-config \
       build-essential \
   && rm -rf /var/lib/apt/lists/*
-COPY go.mod go.sum ./
-RUN go mod download
-COPY . .
-RUN CGO_ENABLED=1 GOOS=linux go build -o /out/panorama-solver ./cmd/solver
+COPY backend/go.mod backend/go.sum ./backend/
+RUN cd backend && go mod download
+COPY backend/ ./backend/
+RUN cd backend && CGO_ENABLED=1 GOOS=linux go build -o /out/panorama-solver ./cmd/solver
 
 FROM debian:bookworm-slim
 # libceres3 pulls its full runtime dependency closure (SuiteSparse,

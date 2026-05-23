@@ -80,10 +80,15 @@ func main() {
 		log.Fatalf("blob migration: %v", err)
 	}
 
+	solver, err := newSolverClient(ctx, solverURL)
+	if err != nil {
+		log.Fatalf("solver client: %v", err)
+	}
+
 	s := &Server{
 		db:             pool,
 		blobs:          blobs,
-		solver:         newSolverClient(solverURL),
+		solver:         solver,
 		staticDir:      staticDir,
 		allowedOrigin:  allowedOrigin,
 		maxBlobBytes:   maxBlobBytes,

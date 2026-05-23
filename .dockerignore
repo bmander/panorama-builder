@@ -1,0 +1,25 @@
+# Build context = repo root (see backend/Dockerfile.api +
+# backend/Dockerfile.solver). Excludes are paths relative to repo root.
+
+# Photo blobs / db data — not needed in any image build.
+backend/data/
+
+# Built binaries (we rebuild fresh in the image).
+backend/bin/
+
+# Frontend dependencies + build output — we rebuild fresh in the node
+# stage. node_modules is huge; dist/ would shadow the fresh build.
+frontend/node_modules/
+frontend/dist/
+
+# Go test artifacts.
+**/*.test
+**/*.out
+
+# Git / editor / OS noise.
+.git/
+.github/workflows/*.yml
+*.log
+.vscode/
+.idea/
+.DS_Store

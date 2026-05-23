@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/bmander/panorama-builder/backend/solver"
+	"google.golang.org/api/idtoken"
 )
 
 // solverClient is the api side of the api ↔ solver split. Constructed once at
@@ -28,11 +30,34 @@ type solverClient struct {
 // truncated response apart from a user-initiated cancel.
 var errSolverStreamClosed = errors.New("solver service closed stream before terminal event")
 
-func newSolverClient(baseURL string) *solverClient {
-	return &solverClient{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		http:    &http.Client{},
+// newSolverClient constructs a solverClient that talks to baseURL. When
+// baseURL points at a *.run.app host the client attaches a Google ID
+// token (audience = the base URL) to every outgoing request, matching
+// Cloud Run's IAM-required ingress contract. Non-run.app hosts (local
+// docker-compose at http://solver:8080, plain go run, etc.) use plain
+// HTTP — same dev workflow as before.
+func newSolverClient(ctx context.Context, baseURL string) (*solverClient, error) {
+	trimmed := strings.TrimRight(baseURL, "/")
+	httpClient := &http.Client{}
+	if isCloudRunHost(trimmed) {
+		c, err := idtoken.NewClient(ctx, trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("solver id-token client: %w", err)
+		}
+		httpClient = c
 	}
+	return &solverClient{baseURL: trimmed, http: httpClient}, nil
+}
+
+// isCloudRunHost reports whether rawURL's host ends in `.run.app` —
+// the deployed Cloud Run service form. Used as the auth-attachment gate
+// so private deployments still work without IAM in dev.
+func isCloudRunHost(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return strings.HasSuffix(u.Hostname(), ".run.app")
 }
 
 // Solve runs a synchronous solve against the solver service. Maps the three

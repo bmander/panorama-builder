@@ -28,13 +28,15 @@ build-solver:
 	go build -o bin/panorama-solver ./cmd/solver
 
 # Docker images for Cloud Run.
-#   api    = distroless-static, ~55 MB.
+#   api    = distroless-static + bundled frontend, ~60 MB.
 #   solver = debian-slim + libceres3, ~240 MB.
+# Build context = repo root so the api image's node stage can build the
+# frontend without bind mounts.
 docker-api:
-	docker build -f Dockerfile.api -t panorama-api:dev .
+	cd .. && docker build -f backend/Dockerfile.api -t panorama-api:dev .
 
 docker-solver:
-	docker build -f Dockerfile.solver -t panorama-solver:dev .
+	cd .. && docker build -f backend/Dockerfile.solver -t panorama-solver:dev .
 
 # Bring up the prod-like layout locally: postgres + api (:8080, browser
 # origin) + solver (no host port, private network only). Frontend must be

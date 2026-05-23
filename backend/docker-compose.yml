@@ -19,28 +19,30 @@ services:
   api:
     profiles: [app]
     build:
-      context: .
-      dockerfile: Dockerfile.api
+      context: ..
+      dockerfile: backend/Dockerfile.api
     image: panorama-api:dev
     depends_on:
       - postgres
       - solver
     environment:
       DATABASE_URL: postgres://panorama:panorama@postgres:5432/panorama?sslmode=disable
-      STATIC_DIR: /static
       STORAGE_DIR: /data
       SOLVER_URL: http://solver:8080
     ports:
       - "8080:8080"
     volumes:
       - ./data:/data
+      # Mount the host's frontend/dist over the image-baked /static so dev
+      # rebuilds (`npm run build`) are picked up without re-building the
+      # image. In prod the image-baked dist is what gets served.
       - ../frontend/dist:/static:ro
 
   solver:
     profiles: [app]
     build:
-      context: .
-      dockerfile: Dockerfile.solver
+      context: ..
+      dockerfile: backend/Dockerfile.solver
     image: panorama-solver:dev
     # No `ports:` — solver is private; only api inside the docker network
     # reaches it on the service name `solver` at port 8080.
