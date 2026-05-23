@@ -440,6 +440,20 @@ export function createMapView({
       onClick();
     }, { once: true });
   }
+  // The Move affordance is a write, so it's absent outside edit mode. Clicking
+  // "Edit" starts a session without a reload, so track session state to reveal
+  // the button if the popup is already open when edit mode turns on.
+  function wireMoveButton(popup: L.Popup, onMove: () => void): void {
+    const btn = popup.getElement()?.querySelector<HTMLButtonElement>('.move');
+    if (!btn) return;
+    const sync = (): void => { btn.hidden = !editingActive(); };
+    sync();
+    popup.on('remove', sessionStore.onChange(sync));
+    btn.addEventListener('click', () => {
+      map.closePopup(popup);
+      onMove();
+    }, { once: true });
+  }
 
   // Markup for the popup's alt callout + lock checkboxes. The two lock
   // checkboxes use a shared `popup-lock` class so they can be wired
@@ -578,7 +592,7 @@ export function createMapView({
       if (circle) map.removeLayer(circle);
       onIndexControlPointFocus?.(null);
     });
-    wireGoButton(popup, '.move', () => {
+    wireMoveButton(popup, () => {
       const dot = indexCpDots.get(cp.id);
       if (!dot) return;
       enterMoveMode({ kind: 'cp', id: cp.id, marker: dot, origin: dot.getLatLng() });
@@ -762,7 +776,7 @@ export function createMapView({
     // The "Go to station →" button shares the .go base class with .move, so
     // disambiguate using ':not(.move)' rather than just '.go'.
     wireGoButton(popup, '.go:not(.move)', () => onStationMarkerOpen?.(p.id));
-    wireGoButton(popup, '.move', () => {
+    wireMoveButton(popup, () => {
       const cur = stationMarkers.get(p.id);
       if (!cur) return;
       enterMoveMode({ kind: 'station', id: p.id, marker: cur.marker, origin: cur.marker.getLatLng() });
