@@ -32,6 +32,7 @@
     <label id="index-show-cps-item" class="menu-item" role="menuitemcheckbox" hidden>
       <input type="checkbox" id="index-show-cps"> Show control points
     </label>
+    <button id="about-btn" class="menu-item" role="menuitem">About</button>
   </div>
   <div id="time-filter" hidden>
     <div class="time-filter-row">
@@ -98,6 +99,18 @@
     <span><span id="constraint-multiselect-count">0</span> constraint(s) selected</span>
     <button type="button" id="constraint-add-surface-btn" class="btn" disabled>Add surface</button>
     <button type="button" id="constraint-multiselect-clear" class="btn">Clear</button>
+  </div>
+  <div id="about-modal" class="modal" hidden>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <span>About</span>
+        <button type="button" id="about-close" class="btn">✕</button>
+      </div>
+      <div class="modal-field">With love by Brandon Martin-Anderson</div>
+      <div class="modal-field">
+        <a href="https://github.com/bmander/panorama-builder" target="_blank" rel="noopener noreferrer">github.com/bmander/panorama-builder</a>
+      </div>
+    </div>
   </div>
   <div id="admin-modal" class="modal" hidden>
     <div class="modal-panel">

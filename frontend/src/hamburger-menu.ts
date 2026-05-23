@@ -21,4 +21,15 @@ export function attachHamburgerMenu(): void {
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !dropdown.hidden) setOpen(false);
   });
+
+  const aboutModal = getElement('about-modal');
+  getElement<HTMLButtonElement>('about-btn').addEventListener('click', () => {
+    aboutModal.hidden = false;
+  });
+  getElement<HTMLButtonElement>('about-close').addEventListener('click', () => {
+    aboutModal.hidden = true;
+  });
+  aboutModal.addEventListener('click', e => {
+    if (e.target === aboutModal) aboutModal.hidden = true;
+  });
 }
