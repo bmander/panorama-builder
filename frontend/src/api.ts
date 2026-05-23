@@ -438,6 +438,19 @@ export async function solveStop(): Promise<void> {
   }
 }
 
+// Best-effort nudge sent when the user enters edit mode: wakes the solver
+// service ahead of a solve that's now likely. Fire-and-forget — a cold solver
+// just starts on the real solve instead, so transport/HTTP failures are
+// swallowed rather than surfaced. There's no repeat ping, so leaving edit mode
+// idle lets the solver scale back down on its own.
+export async function solveWarmup(): Promise<void> {
+  try {
+    await apiFetch('/solve/warmup', { method: 'POST' });
+  } catch {
+    // Purely an optimization; ignore.
+  }
+}
+
 // --- Sessions ---
 
 export function createSession(): Promise<ApiCreateSessionResponse> {

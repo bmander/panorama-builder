@@ -10,7 +10,7 @@
 // open the #session-conflict-modal block in index.html with a single
 // Abandon-session action.
 
-import type { ApiEntityRef } from './api.js';
+import { solveWarmup, type ApiEntityRef } from './api.js';
 import * as session from './session.js';
 import { sessionStore } from './session-store.js';
 import { sessionPending } from './session-pending.js';
@@ -29,6 +29,9 @@ export function createSessionPanel(host: HTMLElement): SessionPanel {
   const editBtn = btn('Edit');
   editBtn.addEventListener('click', () => {
     editBtn.disabled = true;
+    // Entering edit mode strongly predicts a solve soon — wake the solver now
+    // so its cold start overlaps with the user's editing. Fire-and-forget.
+    void solveWarmup();
     sessionStore.ensureStarted().catch((err: unknown) => {
       console.error('start session failed:', err);
       alert('Could not start an edit session — check your connection and try again.');
