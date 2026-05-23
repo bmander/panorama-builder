@@ -1,0 +1,86 @@
+name: deploy
+
+# Push to `prod` builds + pushes both container images and rolls a new
+# revision of each Cloud Run service. Authenticated to GCP via Workload
+# Identity Federation (no long-lived JSON keys); the workflow's OIDC
+# token impersonates `panorama-deployer@histphotosolve.iam`.
+
+on:
+  push:
+    branches: [prod]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: histphotosolve
+  REGION: us-west1
+  REGISTRY: us-west1-docker.pkg.dev/histphotosolve/panorama
+  WIF_PROVIDER: projects/186379669769/locations/global/workloadIdentityPools/github/providers/github
+  DEPLOYER_SA: panorama-deployer@histphotosolve.iam.gserviceaccount.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build + push api image
+        run: |
+          docker build \
+            --platform=linux/amd64 \
+            -f backend/Dockerfile.api \
+            -t ${{ env.REGISTRY }}/api:${{ github.sha }} \
+            -t ${{ env.REGISTRY }}/api:latest \
+            .
+          docker push ${{ env.REGISTRY }}/api:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/api:latest
+
+      - name: Build + push solver image
+        run: |
+          docker build \
+            --platform=linux/amd64 \
+            -f backend/Dockerfile.solver \
+            -t ${{ env.REGISTRY }}/solver:${{ github.sha }} \
+            -t ${{ env.REGISTRY }}/solver:latest \
+            .
+          docker push ${{ env.REGISTRY }}/solver:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/solver:latest
+
+      # Cloud Run carries forward env vars / secrets / cloudsql attachments
+      # from the previous revision, so a redeploy with only --image is the
+      # full delta. If config drifts, fix it via a one-off manual
+      # `gcloud run deploy` instead of expanding this workflow.
+
+      - name: Deploy solver
+        run: |
+          gcloud run deploy panorama-solver \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }} \
+            --image=${{ env.REGISTRY }}/solver:${{ github.sha }} \
+            --quiet
+
+      - name: Deploy api
+        run: |
+          gcloud run deploy panorama-api \
+            --project=${{ env.PROJECT_ID }} \
+            --region=${{ env.REGION }} \
+            --image=${{ env.REGISTRY }}/api:${{ github.sha }} \
+            --quiet
