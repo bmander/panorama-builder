@@ -371,7 +371,6 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
       previewLine.visible = true;
       viewer.requestRender();
     },
-    undoManager: panels.undoManager,
   });
 
   return {

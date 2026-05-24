@@ -11,7 +11,7 @@ import type { OverlayManager } from './overlay.js';
 import type { SyncManager } from './sync.js';
 import { clamp, degToRad, radToDeg } from './mathx.js';
 import { applyPhotoSnapshot, snapshotPhoto } from './undo.js';
-import type { PhotoSnapshot, UndoManager } from './undo.js';
+import type { PhotoSnapshot } from './undo.js';
 import type { PhotoLocks } from './types.js';
 import { AUTO_LOCK_THRESHOLDS, applyLockState } from './auto-lock.js';
 import type { PhotoAutoLock } from './auto-lock.js';
@@ -26,14 +26,13 @@ export interface PhotoHud {
 export interface CreatePhotoHudOptions {
   overlays: OverlayManager;
   sync: SyncManager;
-  undoManager?: UndoManager;
   // Polled on every populate() so the disabled affordance tracks
   // matched-obs changes without its own event channel.
   getPhotoAutoLock: (photoId: string) => PhotoAutoLock;
 }
 
 export function createPhotoHud(
-  { overlays, sync, undoManager, getPhotoAutoLock }: CreatePhotoHudOptions,
+  { overlays, sync, getPhotoAutoLock }: CreatePhotoHudOptions,
 ): PhotoHud {
   const sectionEl = getElement('params-photo-section');
   const opacityEl = getElement<HTMLInputElement>('photo-hud-opacity');
@@ -138,7 +137,6 @@ export function createPhotoHud(
     const after = buildAfter(before);
     applyPhotoSnapshot(overlays, sync, id, after).then(
       () => {
-        if (undoManager) undoManager.record({ kind: 'photo-pose', id, before, after });
         if (bound === overlay) {
           populate(overlay);
           onApplied?.(after);

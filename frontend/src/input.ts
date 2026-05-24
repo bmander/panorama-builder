@@ -8,8 +8,6 @@ import type { OverlayManager } from './overlay.js';
 import { getRole, overlayData, poiData } from './types.js';
 import type { LatLng } from './types.js';
 import { degToRad, dist2, norm2 } from './mathx.js';
-import { snapshotPhoto, snapshotPoi } from './undo.js';
-import type { PhotoSnapshot, UndoAction, UndoManager } from './undo.js';
 import { editingActive } from './session-store.js';
 
 // Discriminated state machine for the active pointer drag. `null` = no drag in
@@ -126,13 +124,9 @@ export interface AttachInputOptions {
   // the CP currently under the cursor (or null). Host renders a 3D preview
   // line; passing both ids null clears the preview.
   onCPConstraintDrawPreview?: (cpAId: string | null, cpBId: string | null) => void;
-  // Records before/after snapshots for gesture-end mutations and applies
-  // them on Cmd/Ctrl+Z. Optional for the index page where attachInput
-  // still runs but no overlays are mutated.
-  undoManager?: UndoManager;
 }
 
-export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu, findStationAtNDC, onStationClick, onDeselectStation, onCPClick, findConstraintAtNDC, onConstraintClick, findSurfaceAtNDC, onSurfaceClick, onCreateCPConstraint, onCPConstraintDrawPreview, undoManager }: AttachInputOptions): void {
+export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShiftWheel, findColumnAtNDC, onHoveredColumnChange, onPhotoBodyContextMenu, onImagePOIContextMenu, findStationAtNDC, onStationClick, onDeselectStation, onCPClick, findConstraintAtNDC, onConstraintClick, findSurfaceAtNDC, onSurfaceClick, onCreateCPConstraint, onCPConstraintDrawPreview }: AttachInputOptions): void {
   const { renderer, camera, overlaysGroup } = viewer;
   const canvas = renderer.domElement;
 
@@ -220,26 +214,6 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
   let batchOpen = false;
   function openBatch(): void { if (!batchOpen) { overlays.beginBatch(); batchOpen = true; } }
   function closeBatch(): void { if (batchOpen) { batchOpen = false; overlays.endBatch(); } }
-
-  // Snapshot captured at gesture-start (pointerdown). On gesture-end (endDrag)
-  // we read the current state to form the `after` snapshot and push the pair
-  // onto the undo stack.
-  type GestureBefore =
-    | { kind: 'photo-pose'; id: string; before: PhotoSnapshot }
-    | { kind: 'poi-move'; id: string; before: { u: number; v: number } };
-  let gestureBefore: GestureBefore | null = null;
-  function capturePhoto(o: THREE.Group): void {
-    if (!undoManager) return;
-    const id = overlayData(o).id;
-    const before = snapshotPhoto(overlays, id);
-    if (before) gestureBefore = { kind: 'photo-pose', id, before };
-  }
-  function capturePoi(poi: THREE.Mesh): void {
-    if (!undoManager) return;
-    const id = poiData(poi).id;
-    const before = snapshotPoi(overlays, id);
-    if (before) gestureBefore = { kind: 'poi-move', id, before };
-  }
 
   canvas.addEventListener('pointerdown', (e: PointerEvent) => {
     // Left-click only — right-click goes to the contextmenu listener.
@@ -340,7 +314,6 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
     if (poiHit) {
       const poiMesh = poiHit.object as THREE.Mesh;
       overlays.measurements.setSelected(poiMesh);
-      capturePoi(poiMesh);
       mode = { type: 'poi-drag', poi: poiMesh, downX: e.clientX, downY: e.clientY, moved: false };
       viewer.requestRender();
     }
@@ -354,7 +327,6 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
       // 3a. Rotate handle on the selected photo → roll about photo center.
       if (rotateHandleHit && selected && rotateHandleHit.object.parent === selected) {
         const center = projectToScreen(selected.position);
-        capturePhoto(selected);
         mode = {
           type: 'rotate',
           cx: center.x,
@@ -376,7 +348,6 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
             hit.normalize(),
             tmpVec3.copy(selected.position).normalize(),
           );
-          capturePhoto(selected);
           mode = { type: 'move', offset };
         } else {
           mode = { type: 'pan' };
@@ -388,7 +359,6 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
       else if (fovHandleHit && selected && fovHandleHit.object.parent === selected) {
         const center = projectToScreen(selected.position);
         const dx = e.clientX - center.x, dy = e.clientY - center.y;
-        capturePhoto(selected);
         mode = { type: 'resize', dist: norm2(dx, dy) || 1, sizeRad: overlayData(selected).sizeRad };
       }
       // 4. Body hit selects the photo if not already selected. Move and rotate
@@ -425,7 +395,6 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
         // under the finger) would otherwise leave this pointer in the Map,
         // making the next pointerdown look like a pinch (size === 2).
         closeBatch();
-        gestureBefore = null;
         mode = null;
         pointers.delete(pid);
         if (canvas.hasPointerCapture(pid)) canvas.releasePointerCapture(pid);
@@ -441,19 +410,6 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
   function endDrag(): void {
     mode = null;
     closeBatch();
-    if (undoManager && gestureBefore) {
-      const g = gestureBefore;
-      gestureBefore = null;
-      let action: UndoAction | null = null;
-      if (g.kind === 'photo-pose') {
-        const after = snapshotPhoto(overlays, g.id);
-        if (after) action = { kind: 'photo-pose', id: g.id, before: g.before, after };
-      } else {
-        const after = snapshotPoi(overlays, g.id);
-        if (after) action = { kind: 'poi-move', id: g.id, before: g.before, after };
-      }
-      if (action) undoManager.record(action);
-    }
   }
   function onPointerEnd(e: PointerEvent): void {
     pointers.delete(e.pointerId);
@@ -467,11 +423,9 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
       return;
     }
     if (pointers.size === 0) {
-      // Tap on a reticule (no drag motion) → open the CP menu and skip the
-      // would-be no-op poi-move undo record.
+      // Tap on a reticule (no drag motion) → open the CP menu.
       if (mode?.type === 'poi-drag' && !mode.moved) {
         const poi = mode.poi;
-        gestureBefore = null;
         onImagePOIContextMenu?.(poi, e.clientX, e.clientY);
       }
       // Constraint draw release: if we ended on a different CP, fire the
@@ -633,19 +587,8 @@ export function attachInput({ viewer, overlays, onChange, onPhotoDropped, onShif
     // don't issue a write that the sync layer will silently drop.
     if (!editingActive()) return;
 
-    if (undoManager && (e.metaKey || e.ctrlKey)) {
-      const k = e.key.toLowerCase();
-      if (k === 'z') {
-        e.preventDefault();
-        if (e.shiftKey) undoManager.redo(); else undoManager.undo();
-        return;
-      }
-      if (k === 'y') {
-        e.preventDefault();
-        undoManager.redo();
-        return;
-      }
-    }
+    // Undo/redo (Cmd/Ctrl+Z, Ctrl+Y) is handled session-globally by
+    // attachUndoKeybindings (session-undo.ts), not here.
 
     if (e.key === 'Backspace' || e.key === 'Delete') {
       // POI selection takes priority: a selected POI (photo-attached OR

@@ -622,10 +622,14 @@ type CreateStationRequest struct {
 	CapturedAt *time.Time `json:"captured_at,omitempty"`
 	Lat        float64    `json:"lat"`
 	Lng        float64    `json:"lng"`
-	LockAlt    *bool      `json:"lock_alt,omitempty"`
 
-	// LockLat defaults to false when omitted
-	LockLat *bool   `json:"lock_lat,omitempty"`
+	// LockAlt defaults to true when omitted
+	LockAlt *bool `json:"lock_alt,omitempty"`
+
+	// LockLat defaults to true when omitted
+	LockLat *bool `json:"lock_lat,omitempty"`
+
+	// LockLng defaults to true when omitted
 	LockLng *bool   `json:"lock_lng,omitempty"`
 	Name    *string `json:"name,omitempty"`
 }
@@ -961,6 +965,12 @@ type SessionOpOp string
 type SessionState struct {
 	BaseSeq int64 `json:"base_seq"`
 
+	// CanRedo whether the redo stack is non-empty
+	CanRedo bool `json:"can_redo"`
+
+	// CanUndo whether the undo stack is non-empty
+	CanUndo bool `json:"can_undo"`
+
 	// Conflicts Touched entities whose entity_commits.last_seq exceeds
 	// base_seq — these are the entities that block a merge.
 	Conflicts []EntityRef `json:"conflicts"`
@@ -1104,6 +1114,12 @@ type StationUpdate struct {
 	LockLat    *bool      `json:"lock_lat,omitempty"`
 	LockLng    *bool      `json:"lock_lng,omitempty"`
 	Name       *string    `json:"name,omitempty"`
+}
+
+// UndoRedoResult defines model for UndoRedoResult.
+type UndoRedoResult struct {
+	CanRedo bool `json:"can_redo"`
+	CanUndo bool `json:"can_undo"`
 }
 
 // CPConstraintID 13-character base32 server-assigned id

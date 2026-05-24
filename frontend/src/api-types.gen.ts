@@ -692,6 +692,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo the most recent action in an open session
+         * @description Pops the newest 'undo' checkpoint and restores the session journal to
+         *     it, pushing the current journal onto the 'redo' stack first. One
+         *     checkpoint covers one user action — a manual edit batch or a solver
+         *     run — so manual edits and solves undo the same way. Pre-merge only: it
+         *     touches the session's uncommitted scratch, never main and never the
+         *     commit log, so — unlike commit revert — it needs no sign-off. Refuses
+         *     with 409 if the session is not open or the undo stack is empty.
+         */
+        post: operations["undoSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/sessions/{id}/redo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Redo the most recently undone action in an open session
+         * @description Pops the newest 'redo' checkpoint and restores the session journal to
+         *     it, pushing the current journal onto the 'undo' stack first. The redo
+         *     stack is cleared whenever a new action is recorded. Refuses with 409 if
+         *     the session is not open or the redo stack is empty.
+         */
+        post: operations["redoSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}/merge": {
         parameters: {
             query?: never;
@@ -1271,9 +1324,11 @@ export interface components {
              */
             alt?: number;
             name?: string | null;
-            /** @description defaults to false when omitted */
+            /** @description defaults to true when omitted */
             lock_lat?: boolean;
+            /** @description defaults to true when omitted */
             lock_lng?: boolean;
+            /** @description defaults to true when omitted */
             lock_alt?: boolean;
             /** Format: date-time */
             captured_at?: string | null;
@@ -1652,10 +1707,18 @@ export interface components {
              *     base_seq — these are the entities that block a merge.
              */
             conflicts: components["schemas"]["EntityRef"][];
+            /** @description whether the undo stack is non-empty */
+            can_undo: boolean;
+            /** @description whether the redo stack is non-empty */
+            can_redo: boolean;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        UndoRedoResult: {
+            can_undo: boolean;
+            can_redo: boolean;
         };
         SessionOp: {
             /** Format: int64 */
@@ -2901,6 +2964,70 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             /** @description Session is already merged */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    undoSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Undone */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UndoRedoResult"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            /** @description Session is not open, or there is nothing to undo */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    redoSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["schemas"]["Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redone */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UndoRedoResult"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            /** @description Session is not open, or there is nothing to redo */
             409: {
                 headers: {
                     [name: string]: unknown;

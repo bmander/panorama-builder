@@ -1,6 +1,7 @@
 import * as api from './api.js';
 import { degToRad } from './mathx.js';
 import { createSessionPanel } from './session-panel.js';
+import { sessionUndo, attachUndoKeybindings } from './session-undo.js';
 import { bindDisabledToSession, editingActive, sessionStore } from './session-store.js';
 import {
   appendSigmaMeters, appendSigmaScalar, cpLabel,
@@ -650,6 +651,13 @@ function attachLocationLockToggle(cp: api.ApiControlPoint, elId: string): void {
 
 async function main(): Promise<void> {
   createSessionPanel(getElement('session-host'));
+  // The CP page binds many small editors to the in-memory cp object, so the
+  // simplest correct rehydrate after an undo/redo is a full reload.
+  sessionUndo.configure({
+    rehydrate: () => { location.reload(); return Promise.resolve(); },
+    reportError: (label, err) => { console.error(`${label}:`, err); },
+  });
+  attachUndoKeybindings();
   const m = CP_ID_RE.exec(location.pathname);
   const nameEl = getElement('name');
   const idEl = getElement('id');

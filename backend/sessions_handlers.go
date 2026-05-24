@@ -101,6 +101,14 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 	if conflicts != nil {
 		state.Conflicts = conflicts
 	}
+	if state.CanUndo, err = checkpointExists(ctx, s.db, id, stackUndo); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if state.CanRedo, err = checkpointExists(ctx, s.db, id, stackRedo); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, state)
 }
 
@@ -157,16 +165,23 @@ func (s *Server) abandonSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// undoSolve reverts the most recent solver writeback within an open session,
-// restoring the journal (session_ops + next_seq + last_solve_rms) to the
-// snapshot captured just before that solve ran.
+// undoSession / redoSession move the session's journal one step along the
+// undo/redo stacks. Undo pops the newest 'undo' checkpoint and restores it
+// (pushing the current journal onto 'redo' first); redo is symmetric.
 //
-// Unlike commit revert, this requires no sign_off: it touches only the
-// session's own uncommitted scratch, never main and never the commit log. It's
-// the pre-merge analogue of dragging the entities back by hand, so — like
-// abandonSession — it operates directly on session state rather than through
-// recordOp. The snapshot is cleared on success so a second undo is a no-op.
-func (s *Server) undoSolve(w http.ResponseWriter, r *http.Request) {
+// Unlike commit revert, these require no sign_off: they touch only the
+// session's own uncommitted scratch (session_ops / next_seq / last_solve_rms
+// and the checkpoint stacks), never main and never the commit log — the same
+// reasoning as abandonSession.
+func (s *Server) undoSession(w http.ResponseWriter, r *http.Request) {
+	s.applyUndoRedo(w, r, stackUndo, stackRedo)
+}
+
+func (s *Server) redoSession(w http.ResponseWriter, r *http.Request) {
+	s.applyUndoRedo(w, r, stackRedo, stackUndo)
+}
+
+func (s *Server) applyUndoRedo(w http.ResponseWriter, r *http.Request, fromStack, toStack string) {
 	id := requireID(w, r, "id")
 	if id == "" {
 		return
@@ -180,11 +195,9 @@ func (s *Server) undoSolve(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var status string
-	var blob []byte
-	err = tx.QueryRow(ctx,
-		`SELECT status, solve_undo_json FROM sessions WHERE id=$1 FOR UPDATE`, id,
-	).Scan(&status, &blob)
-	if err != nil {
+	if err := tx.QueryRow(ctx,
+		`SELECT status FROM sessions WHERE id=$1 FOR UPDATE`, id,
+	).Scan(&status); err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
@@ -192,35 +205,43 @@ func (s *Server) undoSolve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "session is "+status)
 		return
 	}
-	if len(blob) == 0 {
-		writeError(w, http.StatusConflict, "no solve to undo")
+
+	target, ok, err := popCheckpoint(ctx, tx, id, fromStack)
+	if err != nil {
+		writeErrorFromDB(w, err)
 		return
 	}
-
-	var snap solveUndoSnapshot
-	if err := json.Unmarshal(blob, &snap); err != nil {
+	if !ok {
+		writeError(w, http.StatusConflict, "nothing to "+fromStack)
+		return
+	}
+	cur, err := captureJournalSnapshot(ctx, tx, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if err := pushCheckpoint(ctx, tx, id, toStack, toStack, cur); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if err := restoreJournalSnapshot(ctx, tx, id, target); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	// A restored journal begins a fresh action boundary.
+	if _, err := tx.Exec(ctx,
+		`UPDATE sessions SET current_action_id=NULL WHERE id=$1`, id); err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
 
-	if _, err := tx.Exec(ctx, `DELETE FROM session_ops WHERE session_id=$1`, id); err != nil {
+	canUndo, err := checkpointExists(ctx, tx, id, stackUndo)
+	if err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
-	for _, o := range snap.Ops {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO session_ops (session_id, seq, entity_type, entity_id, op, before_json, after_json)
-			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			id, o.Seq, o.EntityType, o.EntityID, o.Op,
-			jsonbBytesOrNil(o.BeforeJSON), jsonbBytesOrNil(o.AfterJSON)); err != nil {
-			writeErrorFromDB(w, err)
-			return
-		}
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE sessions
-		SET next_seq=$2, last_solve_rms=$3, solve_undo_json=NULL, updated_at=NOW()
-		WHERE id=$1`, id, snap.NextSeq, snap.LastSolveRMS); err != nil {
+	canRedo, err := checkpointExists(ctx, tx, id, stackRedo)
+	if err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
@@ -228,16 +249,7 @@ func (s *Server) undoSolve(w http.ResponseWriter, r *http.Request) {
 		writeErrorFromDB(w, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// jsonbBytesOrNil maps an empty snapshot field to a nil arg so the JSONB
-// column round-trips to SQL NULL rather than failing on an empty string.
-func jsonbBytesOrNil(b json.RawMessage) []byte {
-	if len(b) == 0 {
-		return nil
-	}
-	return b
+	writeJSON(w, http.StatusOK, UndoRedoResult{CanUndo: canUndo, CanRedo: canRedo})
 }
 
 // touchedEntities returns the set of (entity_type, entity_id) pairs the

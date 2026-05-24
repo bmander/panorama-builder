@@ -15,6 +15,7 @@ import { createCPSurfaceModal } from '../cp-surface-modal.js';
 import { getElement } from '../types.js';
 import type { CPConstraintView } from '../types.js';
 import { createSessionPanel } from '../session-panel.js';
+import { sessionUndo, attachUndoKeybindings } from '../session-undo.js';
 import type { SessionPanel } from '../session-panel.js';
 import { createSettingsPanel } from '../settings.js';
 import type { SettingsPanel } from '../settings.js';
@@ -27,8 +28,6 @@ import { createObservationModal } from '../observation-modal.js';
 import type { ObservationModal } from '../observation-modal.js';
 import { createPhotoHud } from '../photo-hud.js';
 import type { PhotoHud } from '../photo-hud.js';
-import { createUndoManager } from '../undo.js';
-import type { UndoManager } from '../undo.js';
 import { createStationNavigation } from '../station-navigation.js';
 import type { StationNavigation } from '../station-navigation.js';
 import { createStationFields } from '../station-fields.js';
@@ -49,7 +48,6 @@ export interface StationPanels {
   readonly contextMenu: ContextMenu;
   readonly observationModal: ObservationModal;
   readonly photoHud: PhotoHud;
-  readonly undoManager: UndoManager;
   readonly stationFields: StationFieldsHandle;
   readonly stationNavigation: StationNavigation;
   // Modal-open actions. The cp-constraint / cp-surface modals themselves are
@@ -157,10 +155,6 @@ export function createStationPanels(opts: CreateStationPanelsOptions): StationPa
   }
 
   const contextMenu = createContextMenu();
-  const undoManager = createUndoManager({
-    overlays, sync,
-    reportError: (label, err) => { sync.reportError(label, err); },
-  });
 
   // The station view only loads the active station's photos +
   // measurements, so the per-station total is just the loaded set —
@@ -171,7 +165,7 @@ export function createStationPanels(opts: CreateStationPanelsOptions): StationPa
     stationAutoLockFor(overlays.measurements.matchedCount());
 
   const photoHud = createPhotoHud({
-    overlays, sync, undoManager, getPhotoAutoLock,
+    overlays, sync, getPhotoAutoLock,
   });
   const observationModal = createObservationModal({
     getControlPoints: () => overlays.controlPoints.list(),
@@ -215,10 +209,16 @@ export function createStationPanels(opts: CreateStationPanelsOptions): StationPa
 
   attachDownload({ baker });
 
+  sessionUndo.configure({
+    rehydrate: () => data.rehydrateAfterSolve(),
+    reportError: (label, err) => { sync.reportError(label, err); },
+  });
+  attachUndoKeybindings();
+
   return {
     sessionPanel, settings, admin,
     contextMenu, observationModal,
-    photoHud, undoManager,
+    photoHud,
     stationFields, stationNavigation,
     openConstraintCreate: (a, b) => { if (editingActive()) cpConstraintModal.openCreate(a, b); },
     openConstraintEdit: (c) => { if (editingActive()) cpConstraintModal.openEdit(c); },

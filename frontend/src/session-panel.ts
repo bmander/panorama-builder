@@ -14,6 +14,7 @@ import { solveWarmup, type ApiEntityRef } from './api.js';
 import * as session from './session.js';
 import { sessionStore } from './session-store.js';
 import { sessionPending } from './session-pending.js';
+import { sessionUndo } from './session-undo.js';
 import { openSignOffModal } from './signoff-modal.js';
 import { fmtRef, getElement } from './types.js';
 
@@ -39,6 +40,16 @@ export function createSessionPanel(host: HTMLElement): SessionPanel {
   });
   root.appendChild(editBtn);
 
+  const undoBtn = btn('Undo');
+  undoBtn.title = 'Undo the last change (Ctrl+Z)';
+  undoBtn.addEventListener('click', () => { void sessionUndo.undo(); });
+  root.appendChild(undoBtn);
+
+  const redoBtn = btn('Redo');
+  redoBtn.title = 'Redo (Ctrl+Y / Ctrl+Shift+Z)';
+  redoBtn.addEventListener('click', () => { void sessionUndo.redo(); });
+  root.appendChild(redoBtn);
+
   const saveBtn = btn('Save');
   saveBtn.addEventListener('click', () => { onSave(); });
   root.appendChild(saveBtn);
@@ -55,6 +66,10 @@ export function createSessionPanel(host: HTMLElement): SessionPanel {
     saveBtn.hidden = !sessionActive;
     abandonBtn.hidden = !sessionActive;
     saveBtn.disabled = solverChanges === null || userPending !== 0;
+    undoBtn.hidden = !sessionActive;
+    redoBtn.hidden = !sessionActive;
+    undoBtn.disabled = sessionUndo.busy() || !sessionUndo.canUndo();
+    redoBtn.disabled = sessionUndo.busy() || !sessionUndo.canRedo();
   }
 
   function onSave(): void {
@@ -89,15 +104,19 @@ export function createSessionPanel(host: HTMLElement): SessionPanel {
 
   const offSession = sessionStore.onChange(() => {
     if (sessionStore.current() === null) sessionPending.reset();
+    void sessionUndo.refresh();
     render();
   });
   const offPending = sessionPending.onChange(render);
+  const offUndo = sessionUndo.onChange(render);
+  void sessionUndo.refresh();
   render();
 
   return {
     destroy() {
       offSession();
       offPending();
+      offUndo();
       root.remove();
     },
   };

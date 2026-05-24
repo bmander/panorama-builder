@@ -9,6 +9,7 @@
 
 import type { LatLng } from './types.js';
 import type { components } from './api-types.gen.js';
+import { currentActionId } from './action-id.js';
 import { apiRequest, apiRequestVoid, apiFetch, apiUrl } from './request-client.js';
 import { sessionStore } from './session-store.js';
 import { sessionPending } from './session-pending.js';
@@ -49,6 +50,7 @@ export type SolveConfig = Schemas['SolveConfig'];
 export type SolveResult = Schemas['SolveResult'];
 export type EntityChange = Schemas['EntityChange'];
 export type ApiSessionState = Schemas['SessionState'];
+export type ApiUndoRedoResult = Schemas['UndoRedoResult'];
 export type ApiSessionOp = Schemas['SessionOp'];
 export type ApiCreateSessionResponse = Schemas['CreateSessionResponse'];
 export type ApiCommitRef = Schemas['CommitRef'];
@@ -109,14 +111,46 @@ function requireSessionForWrite(method: string, path: string): void {
   if (sessionStore.current() === null) throw new SessionNotStartedError();
 }
 
+// isMutation is true for entity writes (not GETs, not the session/commit
+// management endpoints). Only these carry an X-Action-Id (so they're grouped
+// into undo checkpoints) and trigger a post-write undo-state refresh.
+function isMutation(method: string, path: string): boolean {
+  return method !== 'GET' && !pathManagesSession(path);
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   requireSessionForWrite(method, path);
-  return apiRequest<T>(method, path, { body, sessionId: sessionStore.current() });
+  const mut = isMutation(method, path);
+  const result = await apiRequest<T>(method, path, {
+    body, sessionId: sessionStore.current(),
+    actionId: mut ? currentActionId() : null,
+  });
+  if (mut) pingWriteSettled();
+  return result;
 }
 
 async function requestVoid(method: string, path: string): Promise<void> {
   requireSessionForWrite(method, path);
-  return apiRequestVoid(method, path, { sessionId: sessionStore.current() });
+  const mut = isMutation(method, path);
+  await apiRequestVoid(method, path, {
+    sessionId: sessionStore.current(),
+    actionId: mut ? currentActionId() : null,
+  });
+  if (mut) pingWriteSettled();
+}
+
+// onWriteSettled registers a single subscriber (the session-undo store) that
+// is fired, debounced, after mutating writes settle so it can refresh
+// can_undo / can_redo. A page only ever mounts one.
+let writeSettledCb: (() => void) | null = null;
+let writeSettledTimer: ReturnType<typeof setTimeout> | undefined;
+export function onWriteSettled(cb: () => void): void {
+  writeSettledCb = cb;
+}
+function pingWriteSettled(): void {
+  if (!writeSettledCb) return;
+  clearTimeout(writeSettledTimer);
+  writeSettledTimer = setTimeout(() => writeSettledCb?.(), 200);
 }
 
 // Adds X-Session-Id to a Headers object when a session is active. Used by
@@ -469,11 +503,16 @@ export function abandonSession(id: string): Promise<void> {
   return requestVoid('POST', `/sessions/${encodeURIComponent(id)}/abandon`);
 }
 
-// undoSolve reverts the most recent solver writeback within the open session,
-// restoring the journal to its pre-solve state. No sign-off: nothing has
-// reached main yet (the pre-merge analogue of abandon).
-export function undoSolve(id: string): Promise<void> {
-  return requestVoid('POST', `/sessions/${encodeURIComponent(id)}/undo-solve`);
+// undo / redo move the session journal one step along the checkpoint stacks.
+// One checkpoint = one user action (a manual edit batch or a solver run), so
+// edits and solves undo the same way. No sign-off: nothing has reached main
+// (the pre-merge analogue of abandon). Returns the resulting stack state.
+export function undo(id: string): Promise<ApiUndoRedoResult> {
+  return request<ApiUndoRedoResult>('POST', `/sessions/${encodeURIComponent(id)}/undo`);
+}
+
+export function redo(id: string): Promise<ApiUndoRedoResult> {
+  return request<ApiUndoRedoResult>('POST', `/sessions/${encodeURIComponent(id)}/redo`);
 }
 
 // getSessionRankDeficient asks the backend to dry-run the merge σ gate and

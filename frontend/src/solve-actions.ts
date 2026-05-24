@@ -17,9 +17,6 @@ export function attachSolveActions(deps: SolveActionsDeps): SolveActions {
     onComplete: () => {
       rehydrate().catch((err: unknown) => { reportError('reload after solve', err); });
     },
-    onUndo: () => {
-      rehydrate().catch((err: unknown) => { reportError('reload after undo', err); });
-    },
   });
 
   const open = (): void => {

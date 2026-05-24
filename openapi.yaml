@@ -889,7 +889,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
-  /sessions/{id}/undo-solve:
+  /sessions/{id}/undo:
     parameters:
       - name: id
         in: path
@@ -897,21 +897,53 @@ paths:
         schema: { $ref: '#/components/schemas/Id' }
     post:
       tags: [sessions]
-      summary: Undo the most recent solver writeback in an open session
+      summary: Undo the most recent action in an open session
       description: |
-        Restores the session journal (ops + next_seq + last_solve_rms) to the
-        snapshot captured just before the most recent solve wrote back. Pre-
-        merge only: it touches the session's own uncommitted scratch, never
-        main and never the commit log, so — unlike commit revert — it needs no
-        sign-off. Refuses with 409 if the session is not open or no solve is
-        available to undo. The snapshot clears on success, so a second undo is
-        a no-op (409).
-      operationId: undoSolve
+        Pops the newest 'undo' checkpoint and restores the session journal to
+        it, pushing the current journal onto the 'redo' stack first. One
+        checkpoint covers one user action — a manual edit batch or a solver
+        run — so manual edits and solves undo the same way. Pre-merge only: it
+        touches the session's uncommitted scratch, never main and never the
+        commit log, so — unlike commit revert — it needs no sign-off. Refuses
+        with 409 if the session is not open or the undo stack is empty.
+      operationId: undoSession
       responses:
-        '204': { description: Undone }
+        '200':
+          description: Undone
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UndoRedoResult' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Session is not open, or there is no solve to undo
+          description: Session is not open, or there is nothing to undo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /sessions/{id}/redo:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/Id' }
+    post:
+      tags: [sessions]
+      summary: Redo the most recently undone action in an open session
+      description: |
+        Pops the newest 'redo' checkpoint and restores the session journal to
+        it, pushing the current journal onto the 'undo' stack first. The redo
+        stack is cleared whenever a new action is recorded. Refuses with 409 if
+        the session is not open or the redo stack is empty.
+      operationId: redoSession
+      responses:
+        '200':
+          description: Redone
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UndoRedoResult' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Session is not open, or there is nothing to redo
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1958,7 +1990,7 @@ components:
 
     SessionState:
       type: object
-      required: [id, base_seq, status, next_seq, op_count, touched_entities, conflicts, created_at, updated_at]
+      required: [id, base_seq, status, next_seq, op_count, touched_entities, conflicts, can_undo, can_redo, created_at, updated_at]
       properties:
         id: { $ref: '#/components/schemas/Id' }
         base_seq: { type: integer, format: int64 }
@@ -1974,8 +2006,17 @@ components:
             Touched entities whose entity_commits.last_seq exceeds
             base_seq — these are the entities that block a merge.
           items: { $ref: '#/components/schemas/EntityRef' }
+        can_undo: { type: boolean, description: whether the undo stack is non-empty }
+        can_redo: { type: boolean, description: whether the redo stack is non-empty }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    UndoRedoResult:
+      type: object
+      required: [can_undo, can_redo]
+      properties:
+        can_undo: { type: boolean }
+        can_redo: { type: boolean }
 
     SessionOp:
       type: object

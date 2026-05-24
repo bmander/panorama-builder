@@ -66,7 +66,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/ops", s.getSessionOps)
 	mux.HandleFunc("GET /api/sessions/{id}/rank-deficient", s.getSessionRankDeficient)
 	mux.HandleFunc("POST /api/sessions/{id}/abandon", s.abandonSession)
-	mux.HandleFunc("POST /api/sessions/{id}/undo-solve", s.undoSolve)
+	mux.HandleFunc("POST /api/sessions/{id}/undo", s.undoSession)
+	mux.HandleFunc("POST /api/sessions/{id}/redo", s.redoSession)
 	mux.HandleFunc("POST /api/sessions/{id}/merge", s.mergeSession)
 
 	mux.HandleFunc("GET /api/commits", s.listCommits)

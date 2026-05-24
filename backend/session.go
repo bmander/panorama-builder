@@ -24,6 +24,10 @@ import (
 
 const sessionIDHeader = "X-Session-Id"
 
+// actionIDHeader groups the writes of one user action (one flushSync batch)
+// so the undo/redo machinery records a single checkpoint per action.
+const actionIDHeader = "X-Action-Id"
+
 const (
 	entityStation          = "station"
 	entityPhoto            = "photo"
@@ -169,6 +173,11 @@ func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (*Sessio
 		return nil, false
 	}
 	if !requireOpenSession(w, sess) {
+		return nil, false
+	}
+	// Record a pre-action undo checkpoint on the first write of each action.
+	if err := s.maybePushCheckpoint(r.Context(), sess.ID, r.Header.Get(actionIDHeader)); err != nil {
+		writeErrorFromDB(w, err)
 		return nil, false
 	}
 	return sess, true

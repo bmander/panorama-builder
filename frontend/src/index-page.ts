@@ -21,6 +21,7 @@ import {
 } from './types.js';
 import { stationAutoLockFor } from './auto-lock.js';
 import { createSessionPanel } from './session-panel.js';
+import { sessionUndo, attachUndoKeybindings } from './session-undo.js';
 import { editingActive } from './session-store.js';
 import { createSolverPanel } from './solver-panel.js';
 import type { Cone, ControlPointView, LatLng } from './types.js';
@@ -508,18 +509,19 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
       refreshIndexControlPoints();
     },
   });
-  const refreshAfterSolve = (): void => {
-    void Promise.all([loadStationMarkers(), showIndexControlPoints()])
+  const refreshAfterSolve = (): Promise<void> =>
+    Promise.all([loadStationMarkers(), showIndexControlPoints()])
       .then(applyDataBounds);
-  };
-  const solveModal = createSolveModal({
-    onComplete: refreshAfterSolve,
-    onUndo: refreshAfterSolve,
-  });
+  const solveModal = createSolveModal({ onComplete: () => { void refreshAfterSolve(); } });
   const openJointSolve = (): void => {
     solveModal.open({ start: api.solveJointStream, title: 'Solve all (joint)' });
   };
   createSolverPanel(getElement('solver-host'), openJointSolve);
+  sessionUndo.configure({
+    rehydrate: refreshAfterSolve,
+    reportError: (label, err) => { console.error(`${label}:`, err); },
+  });
+  attachUndoKeybindings();
   createSessionPanel(getElement('session-host'));
   const stationsReady = loadStationMarkers();
   const cpsReady = showIndexControlPoints();

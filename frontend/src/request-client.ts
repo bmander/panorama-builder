@@ -11,6 +11,9 @@ export function apiUrl(path: string): string {
 export interface RequestOpts {
   body?: unknown;
   sessionId?: string | null;
+  // Groups the writes of one user action so the undo/redo machinery records a
+  // single checkpoint per action. Absent ⇒ no checkpoint boundary.
+  actionId?: string | null;
   signal?: AbortSignal;
 }
 
@@ -22,6 +25,7 @@ function buildInit(method: string, opts?: RequestOpts): RequestInit {
     init.body = JSON.stringify(opts.body);
   }
   if (opts?.sessionId) headers.set('X-Session-Id', opts.sessionId);
+  if (opts?.actionId) headers.set('X-Action-Id', opts.actionId);
   if (opts?.signal) init.signal = opts.signal;
   return init;
 }
