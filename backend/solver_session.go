@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bmander/panorama-builder/shared/wire"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -369,6 +370,64 @@ func (s *Server) loadProblemCPConstraintsOverlaid(ctx context.Context, overlay s
 	return filterCPConstraintsByCPSet(out, cps), nil
 }
 
+// solveUndoOp / solveUndoSnapshot serialize a session's journal as it stood
+// just before a solver writeback. Persisted in sessions.solve_undo_json so the
+// most recent solve can be undone within the still-open session. before_json /
+// after_json are carried verbatim as raw JSON (nil for the populated-on-one-
+// side insert/delete shapes).
+type solveUndoOp struct {
+	Seq        int64           `json:"seq"`
+	EntityType string          `json:"entity_type"`
+	EntityID   string          `json:"entity_id"`
+	Op         string          `json:"op"`
+	BeforeJSON json.RawMessage `json:"before_json,omitempty"`
+	AfterJSON  json.RawMessage `json:"after_json,omitempty"`
+}
+
+type solveUndoSnapshot struct {
+	Ops          []solveUndoOp `json:"ops"`
+	NextSeq      int64         `json:"next_seq"`
+	LastSolveRMS *float64      `json:"last_solve_rms,omitempty"`
+}
+
+// captureSolveUndoSnapshot records the session's pre-writeback journal into
+// sessions.solve_undo_json. Must run inside the writeback tx, before recordOp
+// mutates session_ops / next_seq, so the snapshot reflects the true pre-solve
+// state. last_solve_rms is still the prior run's value here (recordSolveRMS
+// runs after writeback), which is exactly what undo should restore.
+func captureSolveUndoSnapshot(ctx context.Context, tx pgx.Tx, sessionID string) error {
+	var snap solveUndoSnapshot
+	if err := tx.QueryRow(ctx,
+		`SELECT next_seq, last_solve_rms FROM sessions WHERE id=$1`, sessionID,
+	).Scan(&snap.NextSeq, &snap.LastSolveRMS); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT seq, entity_type, entity_id, op, before_json, after_json
+		FROM session_ops WHERE session_id=$1 ORDER BY seq`, sessionID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var o solveUndoOp
+		var before, after []byte
+		if err := rows.Scan(&o.Seq, &o.EntityType, &o.EntityID, &o.Op, &before, &after); err != nil {
+			rows.Close()
+			return err
+		}
+		o.BeforeJSON = before
+		o.AfterJSON = after
+		snap.Ops = append(snap.Ops, o)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx,
+		`UPDATE sessions SET solve_undo_json=$2 WHERE id=$1`, sessionID, jsonMust(snap))
+	return err
+}
+
 // writebackChangesInSession routes each solver change through recordOp so
 // the seq allocator (sessions.next_seq) stays consistent with the entity
 // handlers — hand-rolling a separate INSERT here would let the two
@@ -386,6 +445,11 @@ func (s *Server) writebackChangesInSession(ctx context.Context, sessionID string
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Snapshot the pre-solve journal before recordOp touches it, so undoSolve
+	// can roll this writeback back within the open session.
+	if err := captureSolveUndoSnapshot(ctx, tx, sessionID); err != nil {
+		return fmt.Errorf("capture undo snapshot: %w", err)
+	}
 	now := time.Now().UTC()
 	for _, c := range changes {
 		before, after, err := snapshotForChange(ctx, s.db, overlay, c, now)

@@ -469,6 +469,13 @@ export function abandonSession(id: string): Promise<void> {
   return requestVoid('POST', `/sessions/${encodeURIComponent(id)}/abandon`);
 }
 
+// undoSolve reverts the most recent solver writeback within the open session,
+// restoring the journal to its pre-solve state. No sign-off: nothing has
+// reached main yet (the pre-merge analogue of abandon).
+export function undoSolve(id: string): Promise<void> {
+  return requestVoid('POST', `/sessions/${encodeURIComponent(id)}/undo-solve`);
+}
+
 // getSessionRankDeficient asks the backend to dry-run the merge σ gate and
 // return the per-entity flagged-axes list. Used by the session widget to
 // surface "X problems" between Solve and Save.

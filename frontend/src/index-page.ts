@@ -508,11 +508,13 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
       refreshIndexControlPoints();
     },
   });
+  const refreshAfterSolve = (): void => {
+    void Promise.all([loadStationMarkers(), showIndexControlPoints()])
+      .then(applyDataBounds);
+  };
   const solveModal = createSolveModal({
-    onComplete: () => {
-      void Promise.all([loadStationMarkers(), showIndexControlPoints()])
-        .then(applyDataBounds);
-    },
+    onComplete: refreshAfterSolve,
+    onUndo: refreshAfterSolve,
   });
   const openJointSolve = (): void => {
     solveModal.open({ start: api.solveJointStream, title: 'Solve all (joint)' });

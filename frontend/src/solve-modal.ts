@@ -32,6 +32,10 @@ export interface CreateSolveModalOptions {
   // diverged, not cancelled). The session-pending counter is updated by the
   // modal itself before this is called.
   onComplete: (result: api.SolveResult) => void;
+  // Fires after the user undoes the most recent solve's writeback. The page
+  // must re-hydrate the same way it does after a solve, since entity state
+  // just changed under it.
+  onUndo?: () => void;
 }
 
 interface ChartState {
@@ -45,7 +49,7 @@ interface ChartState {
 const CHART_PADDING_PX = 24;
 
 export function createSolveModal(
-  { onComplete }: CreateSolveModalOptions,
+  { onComplete, onUndo }: CreateSolveModalOptions,
 ): SolveModal {
   const modalEl = getElement('solve-modal');
   const titleEl = getElement('solve-title');
@@ -54,6 +58,7 @@ export function createSolveModal(
   const cancelBtn = getElement<HTMLButtonElement>('solve-cancel-btn');
   const stopBtn = getElement<HTMLButtonElement>('solve-stop-btn');
   const runBtn = getElement<HTMLButtonElement>('solve-run');
+  const undoBtn = getElement<HTMLButtonElement>('solve-undo');
   const functionTolEl = getElement<HTMLInputElement>('solve-function-tol');
   const functionTolReadoutEl = getElement<HTMLOutputElement>('solve-function-tol-readout');
   const stepTolEl = getElement<HTMLInputElement>('solve-step-tol');
@@ -109,6 +114,7 @@ export function createSolveModal(
     }
     modalEl.hidden = true;
     setRunning(false);
+    undoBtn.hidden = true;
     progressEl.hidden = true;
     statusEl.textContent = '';
   }
@@ -118,6 +124,7 @@ export function createSolveModal(
     titleEl.textContent = run.title;
     progressEl.hidden = true;
     statusEl.textContent = '';
+    undoBtn.hidden = true;
     chart.iters.length = 0;
     chart.rms.length = 0;
     chart.logMin = 0;
@@ -234,6 +241,7 @@ export function createSolveModal(
     };
 
     setRunning(true);
+    undoBtn.hidden = true;
     progressEl.hidden = false;
     statusEl.textContent = 'starting…';
     chart.iters.length = 0;
@@ -280,6 +288,8 @@ export function createSolveModal(
       statusEl.textContent = summarize(result, dryRun, terminalKind);
       if (!dryRun && !result.diverged) {
         sessionPending.recordSolve(result.changes.length);
+        // The writeback can be rolled back until the session merges; offer it.
+        undoBtn.hidden = false;
         onComplete(result);
         // Also surface the σ gate's verdict directly in the modal so the
         // user sees "found X problems" without having to dismiss it first.
@@ -301,6 +311,24 @@ export function createSolveModal(
       setRunning(false);
       statusEl.textContent = `request failed: ${String(err)}`;
       console.error('solve stream failed:', err);
+    });
+  });
+
+  undoBtn.addEventListener('click', () => {
+    const sid = sessionStore.current();
+    if (sid === null) return;
+    undoBtn.disabled = true;
+    api.undoSolve(sid).then(() => {
+      undoBtn.disabled = false;
+      undoBtn.hidden = true;
+      statusEl.textContent = 'last solve undone';
+      // The solve's result no longer holds, so disable Save until a re-solve.
+      sessionPending.reset();
+      onUndo?.();
+    }, (err: unknown) => {
+      undoBtn.disabled = false;
+      statusEl.textContent = `undo failed: ${String(err)}`;
+      console.error('undo solve failed:', err);
     });
   });
 

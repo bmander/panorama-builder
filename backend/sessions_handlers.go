@@ -157,6 +157,89 @@ func (s *Server) abandonSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// undoSolve reverts the most recent solver writeback within an open session,
+// restoring the journal (session_ops + next_seq + last_solve_rms) to the
+// snapshot captured just before that solve ran.
+//
+// Unlike commit revert, this requires no sign_off: it touches only the
+// session's own uncommitted scratch, never main and never the commit log. It's
+// the pre-merge analogue of dragging the entities back by hand, so — like
+// abandonSession — it operates directly on session state rather than through
+// recordOp. The snapshot is cleared on success so a second undo is a no-op.
+func (s *Server) undoSolve(w http.ResponseWriter, r *http.Request) {
+	id := requireID(w, r, "id")
+	if id == "" {
+		return
+	}
+	ctx := r.Context()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var status string
+	var blob []byte
+	err = tx.QueryRow(ctx,
+		`SELECT status, solve_undo_json FROM sessions WHERE id=$1 FOR UPDATE`, id,
+	).Scan(&status, &blob)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if status != "open" {
+		writeError(w, http.StatusConflict, "session is "+status)
+		return
+	}
+	if len(blob) == 0 {
+		writeError(w, http.StatusConflict, "no solve to undo")
+		return
+	}
+
+	var snap solveUndoSnapshot
+	if err := json.Unmarshal(blob, &snap); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM session_ops WHERE session_id=$1`, id); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	for _, o := range snap.Ops {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO session_ops (session_id, seq, entity_type, entity_id, op, before_json, after_json)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			id, o.Seq, o.EntityType, o.EntityID, o.Op,
+			jsonbBytesOrNil(o.BeforeJSON), jsonbBytesOrNil(o.AfterJSON)); err != nil {
+			writeErrorFromDB(w, err)
+			return
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE sessions
+		SET next_seq=$2, last_solve_rms=$3, solve_undo_json=NULL, updated_at=NOW()
+		WHERE id=$1`, id, snap.NextSeq, snap.LastSolveRMS); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// jsonbBytesOrNil maps an empty snapshot field to a nil arg so the JSONB
+// column round-trips to SQL NULL rather than failing on an empty string.
+func jsonbBytesOrNil(b json.RawMessage) []byte {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
+}
+
 // touchedEntities returns the set of (entity_type, entity_id) pairs the
 // session has ever journaled an op for.
 func touchedEntities(ctx context.Context, db queryerLike, sessionID string) ([]EntityRef, error) {

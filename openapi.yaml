@@ -889,6 +889,33 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /sessions/{id}/undo-solve:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { $ref: '#/components/schemas/Id' }
+    post:
+      tags: [sessions]
+      summary: Undo the most recent solver writeback in an open session
+      description: |
+        Restores the session journal (ops + next_seq + last_solve_rms) to the
+        snapshot captured just before the most recent solve wrote back. Pre-
+        merge only: it touches the session's own uncommitted scratch, never
+        main and never the commit log, so — unlike commit revert — it needs no
+        sign-off. Refuses with 409 if the session is not open or no solve is
+        available to undo. The snapshot clears on success, so a second undo is
+        a no-op (409).
+      operationId: undoSolve
+      responses:
+        '204': { description: Undone }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Session is not open, or there is no solve to undo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /sessions/{id}/merge:
     parameters:
       - name: id
