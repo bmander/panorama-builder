@@ -14,7 +14,7 @@ import type { ApiControlPoint, ApiHydratedStation } from '../api.js';
 import { cpLifespanFromApi, isExtantAt } from '../types.js';
 import type { CPConstraintView, CPSurfaceView, ControlPointView, LatLng } from '../types.js';
 import { dirFromAzAlt } from '../overlay.js';
-import { groundDistance, latLngToCameraRelativeMeters, vecToAzAlt } from '../geo.js';
+import { azAltToPoint, groundDistance, vecToAzAlt } from '../geo.js';
 import { degToRad } from '../mathx.js';
 import { meanPhotoAzAlt } from '../station-navigation.js';
 import { createSyncManager } from '../sync.js';
@@ -88,11 +88,6 @@ export interface StationDataController {
   // Per-CP observation status at this station; null when no row exists.
   getCpObservationStatus(cpId: string): api.ApiCpObservationStatus | null;
 
-  // Distinct *other* stations whose image measurements link to this CP — the
-  // "Zoom to…" targets in the CP context menu. Derived from the already-
-  // hydrated other-camera data; empty until that batch finishes loading.
-  getOtherStationsObservingCp(cpId: string): readonly { id: string; name: string | null }[];
-
   // Other-stations setter (used by station-navigation's fly post-update path).
   setOtherStations(stations: readonly StationMarker[]): void;
 
@@ -128,7 +123,7 @@ export interface StationDataController {
   rehydrateAfterSolve(): Promise<void>;
 
   // Boot-time camera focus
-  focusCameraOnControlPoint(id: string, fovDeg?: number): boolean;
+  focusCameraOnControlPoint(id: string, fovDeg: number): boolean;
   focusCameraOnImageMeasurement(id: string): boolean;
 }
 
@@ -364,19 +359,18 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
     return true;
   }
 
-  // fovDeg, when given, sets the FOV (the deep-link focus passes FOCUS_FOV_DEG);
-  // omitting it leaves FOV untouched so a fly-to-CP landing keeps the size-
-  // matched FOV the flight already tweened to.
-  function focusCameraOnControlPoint(id: string, fovDeg?: number): boolean {
+  // Centers the camera on the CP and sets the FOV. Callers pass the FOV they
+  // want: FOCUS_FOV_DEG for the deep-link focus, the flight's size-matched FOV
+  // for a fly-to-CP landing.
+  function focusCameraOnControlPoint(id: string, fovDeg: number): boolean {
     const cp = overlays.controlPoints.getById(id);
     if (cp?.estLat == null || cp.estLng == null || cp.estAlt == null) return false;
     const pose = worldCamera.getPose();
     if (!pose.location) return false;
-    const { x, z } = latLngToCameraRelativeMeters({ lat: cp.estLat, lng: cp.estLng }, pose.location);
-    const y = cp.estAlt - pose.altitudeMSL;
-    const { az, alt } = vecToAzAlt(x, y, z);
+    const { az, alt } = azAltToPoint(
+      pose.location, pose.altitudeMSL, { lat: cp.estLat, lng: cp.estLng }, cp.estAlt);
     viewer.setAzAlt(az, alt);
-    if (fovDeg !== undefined) viewer.setFov(fovDeg);
+    viewer.setFov(fovDeg);
     return true;
   }
 
@@ -665,16 +659,6 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
     postCpObservation,
     deleteCpObservation,
     getCpObservationStatus: (cpId: string) => cpObservationByCp.get(cpId)?.status ?? null,
-    getOtherStationsObservingCp: (cpId: string) => {
-      const seen = new Set<string>();
-      for (const cam of otherCameras) {
-        if (cam.measurements.some(m => m.controlPointId === cpId)) seen.add(cam.stationId);
-      }
-      const nameById = new Map(otherStations.map(s => [s.id, s.name]));
-      return [...seen]
-        .map(id => ({ id, name: nameById.get(id) ?? null }))
-        .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
-    },
     setOtherStations: (s) => { otherStations = [...s]; },
     setShowUncitedCPs: (v) => {
       if (v === showUncitedCPs) return;

@@ -12,6 +12,7 @@ import { createStationInteractions } from './station/interactions.js';
 import { createSundialController } from './station/sundial-controller.js';
 import { createStationPanels } from './station/panels.js';
 import { wireStationEvents } from './station/wiring.js';
+import type { CpFlightFocus } from './station-navigation.js';
 
 export interface MountStationPageOptions {
   initialStationId: string;
@@ -108,30 +109,30 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   }
 
   async function applyStation(
-    newId: string, prefetched?: ApiHydratedStation, focusCpId?: string | null,
+    newId: string, prefetched?: ApiHydratedStation, focus?: CpFlightFocus | null,
   ): Promise<void> {
     if (newId === route.getStationId()) return;
     route.clearFocusedCpId();
     route.setStationId(newId);
     clearStationData();
-    // focusCpId (a fly-to-station "Zoom to…" target) re-centers the camera on
-    // that CP once hydrated — hydrate resets orientation to the mean photo
-    // direction, so this restores the CP-centered look. No FOV arg: the flight
-    // already tweened to the size-matched FOV and we keep it. Runs before
-    // applyCameraFromURL, but the clean /world?sta=<id> URL carries no camera
-    // params so the focus survives.
-    await data.load(newId, prefetched, focusCpId ? () => {
-      if (!data.focusCameraOnControlPoint(focusCpId)) {
-        console.warn('focus control point not resolvable:', focusCpId);
+    // focus (a fly-to-station "Zoom to…" target) re-centers + zooms the camera
+    // on that CP once hydrated — hydrate resets orientation to the mean photo
+    // direction, so this restores the CP-centered view at the caller's FOV
+    // (the flight's size-matched value, or FOCUS_FOV_DEG on non-animated
+    // paths). Runs before applyCameraFromURL, but the clean /world?sta=<id>
+    // URL carries no camera params so the focus survives.
+    await data.load(newId, prefetched, focus ? () => {
+      if (!data.focusCameraOnControlPoint(focus.cpId, focus.fovDeg)) {
+        console.warn('focus control point not resolvable:', focus.cpId);
       }
     } : undefined);
   }
 
   async function loadStation(
-    newId: string, prefetched?: ApiHydratedStation, focusCpId?: string | null,
+    newId: string, prefetched?: ApiHydratedStation, focus?: CpFlightFocus | null,
   ): Promise<void> {
     if (newId !== route.getStationId()) route.pushStationToHistory(newId);
-    await applyStation(newId, prefetched, focusCpId);
+    await applyStation(newId, prefetched, focus);
   }
 
   function clearStationData(): void {

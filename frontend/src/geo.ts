@@ -119,3 +119,15 @@ export function vecToAzAlt(x: number, y: number, z: number): { az: number; alt: 
     alt: len === 0 ? 0 : Math.asin(clamp(y / len, -1, 1)),
   };
 }
+
+// Azimuth/altitude and straight-line range (meters) from a camera at
+// camLoc/camAltMSL looking toward a world point at pt/ptAltMSL. Wraps the
+// tangent-plane projection + vecToAzAlt that the camera-focus and fly-to-CP
+// aiming share.
+export function azAltToPoint(
+  camLoc: LatLng, camAltMSL: number, pt: LatLng, ptAltMSL: number,
+): { az: number; alt: number; range: number } {
+  const { x, z } = latLngToCameraRelativeMeters(pt, camLoc);
+  const y = ptAltMSL - camAltMSL;
+  return { ...vecToAzAlt(x, y, z), range: norm3(x, y, z) };
+}

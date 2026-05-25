@@ -173,44 +173,65 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
     }
     const stationObserves = ownMeasurements.length > 0;
     const selected = stationObserves ? 'present' : data.getCpObservationStatus(cpId);
-    const items: ContextMenuItem[] = [];
-    // Other stations that observe this CP — clicking flies there and lands
-    // focused on the same point.
-    const observingStations = data.getOtherStationsObservingCp(cpId);
-    if (observingStations.length > 0) {
-      items.push({ kind: 'section', label: 'Zoom to…' });
-      for (const st of observingStations) {
-        const label = st.name ?? `Untitled ${st.id.slice(0, 6)}`;
-        items.push({ label, onClick: () => { void panels.stationNavigation.flyToStation(st.id, cpId); } });
+
+    // Network-independent items, rebuilt on re-open so the spliced-in "Zoom
+    // to…" section sits above them. Nudge the menu right so the CP marker (and
+    // the reticules just revealed above) stay uncovered.
+    function baseItems(): ContextMenuItem[] {
+      const items: ContextMenuItem[] = [
+        { label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } },
+      ];
+      if (editingActive()) {
+        items.push({
+          kind: 'radio-group',
+          legend: 'Visibility',
+          options: [
+            { value: 'present',  label: 'Present',  disabled: stationObserves || !body },
+            { value: 'absent',   label: 'Absent',   disabled: stationObserves },
+            { value: 'obscured', label: 'Obscured', disabled: stationObserves },
+          ],
+          selected,
+          onChange: (next) => {
+            if (next === null) {
+              void data.deleteCpObservation(cpId);
+              return;
+            }
+            if (next === 'present') {
+              void data.handlers.onMatchImageMeasurement(body!.overlay, body!.u, body!.v, cpId);
+              return;
+            }
+            void data.postCpObservation(cpId, next as api.ApiCpObservationStatus);
+          },
+        });
       }
+      return items;
     }
-    items.push({ label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } });
-    if (editingActive()) {
-      items.push({
-        kind: 'radio-group',
-        legend: 'Visibility',
-        options: [
-          { value: 'present',  label: 'Present',  disabled: stationObserves || !body },
-          { value: 'absent',   label: 'Absent',   disabled: stationObserves },
-          { value: 'obscured', label: 'Obscured', disabled: stationObserves },
-        ],
-        selected,
-        onChange: (next) => {
-          if (next === null) {
-            void data.deleteCpObservation(cpId);
-            return;
-          }
-          if (next === 'present') {
-            void data.handlers.onMatchImageMeasurement(body!.overlay, body!.u, body!.v, cpId);
-            return;
-          }
-          void data.postCpObservation(cpId, next as api.ApiCpObservationStatus);
-        },
-      });
-    }
-    // Nudge the menu right so the CP marker (and any reticules just
-    // revealed by the selection above) stays uncovered by the menu.
-    panels.contextMenu.open(sx + 20, sy, items, header, info);
+    panels.contextMenu.open(sx + 20, sy, baseItems(), header, info);
+
+    // "Zoom to…" — the other stations observing this CP. Fetched from the
+    // dedicated server-side join (one request, complete) rather than the
+    // per-station getStation fan-out, which silently drops stations whose
+    // fetch fails under the world-view's request load. Only when the CP has a
+    // full 3D estimate (with unknown elevation the fly can't aim at it).
+    const canFocus = cp?.estLat != null && cp.estLng != null && cp.estAlt != null;
+    if (!canFocus) return;
+    const menuGen = panels.contextMenu.generation();
+    void api.listControlPointObservations(cpId).then(obs => {
+      // Bail if the menu was closed or replaced while the fetch was in flight.
+      if (panels.contextMenu.generation() !== menuGen) return;
+      const here = route.getStationId();
+      const nameByStation = new Map<string, string | null>();
+      for (const im of obs.image_measurements) {
+        if (im.station_id !== here) nameByStation.set(im.station_id, im.station_name);
+      }
+      if (nameByStation.size === 0) return;
+      const zoom: ContextMenuItem[] = [{ kind: 'section', label: 'Zoom to…' }];
+      for (const [stId, name] of [...nameByStation].sort((a, b) => (a[1] ?? '').localeCompare(b[1] ?? ''))) {
+        const label = name ?? `Untitled ${stId.slice(0, 6)}`;
+        zoom.push({ label, onClick: () => { void panels.stationNavigation.flyToStation(stId, cpId); } });
+      }
+      panels.contextMenu.open(sx + 20, sy, [...zoom, ...baseItems()], header, info);
+    }).catch((err: unknown) => { console.error('list cp observations failed:', err); });
   }
 
   function writeCameraToURL(): void {

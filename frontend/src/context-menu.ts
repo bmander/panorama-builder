@@ -37,14 +37,20 @@ export interface ContextMenu {
     header?: string, info?: readonly string[],
   ): void;
   close(): void;
+  // Monotonic counter bumped on every open()/close(). An async caller captures
+  // it after opening and bails if it changed before its late content (e.g. a
+  // fetched "Zoom to…" list) arrives — meaning the menu was closed or replaced.
+  generation(): number;
 }
 
 let radioGroupSeq = 0;
 
 export function createContextMenu(): ContextMenu {
   const el = getElement('context-menu');
+  let gen = 0;
 
   function close(): void {
+    gen++;
     el.hidden = true;
     el.replaceChildren();
   }
@@ -94,6 +100,7 @@ export function createContextMenu(): ContextMenu {
     x: number, y: number, items: readonly ContextMenuItem[],
     header?: string, info?: readonly string[],
   ): void {
+    gen++;
     el.replaceChildren();
     if (header !== undefined) {
       const h = document.createElement('div');
@@ -154,5 +161,5 @@ export function createContextMenu(): ContextMenu {
     if (!el.hidden && e.key === 'Escape') close();
   });
 
-  return { open, close };
+  return { open, close, generation: () => gen };
 }
