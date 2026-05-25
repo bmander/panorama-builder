@@ -30,7 +30,7 @@ import type { PhotoHud } from '../photo-hud.js';
 import { createUndoManager } from '../undo.js';
 import type { UndoManager } from '../undo.js';
 import { createStationNavigation } from '../station-navigation.js';
-import type { StationNavigation } from '../station-navigation.js';
+import type { CpFlightFocus, StationNavigation } from '../station-navigation.js';
 import { createStationFields } from '../station-fields.js';
 import type { StationFieldsHandle } from '../station-fields.js';
 import { photoAutoLockFor, stationAutoLockFor } from '../auto-lock.js';
@@ -71,8 +71,11 @@ export interface CreateStationPanelsOptions {
   readonly onCpSurfaceMutated: () => void;
   readonly onCpSurfaceClose: () => void;
   // Forward-ref to the composition root's loadStation helper. Used by
-  // station-navigation's fly-to flow.
-  readonly loadStation: (id: string, prefetched?: ApiHydratedStation) => Promise<void>;
+  // station-navigation's fly-to flow. focus centers + zooms a control point
+  // once the destination station hydrates.
+  readonly loadStation: (
+    id: string, prefetched?: ApiHydratedStation, focus?: CpFlightFocus | null,
+  ) => Promise<void>;
 }
 
 export function createStationPanels(opts: CreateStationPanelsOptions): StationPanels {

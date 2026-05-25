@@ -5,6 +5,9 @@ export const PITCH_LIMIT = Math.PI / 2 - 0.01;
 export const FOV_MIN = 2;
 export const FOV_MAX = 100;
 export const DEFAULT_FOV = 75;
+// Narrowed FOV used when the camera focuses on a single control point /
+// image measurement (deep-link focus, fly-to-CP landing).
+export const FOCUS_FOV_DEG = 25;
 
 // Atmospheric perspective. We override Three.js's default FogExp2 falloff
 // (`exp(-σ² · d²)`, stylistic) with Beer-Lambert (`exp(-σ · d)`, the actual

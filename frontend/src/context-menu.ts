@@ -22,7 +22,14 @@ export interface ContextMenuRadioGroup {
   readonly onChange: (value: string | null) => void;
 }
 
-export type ContextMenuItem = ContextMenuButtonItem | ContextMenuRadioGroup;
+// A non-interactive sub-header that groups the button items beneath it
+// (e.g. "Zoom to…" above a list of stations).
+export interface ContextMenuSection {
+  readonly kind: 'section';
+  readonly label: string;
+}
+
+export type ContextMenuItem = ContextMenuButtonItem | ContextMenuRadioGroup | ContextMenuSection;
 
 export interface ContextMenu {
   open(
@@ -30,14 +37,20 @@ export interface ContextMenu {
     header?: string, info?: readonly string[],
   ): void;
   close(): void;
+  // Monotonic counter bumped on every open()/close(). An async caller captures
+  // it after opening and bails if it changed before its late content (e.g. a
+  // fetched "Zoom to…" list) arrives — meaning the menu was closed or replaced.
+  generation(): number;
 }
 
 let radioGroupSeq = 0;
 
 export function createContextMenu(): ContextMenu {
   const el = getElement('context-menu');
+  let gen = 0;
 
   function close(): void {
+    gen++;
     el.hidden = true;
     el.replaceChildren();
   }
@@ -87,6 +100,7 @@ export function createContextMenu(): ContextMenu {
     x: number, y: number, items: readonly ContextMenuItem[],
     header?: string, info?: readonly string[],
   ): void {
+    gen++;
     el.replaceChildren();
     if (header !== undefined) {
       const h = document.createElement('div');
@@ -107,6 +121,13 @@ export function createContextMenu(): ContextMenu {
     for (const item of items) {
       if (item.kind === 'radio-group') {
         el.appendChild(renderRadioGroup(item));
+        continue;
+      }
+      if (item.kind === 'section') {
+        const sec = document.createElement('div');
+        sec.className = 'section';
+        sec.textContent = item.label;
+        el.appendChild(sec);
         continue;
       }
       const btn = document.createElement('button');
@@ -140,5 +161,5 @@ export function createContextMenu(): ContextMenu {
     if (!el.hidden && e.key === 'Escape') close();
   });
 
-  return { open, close };
+  return { open, close, generation: () => gen };
 }
