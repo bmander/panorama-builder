@@ -422,9 +422,16 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
     sync.flush();
     hydrateStationFields(data.station);
 
-    // Center the viewport on the mean of the station's photo directions.
-    const meanOrient = meanPhotoAzAlt(data.photos);
-    if (meanOrient) viewer.setAzAlt(meanOrient.az, meanOrient.alt);
+    // Center the viewport on the mean of the station's photo directions — but
+    // only on a fresh load. A fly landing arrives with prefetched dest data and
+    // its animation already positioned the camera (CP-centered for a focus
+    // fly); resetting to the mean here would make the camera visibly swing to
+    // the station's default view and back when the post-hydrate focus re-aims
+    // after the list fetch yields — the "blink" at the end of a fly-between.
+    if (!prefetched) {
+      const meanOrient = meanPhotoAzAlt(data.photos);
+      if (meanOrient) viewer.setAzAlt(meanOrient.az, meanOrient.alt);
+    }
 
     const loader = new THREE.TextureLoader();
     overlays.withBatch(() => {
