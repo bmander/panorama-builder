@@ -71,8 +71,11 @@ export interface CreateStationPanelsOptions {
   readonly onCpSurfaceMutated: () => void;
   readonly onCpSurfaceClose: () => void;
   // Forward-ref to the composition root's loadStation helper. Used by
-  // station-navigation's fly-to flow.
-  readonly loadStation: (id: string, prefetched?: ApiHydratedStation) => Promise<void>;
+  // station-navigation's fly-to flow. focusCpId focuses a control point once
+  // the destination station hydrates.
+  readonly loadStation: (
+    id: string, prefetched?: ApiHydratedStation, focusCpId?: string | null,
+  ) => Promise<void>;
 }
 
 export function createStationPanels(opts: CreateStationPanelsOptions): StationPanels {

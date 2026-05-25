@@ -4,10 +4,10 @@
 
 import * as api from './api.js';
 import { dirFromAzAlt } from './overlay.js';
-import { groundDistance, vecToAzAlt } from './geo.js';
-import { wrapPi } from './mathx.js';
+import { groundDistance, latLngToCameraRelativeMeters, vecToAzAlt } from './geo.js';
+import { clamp, degToRad, norm3, radToDeg, wrapPi } from './mathx.js';
 import type { Viewer } from './viewer.js';
-import { DEFAULT_FOV } from './viewer.js';
+import { DEFAULT_FOV, FOV_MAX, FOV_MIN } from './viewer.js';
 import type { TerrainView } from './terrain/index.js';
 import type { ControlPointColumns } from './map-poi-columns.js';
 import type { StationMarker } from './station-markers.js';
@@ -29,6 +29,39 @@ function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
+// Landing orientation + FOV for a fly-to-CP target. The orientation centers the
+// destination camera on the control point — the same view data-controller's
+// focusCameraOnControlPoint produces. The FOV is chosen so the CP keeps the
+// on-screen size (pixels per meter) it had from the source camera: with the
+// viewport height fixed, pixels/m at range d is H/(2·d·tan(fov/2)), so holding
+// it constant gives tan(fov_dst/2) = (d_src/d_dst)·tan(fov_src/2), where d_src /
+// d_dst are the source- and destination-camera ranges to the CP. Returns null
+// if the CP has no estimated 3D position (caller falls back to mean orientation).
+function planCpFocus(
+  dest: api.ApiHydratedStation, cpId: string,
+  src: { lat: number; lng: number; alt: number }, srcFov: number,
+): { az: number; alt: number; fov: number } | null {
+  const cp = dest.control_points.find(c => c.id === cpId);
+  if (cp?.est_lat == null || cp.est_lng == null || cp.est_alt == null) return null;
+  const cpLoc = { lat: cp.est_lat, lng: cp.est_lng };
+
+  const d = latLngToCameraRelativeMeters(cpLoc, { lat: dest.station.lat, lng: dest.station.lng });
+  const dy = cp.est_alt - dest.station.alt;
+  const { az, alt } = vecToAzAlt(d.x, dy, d.z);
+  const dDst = norm3(d.x, dy, d.z);
+
+  const s = latLngToCameraRelativeMeters(cpLoc, { lat: src.lat, lng: src.lng });
+  const dSrc = norm3(s.x, cp.est_alt - src.alt, s.z);
+
+  // Degenerate ranges (CP sitting on a camera) just keep the source FOV.
+  let fov = srcFov;
+  if (dDst > 1e-6 && dSrc > 1e-6) {
+    const fovRad = 2 * Math.atan((dSrc / dDst) * Math.tan(degToRad(srcFov) / 2));
+    fov = clamp(radToDeg(fovRad), FOV_MIN, FOV_MAX);
+  }
+  return { az, alt, fov };
+}
+
 export interface StationNavigationDeps {
   viewer: Viewer;
   terrain: TerrainView;
@@ -41,12 +74,16 @@ export interface StationNavigationDeps {
   setOtherStations: (stations: readonly StationMarker[]) => void;
   // Called at fly end (and on early-out paths) to swap the host's per-
   // station data to destId. Passing the prefetched dest lets the host
-  // skip its own getStation call — the fly already fetched it.
-  loadStation: (destId: string, prefetched?: api.ApiHydratedStation) => Promise<void>;
+  // skip its own getStation call — the fly already fetched it. focusCpId,
+  // when set, focuses the camera on that control point once the destination
+  // station finishes hydrating.
+  loadStation: (destId: string, prefetched?: api.ApiHydratedStation, focusCpId?: string | null) => Promise<void>;
 }
 
 export interface StationNavigation {
-  flyToStation: (destId: string) => Promise<void>;
+  // focusCpId: after landing, focus the camera on this control point in the
+  // destination station (used by the CP context menu's "Zoom to…" entries).
+  flyToStation: (destId: string, focusCpId?: string | null) => Promise<void>;
 }
 
 type Flight =
@@ -117,12 +154,14 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
     };
   }
 
-  async function fetchDestinationOrLoadDirect(destId: string): Promise<api.ApiHydratedStation | null> {
+  async function fetchDestinationOrLoadDirect(
+    destId: string, focusCpId: string | null,
+  ): Promise<api.ApiHydratedStation | null> {
     try {
       return await api.getStation(destId);
     } catch (err) {
       console.error('fly: dest fetch failed:', err);
-      await loadStation(destId);
+      await loadStation(destId, undefined, focusCpId);
       return null;
     }
   }
@@ -131,7 +170,9 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
     return getCurrentStationId() === flight.startStationId;
   }
 
-  function buildFlightPlan(flight: NormalFlight, dest: api.ApiHydratedStation): FlightPlan {
+  function buildFlightPlan(
+    flight: NormalFlight, dest: api.ApiHydratedStation, focusCpId: string | null,
+  ): FlightPlan {
     // Fly starts from the live camera (shift-wheel-driven override if any,
     // else the station anchor) but the *station leaves behind* is the
     // anchor — that's the dot that appears in the destination view.
@@ -141,14 +182,17 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
     const dst = { lat: dest.station.lat, lng: dest.station.lng, alt: dest.station.alt };
 
     const { azimuth: srcAz, altitude: srcAlt } = viewer.getAzAlt();
-    const dstOrient = meanPhotoAzAlt(dest.photos);
+    const srcFov = viewer.camera.fov;
+    // A fly-to-CP target lands centered on the control point at the FOV that
+    // keeps it the same on-screen size as before the flight, so it glides
+    // straight into the final view; otherwise center on the station's mean
+    // photo orientation at DEFAULT_FOV.
+    const focus = focusCpId ? planCpFocus(dest, focusCpId, src, srcFov) : null;
+    const dstOrient = focus ?? meanPhotoAzAlt(dest.photos);
     const dstAz = dstOrient?.az ?? srcAz;
     const dstAlt = dstOrient?.alt ?? srcAlt;
     const azDelta = wrapPi(dstAz - srcAz);
-    // FOV: tween toward DEFAULT_FOV — the post-fly reload re-creates the
-    // viewer at that value, so landing there avoids a snap-zoom on reload.
-    const srcFov = viewer.camera.fov;
-    const dstFov = DEFAULT_FOV;
+    const dstFov = focus ? focus.fov : DEFAULT_FOV;
 
     const distM = groundDistance(src, dst);
     const durationMs = Math.min(4000, Math.max(1000, distM * 3));
@@ -214,12 +258,14 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
     });
   }
 
-  async function finishFlight(destId: string, dest: api.ApiHydratedStation): Promise<void> {
+  async function finishFlight(
+    destId: string, dest: api.ApiHydratedStation, focusCpId: string | null,
+  ): Promise<void> {
     // Hide before reset so source panes don't snap to origin for one
     // frame before clearStationData removes them.
     viewer.overlaysGroup.visible = false;
     viewer.overlaysGroup.position.set(0, 0, 0);
-    await loadStation(destId, dest);
+    await loadStation(destId, dest, focusCpId);
   }
 
   function restoreFlightScene(): void {
@@ -229,30 +275,30 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
     photoPreviews.clear();
   }
 
-  async function flyToStation(destId: string): Promise<void> {
+  async function flyToStation(destId: string, focusCpId: string | null = null): Promise<void> {
     if (!beginFlight()) return;
 
     const flight = captureFlightStart(destId);
     if (flight.kind === 'direct-load') {
-      try { await loadStation(destId); }
+      try { await loadStation(destId, undefined, focusCpId); }
       finally { endFlight(); }
       return;
     }
 
     try {
-      const dest = await fetchDestinationOrLoadDirect(destId);
+      const dest = await fetchDestinationOrLoadDirect(destId, focusCpId);
       if (!dest) return;
 
       if (!isFlightStillCurrent(flight)) return;
 
-      const plan = buildFlightPlan(flight, dest);
+      const plan = buildFlightPlan(flight, dest, focusCpId);
       prepareFlightScene(flight, dest);
 
       await animateFlight(plan);
 
       if (!isFlightStillCurrent(flight)) return;
 
-      await finishFlight(destId, dest);
+      await finishFlight(destId, dest, focusCpId);
     } finally {
       restoreFlightScene();
       endFlight();

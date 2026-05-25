@@ -22,7 +22,14 @@ export interface ContextMenuRadioGroup {
   readonly onChange: (value: string | null) => void;
 }
 
-export type ContextMenuItem = ContextMenuButtonItem | ContextMenuRadioGroup;
+// A non-interactive sub-header that groups the button items beneath it
+// (e.g. "Zoom to…" above a list of stations).
+export interface ContextMenuSection {
+  readonly kind: 'section';
+  readonly label: string;
+}
+
+export type ContextMenuItem = ContextMenuButtonItem | ContextMenuRadioGroup | ContextMenuSection;
 
 export interface ContextMenu {
   open(
@@ -107,6 +114,13 @@ export function createContextMenu(): ContextMenu {
     for (const item of items) {
       if (item.kind === 'radio-group') {
         el.appendChild(renderRadioGroup(item));
+        continue;
+      }
+      if (item.kind === 'section') {
+        const sec = document.createElement('div');
+        sec.className = 'section';
+        sec.textContent = item.label;
+        el.appendChild(sec);
         continue;
       }
       const btn = document.createElement('button');

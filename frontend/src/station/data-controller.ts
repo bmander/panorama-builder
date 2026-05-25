@@ -24,10 +24,9 @@ import type { OrchestrationHandlers } from '../handlers.js';
 import type { ControlPointColumn } from '../map-poi-columns.js';
 import type { ObservationRay } from '../observation-rays.js';
 import type { StationMarker } from '../station-markers.js';
+import { FOCUS_FOV_DEG } from '../viewer.js';
 import type { StationScene } from './scene.js';
 import type { StationRouteState } from './route-state.js';
-
-const FOCUS_FOV_DEG = 25;
 
 // Per-station cp_observation status, indexed by control_point_id. Drives
 // both the visibility filter (non-`present` hides the marker) and POST vs
@@ -89,6 +88,11 @@ export interface StationDataController {
   // Per-CP observation status at this station; null when no row exists.
   getCpObservationStatus(cpId: string): api.ApiCpObservationStatus | null;
 
+  // Distinct *other* stations whose image measurements link to this CP — the
+  // "Zoom to…" targets in the CP context menu. Derived from the already-
+  // hydrated other-camera data; empty until that batch finishes loading.
+  getOtherStationsObservingCp(cpId: string): readonly { id: string; name: string | null }[];
+
   // Other-stations setter (used by station-navigation's fly post-update path).
   setOtherStations(stations: readonly StationMarker[]): void;
 
@@ -124,7 +128,7 @@ export interface StationDataController {
   rehydrateAfterSolve(): Promise<void>;
 
   // Boot-time camera focus
-  focusCameraOnControlPoint(id: string): boolean;
+  focusCameraOnControlPoint(id: string, fovDeg?: number): boolean;
   focusCameraOnImageMeasurement(id: string): boolean;
 }
 
@@ -360,7 +364,10 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
     return true;
   }
 
-  function focusCameraOnControlPoint(id: string): boolean {
+  // fovDeg, when given, sets the FOV (the deep-link focus passes FOCUS_FOV_DEG);
+  // omitting it leaves FOV untouched so a fly-to-CP landing keeps the size-
+  // matched FOV the flight already tweened to.
+  function focusCameraOnControlPoint(id: string, fovDeg?: number): boolean {
     const cp = overlays.controlPoints.getById(id);
     if (cp?.estLat == null || cp.estLng == null || cp.estAlt == null) return false;
     const pose = worldCamera.getPose();
@@ -369,7 +376,7 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
     const y = cp.estAlt - pose.altitudeMSL;
     const { az, alt } = vecToAzAlt(x, y, z);
     viewer.setAzAlt(az, alt);
-    viewer.setFov(FOCUS_FOV_DEG);
+    if (fovDeg !== undefined) viewer.setFov(fovDeg);
     return true;
   }
 
@@ -516,11 +523,20 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
         .filter(st => st.id !== id)
         .map(st => ({ id: st.id, name: st.name, anchor: { lat: st.lat, lng: st.lng }, altitude: st.alt }));
       refreshControlPointColumns();
-      void Promise.all(otherStations.map(s => api.getStation(s.id)))
-        .then(hydrated => {
+      // allSettled, not all: with dozens of stations this fans out dozens of
+      // concurrent getStation calls, and a single transient failure under that
+      // load would otherwise reject the whole batch — blanking otherCameras and
+      // making the CP "Zoom to…" list vanish. Skip the failures, keep the rest.
+      void Promise.allSettled(otherStations.map(s => api.getStation(s.id)))
+        .then(results => {
           if (id !== route.getStationId()) return;
           const cams: OtherCamera[] = [];
-          for (const d of hydrated) {
+          for (const res of results) {
+            if (res.status !== 'fulfilled') {
+              console.error('fetch other-station photos failed:', res.reason);
+              continue;
+            }
+            const d = res.value;
             const measByPhotoId = new Map<string, OtherCameraMeasurement[]>();
             for (const im of d.image_measurements) {
               const arr = measByPhotoId.get(im.photo_id) ?? [];
@@ -541,7 +557,7 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
           otherCameras = cams;
           refreshControlPointColumns();
         })
-        .catch((err: unknown) => { console.error('fetch other-station photos failed:', err); });
+        .catch((err: unknown) => { console.error('build other-station cameras failed:', err); });
     } else {
       console.error('list stations failed:', stationsRes.reason);
     }
@@ -649,6 +665,16 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
     postCpObservation,
     deleteCpObservation,
     getCpObservationStatus: (cpId: string) => cpObservationByCp.get(cpId)?.status ?? null,
+    getOtherStationsObservingCp: (cpId: string) => {
+      const seen = new Set<string>();
+      for (const cam of otherCameras) {
+        if (cam.measurements.some(m => m.controlPointId === cpId)) seen.add(cam.stationId);
+      }
+      const nameById = new Map(otherStations.map(s => [s.id, s.name]));
+      return [...seen]
+        .map(id => ({ id, name: nameById.get(id) ?? null }))
+        .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''));
+    },
     setOtherStations: (s) => { otherStations = [...s]; },
     setShowUncitedCPs: (v) => {
       if (v === showUncitedCPs) return;

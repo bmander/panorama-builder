@@ -173,9 +173,18 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
     }
     const stationObserves = ownMeasurements.length > 0;
     const selected = stationObserves ? 'present' : data.getCpObservationStatus(cpId);
-    const items: ContextMenuItem[] = [
-      { label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } },
-    ];
+    const items: ContextMenuItem[] = [];
+    // Other stations that observe this CP — clicking flies there and lands
+    // focused on the same point.
+    const observingStations = data.getOtherStationsObservingCp(cpId);
+    if (observingStations.length > 0) {
+      items.push({ kind: 'section', label: 'Zoom to…' });
+      for (const st of observingStations) {
+        const label = st.name ?? `Untitled ${st.id.slice(0, 6)}`;
+        items.push({ label, onClick: () => { void panels.stationNavigation.flyToStation(st.id, cpId); } });
+      }
+    }
+    items.push({ label: 'View control point →', onClick: () => { location.assign(cpHref(cpId)); } });
     if (editingActive()) {
       items.push({
         kind: 'radio-group',

@@ -4,6 +4,7 @@
 
 import type { ApiHydratedStation } from './api.js';
 import { getElement } from './types.js';
+import { FOCUS_FOV_DEG } from './viewer.js';
 import { createStationScene } from './station/scene.js';
 import { createStationRouteState } from './station/route-state.js';
 import { createStationDataController } from './station/data-controller.js';
@@ -71,7 +72,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     const focusedCpId = route.getFocusedCpId();
     const focusImageMeasurementId = route.consumeFocusImageMeasurementId();
     if (focusedCpId) {
-      if (!data.focusCameraOnControlPoint(focusedCpId)) {
+      if (!data.focusCameraOnControlPoint(focusedCpId, FOCUS_FOV_DEG)) {
         console.warn('focus control point not resolvable:', focusedCpId);
       }
     } else if (focusImageMeasurementId && !data.focusCameraOnImageMeasurement(focusImageMeasurementId)) {
@@ -106,17 +107,31 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     });
   }
 
-  async function applyStation(newId: string, prefetched?: ApiHydratedStation): Promise<void> {
+  async function applyStation(
+    newId: string, prefetched?: ApiHydratedStation, focusCpId?: string | null,
+  ): Promise<void> {
     if (newId === route.getStationId()) return;
     route.clearFocusedCpId();
     route.setStationId(newId);
     clearStationData();
-    await data.load(newId, prefetched);
+    // focusCpId (a fly-to-station "Zoom to…" target) re-centers the camera on
+    // that CP once hydrated — hydrate resets orientation to the mean photo
+    // direction, so this restores the CP-centered look. No FOV arg: the flight
+    // already tweened to the size-matched FOV and we keep it. Runs before
+    // applyCameraFromURL, but the clean /world?sta=<id> URL carries no camera
+    // params so the focus survives.
+    await data.load(newId, prefetched, focusCpId ? () => {
+      if (!data.focusCameraOnControlPoint(focusCpId)) {
+        console.warn('focus control point not resolvable:', focusCpId);
+      }
+    } : undefined);
   }
 
-  async function loadStation(newId: string, prefetched?: ApiHydratedStation): Promise<void> {
+  async function loadStation(
+    newId: string, prefetched?: ApiHydratedStation, focusCpId?: string | null,
+  ): Promise<void> {
     if (newId !== route.getStationId()) route.pushStationToHistory(newId);
-    await applyStation(newId, prefetched);
+    await applyStation(newId, prefetched, focusCpId);
   }
 
   function clearStationData(): void {
