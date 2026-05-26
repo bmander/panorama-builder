@@ -195,8 +195,8 @@
         <label class="settings-check" title="When checked, the solver leaves this station's lat and lng untouched. Joint mode needs ≥2 stations locked to fix the gauge."><input type="checkbox" id="station-lock-pos"> lock location</label>
       </div>
       <div class="settings-row station-pos">
-        <label class="settings-inline" title="Camera elevation in metres above mean sea level.">alt <input type="number" id="station-alt" step="0.1"> m MSL</label>
-        <label class="settings-check" title="When checked, the solver treats this station's elevation (metres above mean sea level) as a fixed input."><input type="checkbox" id="station-lock-alt"> lock elevation</label>
+        <label class="settings-inline" title="Camera elevation in feet above mean sea level.">alt <input type="number" id="station-alt" step="1"> ft MSL</label>
+        <label class="settings-check" title="When checked, the solver treats this station's elevation (feet above mean sea level) as a fixed input."><input type="checkbox" id="station-lock-alt"> lock elevation</label>
       </div>
       <div class="settings-row station-pos">
         <label class="settings-inline" title="When the photographer's camera was set up at this site. Leave blank if unknown — the estimate below shows what the observation graph implies.">captured at <input type="datetime-local" id="station-captured-at" step="60"></label>
@@ -333,7 +333,7 @@
     </div>
     <label class="settings-check"><input type="checkbox" id="curvature-toggle" checked> Earth curvature</label>
     <label class="settings-check"><input type="checkbox" id="refraction-toggle" checked> Atmospheric refraction</label>
-    <label class="settings-inline" title="Hide control points farther than this from the camera. Observed CPs always show."><input type="number" id="cp-max-distance" min="0" step="100" placeholder="no limit"> Max CP distance (m)</label>
+    <label class="settings-inline" title="Hide control points farther than this from the camera. Observed CPs always show."><input type="number" id="cp-max-distance" min="0" step="100" placeholder="no limit"> Max CP distance (ft)</label>
   </div>
   <div id="hud"></div>
   <div id="save-error" hidden>

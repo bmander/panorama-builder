@@ -13,7 +13,7 @@ import { findSunDateTimeCandidates, type SunDateTimeCandidate } from './solar.js
 import { latLngToCameraRelativeMeters, vecToAzAlt } from './geo.js';
 import { radToDeg, wrap2Pi } from './mathx.js';
 import { attachDrag } from './dialog.js';
-import { cpLabel, getElement, type ControlPointView, type LatLng } from './types.js';
+import { cpLabel, getElement, metersToFeet, type ControlPointView, type LatLng } from './types.js';
 
 export type SundialPickField = 'gnomon' | 'shadow';
 
@@ -101,7 +101,7 @@ export function createSundialModal(opts: CreateSundialModalOptions): SundialModa
   }
   function describeShadow(): string {
     if (shadow === null) return 'not set';
-    return `${shadow.latlng.lat.toFixed(6)}, ${shadow.latlng.lng.toFixed(6)} · ${shadow.altitude.toFixed(2)} m`;
+    return `${shadow.latlng.lat.toFixed(6)}, ${shadow.latlng.lng.toFixed(6)} · ${metersToFeet(shadow.altitude).toFixed(0)} ft`;
   }
 
   // Explicit field options (not dateStyle/timeStyle) because Safari rejects

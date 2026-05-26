@@ -4,9 +4,9 @@ import { createSessionPanel } from './session-panel.js';
 import { bindDisabledToSession, editingActive, sessionStore } from './session-store.js';
 import {
   appendSigmaMeters, appendSigmaScalar, cpLabel,
-  createInconsistencyDetails, fmtAlt, fmtSigmaMeters,
+  createInconsistencyDetails, feetToMeters, fmtAlt, fmtSigmaMeters,
   formatImpreciseDate, formatLocalDateTime, getElement,
-  indexCpHref, makeListCell, nullableIntervalOverlapsRange,
+  indexCpHref, makeListCell, metersToFeet, nullableIntervalOverlapsRange,
   stationHref, stationLabel,
 } from './types.js';
 import {
@@ -234,18 +234,19 @@ function attachAltEditor(cp: api.ApiControlPoint, host: HTMLElement): () => void
     host,
     read: () => cp.est_alt,
     render: renderText,
+    // Field is in feet (backend stores metres).
     makeInput: (cur) => {
       const el = document.createElement('input');
       el.type = 'number';
       el.className = 'num-edit';
       el.step = 'any';
-      if (cur !== null) el.value = String(cur);
+      if (cur !== null) el.value = metersToFeet(cur).toFixed(1);
       return el;
     },
     parse: (el) => {
       if (el.value.trim() === '') return null;
       const n = parseFloat(el.value);
-      return Number.isFinite(n) ? n : cp.est_alt;
+      return Number.isFinite(n) ? feetToMeters(n) : cp.est_alt;
     },
     save: async (next) => {
       const updated = await api.updateControlPoint(cp.id, { est_alt: next });

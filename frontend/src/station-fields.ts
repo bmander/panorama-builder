@@ -11,8 +11,8 @@
 
 import * as api from './api.js';
 import {
-  createInconsistencyDetails, createSigmaSpan, fmtSigmaMeters,
-  formatEstimateRange, formatLocalDateTime, getElement,
+  createInconsistencyDetails, createSigmaSpan, feetToMeters, fmtSigmaMeters,
+  formatEstimateRange, formatLocalDateTime, getElement, metersToFeet,
   sigmaSeverityClass, syncInputValue,
   updateSigma, worstHorizontalSigma,
 } from './types.js';
@@ -68,7 +68,10 @@ export interface CreateStationFieldsOptions {
   getStationAutoLock: () => StationAutoLock;
 }
 
-const fieldDigits = (key: 'lat' | 'lng' | 'alt'): number => key === 'alt' ? 2 : 6;
+const COORD_DIGITS = 6;
+// The alt field is shown/edited in feet (backend stores metres); 1 dp is
+// plenty for a height readout.
+const ALT_FEET_DIGITS = 1;
 
 export function createStationFields(opts: CreateStationFieldsOptions): StationFieldsHandle {
   const { getCurrentStationId, onAltitudeChanged, onLocationChanged, getStationAutoLock } = opts;
@@ -161,9 +164,9 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
 
   function render(): void {
     if (!cache) return;
-    syncInputValue(latEl, cache.lat.toFixed(fieldDigits('lat')));
-    syncInputValue(lngEl, cache.lng.toFixed(fieldDigits('lng')));
-    syncInputValue(altEl, cache.alt.toFixed(fieldDigits('alt')));
+    syncInputValue(latEl, cache.lat.toFixed(COORD_DIGITS));
+    syncInputValue(lngEl, cache.lng.toFixed(COORD_DIGITS));
+    syncInputValue(altEl, metersToFeet(cache.alt).toFixed(ALT_FEET_DIGITS));
     if (document.activeElement !== capturedAtEl) renderCapturedAt();
     // The combined position toggle is the AND of the per-axis flags — if
     // only lat OR only lng is auto-locked the user still has no useful
@@ -219,8 +222,17 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
     }
     // Compare at the displayed precision — otherwise re-typing the rounded
     // value would silently truncate the server's higher-precision number.
-    const digits = fieldDigits(key);
-    if (cache[key].toFixed(digits) === n.toFixed(digits)) {
+    // The alt field is in feet; compare in feet, then convert back to metres
+    // for the patch.
+    if (key === 'alt') {
+      if (metersToFeet(cache.alt).toFixed(ALT_FEET_DIGITS) === n.toFixed(ALT_FEET_DIGITS)) {
+        render();
+        return;
+      }
+      void putPatch({ alt: feetToMeters(n) });
+      return;
+    }
+    if (cache[key].toFixed(COORD_DIGITS) === n.toFixed(COORD_DIGITS)) {
       render();
       return;
     }

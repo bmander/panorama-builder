@@ -1,4 +1,4 @@
-import { getElement } from './types.js';
+import { getElement, metersToFeet } from './types.js';
 import type { AzAltSnapshot } from './types.js';
 import type { Baker } from './bake.js';
 import { radToDeg } from './mathx.js';
@@ -27,7 +27,7 @@ export function createHud(getSnapshot: () => AzAltSnapshot): Hud {
   const el = getElement('hud');
   function refresh(): void {
     const s = getSnapshot();
-    let text = `azimuth ${deg(s.azimuth)}°  altitude ${deg(s.altitude)}°  fov ${s.fov.toFixed(1)}°  elev ${s.cameraMSL.toFixed(1)} m MSL (${s.cameraHeightAboveGround.toFixed(1)} m AGL)`;
+    let text = `azimuth ${deg(s.azimuth)}°  altitude ${deg(s.altitude)}°  fov ${s.fov.toFixed(1)}°  elev ${metersToFeet(s.cameraMSL).toFixed(0)} ft MSL (${metersToFeet(s.cameraHeightAboveGround).toFixed(0)} ft AGL)`;
     if (s.selectedSizeRad != null) text += `  selected ${deg(s.selectedSizeRad)}°`;
     if (s.selectedRadPerPixel != null) text += `  ${formatDms(s.selectedRadPerPixel)}/px`;
     el.textContent = text;

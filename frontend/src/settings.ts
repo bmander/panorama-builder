@@ -10,7 +10,7 @@ import { HAZE_DENSITY_MAX } from './viewer.js';
 import { solarAzAlt } from './solar.js';
 import { setCurvatureEnabled, setRefractionEnabled } from './curvature.js';
 import { attachDrag } from './dialog.js';
-import { formatLocalDateTime, getElement } from './types.js';
+import { feetToMeters, formatLocalDateTime, getElement } from './types.js';
 import type { LatLng } from './types.js';
 import type { Viewer } from './viewer.js';
 import type { TerrainView } from './terrain/index.js';
@@ -154,9 +154,10 @@ export function createSettingsPanel({
   });
 
   // 'input' (not 'change') so the cutoff updates live as the user types.
+  // Field is in feet; the filter compares against ground distance in metres.
   cpMaxDistanceEl.addEventListener('input', () => {
-    const n = parseFloat(cpMaxDistanceEl.value);
-    onCpMaxDistanceChange(Number.isFinite(n) && n > 0 ? n : null);
+    const ft = parseFloat(cpMaxDistanceEl.value);
+    onCpMaxDistanceChange(Number.isFinite(ft) && ft > 0 ? feetToMeters(ft) : null);
   });
 
   return {

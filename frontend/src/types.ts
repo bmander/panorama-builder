@@ -442,8 +442,15 @@ export function fmtCpLatLng(lat: number | null, lng: number | null): string {
   return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 }
 
+// Linear units are stored and exchanged with the backend in metres, but the
+// UI shows feet. Convert only at the display / input boundary — geometry,
+// terrain, and the API stay metric.
+export const FEET_PER_METER = 3.280839895;
+export const metersToFeet = (m: number): number => m * FEET_PER_METER;
+export const feetToMeters = (ft: number): number => ft / FEET_PER_METER;
+
 export function fmtAlt(alt: number | null): string {
-  return alt === null ? '—' : `${alt.toFixed(1)} m`;
+  return alt === null ? '—' : `${metersToFeet(alt).toFixed(0)} ft`;
 }
 
 // Display label for a CP — the description, or "(unnamed)" if blank.
