@@ -22,6 +22,10 @@ import (
 const (
 	blobDir    = "blobs"
 	previewDir = "previews"
+	// ogDir holds generated social-card crops, keyed by a sha256 of the
+	// request params + source blob hash (not the source hash itself, so it
+	// can't collide with a real blob/preview). See og_preview.go.
+	ogDir = "og"
 )
 
 var blobHashRegexp = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -49,6 +53,12 @@ type blobStore interface {
 	// openPreviewByHash opens previews/<hash>, or returns os.ErrNotExist if
 	// the preview has not been generated yet.
 	openPreviewByHash(ctx context.Context, hash string) (blobReader, error)
+	// writeOg stores a generated social-card JPEG at og/<key>, where key is
+	// the sha256 hex of the request params + source blob hash.
+	writeOg(ctx context.Context, key string, r io.Reader) error
+	// openOgByHash opens og/<key>, or returns os.ErrNotExist if the card has
+	// not been generated yet.
+	openOgByHash(ctx context.Context, key string) (blobReader, error)
 	// openByPath opens a blob by its stored relative path. Accepts the
 	// content-addressed "blobs/<hash>" and the legacy "photos/<id>" forms;
 	// anything else is rejected as not-exist (path-traversal defense).
@@ -88,7 +98,7 @@ type diskBlobStore struct {
 }
 
 func newDiskBlobStore(root string) (*diskBlobStore, error) {
-	for _, sub := range []string{blobDir, previewDir, "tmp"} {
+	for _, sub := range []string{blobDir, previewDir, ogDir, "tmp"} {
 		if err := os.MkdirAll(filepath.Join(root, sub), 0o755); err != nil {
 			return nil, fmt.Errorf("mkdir storage/%s: %w", sub, err)
 		}
@@ -146,6 +156,33 @@ func (b *diskBlobStore) writePreview(_ context.Context, hash string, r io.Reader
 		return err
 	}
 	return nil
+}
+
+func (b *diskBlobStore) writeOg(_ context.Context, key string, r io.Reader) error {
+	tmp, err := os.CreateTemp(filepath.Join(b.root, "tmp"), "og-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	_, copyErr := io.Copy(tmp, r)
+	closeErr := tmp.Close()
+	err = copyErr
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if _, err := b.placeAt(ogDir, tmpPath, key); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return nil
+}
+
+func (b *diskBlobStore) openOgByHash(_ context.Context, key string) (blobReader, error) {
+	return b.openAt(ogDir, key)
 }
 
 // placeAt moves src to <subdir>/<hash>, or removes src if the destination

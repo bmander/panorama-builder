@@ -118,6 +118,17 @@ func (b *gcsBlobStore) upload(ctx context.Context, objName string, r io.Reader, 
 	return w.Close()
 }
 
+func (b *gcsBlobStore) writeOg(ctx context.Context, key string, r io.Reader) error {
+	return b.upload(ctx, ogDir+"/"+key, r, "image/jpeg")
+}
+
+func (b *gcsBlobStore) openOgByHash(ctx context.Context, key string) (blobReader, error) {
+	if !blobHashRegexp.MatchString(key) {
+		return nil, os.ErrNotExist
+	}
+	return b.read(ctx, ogDir+"/"+key)
+}
+
 func (b *gcsBlobStore) openByHash(ctx context.Context, hash string) (blobReader, error) {
 	if !blobHashRegexp.MatchString(hash) {
 		return nil, os.ErrNotExist

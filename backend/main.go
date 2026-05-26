@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -15,11 +16,15 @@ import (
 )
 
 type Server struct {
-	db             *pgxpool.Pool
-	blobs          blobStore
-	solver         *solverClient
-	staticDir      string
-	allowedOrigin  string
+	db            *pgxpool.Pool
+	blobs         blobStore
+	solver        *solverClient
+	staticDir     string
+	allowedOrigin string
+	// publicBaseURL is the absolute origin (e.g. https://viewfinder.bmander.com)
+	// used to build absolute og:image / og:url for social-card crawlers. Empty
+	// → derive from the request Host + X-Forwarded-Proto. See og_world.go.
+	publicBaseURL  string
 	maxBlobBytes   int64
 	maxImagePixels int64
 	limiter        *limiter
@@ -48,6 +53,7 @@ func main() {
 	solverURL := envDefault("SOLVER_URL", "http://localhost:8081")
 	staticDir := envDefault("STATIC_DIR", "../frontend/dist")
 	allowedOrigin := envDefault("ALLOWED_ORIGIN", "*")
+	publicBaseURL := strings.TrimRight(envDefault("PUBLIC_BASE_URL", ""), "/")
 	maxBlobBytes := envInt64("MAX_BLOB_BYTES", 25_000_000)
 	maxMegapixels := envInt64("MAX_IMAGE_MEGAPIXELS", 50)
 	if maxMegapixels < 1 {
@@ -91,6 +97,7 @@ func main() {
 		solver:         solver,
 		staticDir:      staticDir,
 		allowedOrigin:  allowedOrigin,
+		publicBaseURL:  publicBaseURL,
 		maxBlobBytes:   maxBlobBytes,
 		maxImagePixels: maxImagePixels,
 		limiter:        newLimiter(readPerMin, writePerMin, trustedProxyHops),

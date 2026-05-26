@@ -32,6 +32,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/blobs/{hash}", s.getBlob)
 	mux.HandleFunc("GET /api/blobs/{hash}/preview", s.getBlobPreview)
 
+	// Dynamic social-card image for /world deep links (read-only; no session).
+	mux.HandleFunc("GET /og/preview.jpg", s.getOgPreview)
+
 	mux.HandleFunc("POST /api/photos/{id}/image-measurements", s.postImageMeasurement)
 	mux.HandleFunc("PUT /api/image-measurements/{id}", s.putImageMeasurement)
 	mux.HandleFunc("DELETE /api/image-measurements/{id}", s.deleteImageMeasurement)
@@ -124,6 +127,12 @@ func (s *Server) spaFallback(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-cache")
 		}
 		http.ServeFile(w, r, full)
+		return
+	}
+	// The world viewer injects per-link og/twitter tags so social crawlers
+	// preview the photo region the deep link points at.
+	if clean == "/world" || clean == "/world/" {
+		s.serveWorldHTML(w, r)
 		return
 	}
 	// Control-point listing lives at /cp; detail pages at /cp/<id>. The
