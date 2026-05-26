@@ -703,6 +703,38 @@ type HydratedStation struct {
 	Station           Station            `json:"station"`
 }
 
+// HydratedWorld Everything the /world scene needs for a single focus station, in one
+// request — replacing an N+1 fan-out of GET /stations/{id} (one per
+// station) plus the four global list reads. The focus station's full
+// photos/measurements are partitioned out client-side by station_id;
+// all other stations' photos supply the frustum cones and observation
+// rays. Honors X-Session-Id, applying the session overlay to every set.
+type HydratedWorld struct {
+	// ControlPoints All control points.
+	ControlPoints []ControlPoint `json:"control_points"`
+
+	// CpConstraints All control-point constraints.
+	CpConstraints []CPConstraint `json:"cp_constraints"`
+
+	// CpObservations Per-CP observation status rows for the focus station only.
+	CpObservations []CpObservation `json:"cp_observations"`
+
+	// CpSurfaces All control-point surfaces.
+	CpSurfaces []CPSurface `json:"cp_surfaces"`
+
+	// ImageMeasurements Every image measurement across all stations.
+	ImageMeasurements []ImageMeasurement `json:"image_measurements"`
+
+	// Photos Every photo across all stations.
+	Photos []Photo `json:"photos"`
+
+	// Station The focus station row (overlay-applied). 404 if absent.
+	Station Station `json:"station"`
+
+	// Stations Every station (includes the focus; the client filters it out).
+	Stations []Station `json:"stations"`
+}
+
 // ID 13-character base32 server-assigned id
 type ID = string
 

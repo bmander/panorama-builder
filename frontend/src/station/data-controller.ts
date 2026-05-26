@@ -10,7 +10,7 @@
 
 import * as THREE from 'three';
 import * as api from '../api.js';
-import type { ApiControlPoint, ApiHydratedStation } from '../api.js';
+import type { ApiControlPoint, ApiHydratedWorld } from '../api.js';
 import { cpLifespanFromApi, isExtantAt } from '../types.js';
 import type { CPConstraintView, CPSurfaceView, ControlPointView, LatLng } from '../types.js';
 import { dirFromAzAlt } from '../overlay.js';
@@ -119,7 +119,7 @@ export interface StationDataController {
   // camera on a deep-linked CP/measurement before URL params override), then
   // applies URL camera + markLoaded. Returns early without applying camera /
   // markLoaded if the user navigated away during the hydrate fetch.
-  load(id: string, prefetched?: ApiHydratedStation, onPostHydrate?: () => void): Promise<void>;
+  load(id: string, prefetched?: ApiHydratedWorld, onPostHydrate?: () => void): Promise<void>;
   rehydrateAfterSolve(): Promise<void>;
 
   // Boot-time camera focus
@@ -448,13 +448,41 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
     worldCamera.clear();
   }
 
-  async function hydrateFromAPI(id: string, prefetched?: ApiHydratedStation): Promise<void> {
-    let data: ApiHydratedStation;
+  // Every other station's photos as frustum-cone / observation-ray sources,
+  // built from the single world payload — replacing the per-station getStation
+  // fan-out. Photos whose station is missing from the payload are skipped.
+  function buildOtherCameras(world: ApiHydratedWorld, focusId: string): OtherCamera[] {
+    const stationById = new Map(world.stations.map(st => [st.id, st]));
+    const measByPhotoId = new Map<string, OtherCameraMeasurement[]>();
+    for (const im of world.image_measurements) {
+      const arr = measByPhotoId.get(im.photo_id) ?? [];
+      arr.push({ id: im.id, u: im.u, v: im.v, controlPointId: im.control_point_id });
+      measByPhotoId.set(im.photo_id, arr);
+    }
+    const cams: OtherCamera[] = [];
+    for (const p of world.photos) {
+      if (p.station_id === focusId) continue;
+      const st = stationById.get(p.station_id);
+      if (!st) continue;
+      cams.push({
+        stationId: p.station_id,
+        photoId: p.id,
+        fromLat: st.lat, fromLng: st.lng, fromAlt: st.alt,
+        photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
+        sizeRad: p.size_rad, aspect: p.aspect,
+        measurements: measByPhotoId.get(p.id) ?? [],
+      });
+    }
+    return cams;
+  }
+
+  async function hydrateFromAPI(id: string, prefetched?: ApiHydratedWorld): Promise<void> {
+    let world: ApiHydratedWorld;
     if (prefetched) {
-      data = prefetched;
+      world = prefetched;
     } else {
       try {
-        data = await api.getStation(id);
+        world = await api.getWorld(id);
       } catch (err) {
         console.error('hydrate failed:', err);
         alert('Could not load this station.');
@@ -462,6 +490,7 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
       }
       if (id !== route.getStationId()) return;  // user navigated away during fetch
     }
+    const data = api.focusStationFromWorld(world, id);
     const loc: LatLng = { lat: data.station.lat, lng: data.station.lng };
     // Anchor pose up front so subsequent reads see current values. Terrain
     // setLocation is deferred to the end of hydrate so DEM/imagery tile
@@ -542,77 +571,19 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
       }
     });
 
-    const [cpsRes, stationsRes, consRes, surfRes] = await Promise.allSettled([
-      api.listControlPoints(),
-      api.listStations(),
-      api.listCPConstraints(),
-      api.listCPSurfaces(),
-    ]);
-    if (id !== route.getStationId()) return;
-    overlays.withBatch(() => {
-      if (cpsRes.status === 'fulfilled') {
-        for (const cp of cpsRes.value) registerControlPoint(cp);
-      } else {
-        console.error('list control points failed:', cpsRes.reason);
-      }
-    });
-    if (consRes.status === 'fulfilled') {
-      cpConstraints = consRes.value.map(mapApiCPConstraint);
-    } else {
-      console.error('list cp constraints failed:', consRes.reason);
-      cpConstraints = [];
-    }
-    if (surfRes.status === 'fulfilled') {
-      cpSurfaces = surfRes.value.map(mapApiCPSurface);
-    } else {
-      console.error('list cp surfaces failed:', surfRes.reason);
-      cpSurfaces = [];
-    }
-    if (stationsRes.status === 'fulfilled') {
-      otherStations = stationsRes.value
-        .filter(st => st.id !== id)
-        .map(st => ({ id: st.id, name: st.name, anchor: { lat: st.lat, lng: st.lng }, altitude: st.alt }));
-      refreshControlPointColumns();
-      // allSettled, not all: with dozens of stations this fans out dozens of
-      // concurrent getStation calls, and a single transient failure under that
-      // load would otherwise reject the whole batch — blanking otherCameras and
-      // making the CP "View from…" list vanish. Skip the failures, keep the rest.
-      void Promise.allSettled(otherStations.map(s => api.getStation(s.id)))
-        .then(results => {
-          if (id !== route.getStationId()) return;
-          const cams: OtherCamera[] = [];
-          for (const res of results) {
-            if (res.status !== 'fulfilled') {
-              console.error('fetch other-station photos failed:', res.reason);
-              continue;
-            }
-            const d = res.value;
-            const measByPhotoId = new Map<string, OtherCameraMeasurement[]>();
-            for (const im of d.image_measurements) {
-              const arr = measByPhotoId.get(im.photo_id) ?? [];
-              arr.push({ id: im.id, u: im.u, v: im.v, controlPointId: im.control_point_id });
-              measByPhotoId.set(im.photo_id, arr);
-            }
-            for (const p of d.photos) {
-              cams.push({
-                stationId: d.station.id,
-                photoId: p.id,
-                fromLat: d.station.lat, fromLng: d.station.lng, fromAlt: d.station.alt,
-                photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
-                sizeRad: p.size_rad, aspect: p.aspect,
-                measurements: measByPhotoId.get(p.id) ?? [],
-              });
-            }
-          }
-          otherCameras = cams;
-          refreshControlPointColumns();
-        })
-        .catch((err: unknown) => { console.error('build other-station cameras failed:', err); });
-    } else {
-      console.error('list stations failed:', stationsRes.reason);
-    }
+    // The remaining scene state all comes from the same world payload — no
+    // second round of list reads, no per-station getStation fan-out. Control
+    // points were already registered from data.control_points (the global set)
+    // in the batch above.
+    cpConstraints = world.cp_constraints.map(mapApiCPConstraint);
+    cpSurfaces = world.cp_surfaces.map(mapApiCPSurface);
+    otherStations = world.stations
+      .filter(st => st.id !== id)
+      .map(st => ({ id: st.id, name: st.name, anchor: { lat: st.lat, lng: st.lng }, altitude: st.alt }));
+    otherCameras = buildOtherCameras(world, id);
+    refreshControlPointColumns();
 
-    // Terrain last so its tile flood queues behind every other fetch above.
+    // Terrain last so its tile flood queues behind the photo blob loads above.
     scene.pushTerrainFromPose();
   }
 
@@ -655,7 +626,7 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
     });
   }
 
-  async function load(id: string, prefetched?: ApiHydratedStation, onPostHydrate?: () => void): Promise<void> {
+  async function load(id: string, prefetched?: ApiHydratedWorld, onPostHydrate?: () => void): Promise<void> {
     await hydrateFromAPI(id, prefetched);
     if (id !== route.getStationId()) return;
     if (onPostHydrate) onPostHydrate();

@@ -21,6 +21,7 @@ export type ApiPhotoListItem = Schemas['PhotoListItem'];
 export type ApiImageMeasurement = Schemas['ImageMeasurement'];
 export type ApiControlPoint = Schemas['ControlPoint'];
 export type ApiHydratedStation = Schemas['HydratedStation'];
+export type ApiHydratedWorld = Schemas['HydratedWorld'];
 export type ApiStationMarker = Schemas['StationMarker'];
 export type PhotoPosePatch = Schemas['PhotoPosePatch'];
 export type ImageMeasurementPatch = Schemas['ImageMeasurementPatch'];
@@ -159,6 +160,30 @@ export function listStationMarkers(): Promise<ApiStationMarker[]> {
 
 export function getStation(id: string): Promise<ApiHydratedStation> {
   return request<ApiHydratedStation>('GET', `/stations/${encodeURIComponent(id)}`);
+}
+
+// Single-request hydration for the /world scene: the focus station plus every
+// station / photo / image measurement / control point / constraint / surface
+// and the focus station's cp_observations — replacing an N+1 fan-out of
+// getStation (one per station) plus the four global list reads.
+export function getWorld(id: string): Promise<ApiHydratedWorld> {
+  return request<ApiHydratedWorld>('GET', `/stations/${encodeURIComponent(id)}/world`);
+}
+
+// Carve one station's hydrated slice out of a world payload, in the shape a
+// single-station read returns: its own photos and the measurements anchored to
+// them, plus the (global) control points and the station's cp_observations.
+// Used by both the world hydrate and the fly-between planner.
+export function focusStationFromWorld(world: ApiHydratedWorld, id: string): ApiHydratedStation {
+  const photos = world.photos.filter(p => p.station_id === id);
+  const photoIds = new Set(photos.map(p => p.id));
+  return {
+    station: world.station,
+    photos,
+    image_measurements: world.image_measurements.filter(im => photoIds.has(im.photo_id)),
+    control_points: world.control_points,
+    cp_observations: world.cp_observations,
+  };
 }
 
 export function updateStation(id: string, patch: StationUpdate): Promise<ApiStation> {

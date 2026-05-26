@@ -260,6 +260,97 @@ func (s *Server) getStationInSession(w http.ResponseWriter, r *http.Request, ses
 	})
 }
 
+// getWorldInSession is the overlay-aware variant of getWorld: every global
+// set is merged with the session journal, and the focus station's
+// cp_observations are merged + filtered to that station, so a station / photo
+// / match / CP that lives only in the open session still shows in the scene.
+func (s *Server) getWorldInSession(w http.ResponseWriter, r *http.Request, sess *Session) {
+	id := requireID(w, r, "id")
+	if id == "" {
+		return
+	}
+	ctx := r.Context()
+	overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	st, present, err := currentStation(ctx, s.db, overlay, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if !present {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	stations, err := mergeListInSession(overlay, entityStation,
+		func() ([]Station, error) { return s.allStations(ctx) },
+		func(st Station) string { return st.ID })
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	photos, err := mergeListInSession(overlay, entityPhoto,
+		func() ([]Photo, error) { return s.allPhotos(ctx) },
+		func(p Photo) string { return p.ID })
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	ims, err := mergeListInSession(overlay, entityImageMeasurement,
+		func() ([]ImageMeasurement, error) { return s.allImageMeasurements(ctx) },
+		func(im ImageMeasurement) string { return im.ID })
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	cps, err := mergeListInSession(overlay, entityControlPoint,
+		func() ([]ControlPoint, error) { return s.allControlPoints(ctx) },
+		func(cp ControlPoint) string { return cp.ID })
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	cons, err := mergeListInSession(overlay, entityCPConstraint,
+		func() ([]CPConstraint, error) { return s.allCPConstraints(ctx) },
+		func(c CPConstraint) string { return c.ID })
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	surfs, err := mergeListInSession(overlay, entityCPSurface,
+		func() ([]CPSurface, error) { return s.allCPSurfaces(ctx) },
+		func(sf CPSurface) string { return sf.ID })
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	cpObsBase, err := s.cpObservationsByStation(ctx, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	cpObs, err := mergeOverlay(cpObsBase, overlay[entityCPObservation],
+		func(o CpObservation) string { return o.ID },
+		decodeJSON[CpObservation],
+		func(o CpObservation) bool { return o.StationID == id })
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, HydratedWorld{
+		Station:           st,
+		Stations:          stations,
+		Photos:            photos,
+		ImageMeasurements: ims,
+		ControlPoints:     cps,
+		CpObservations:    cpObs,
+		CpConstraints:     cons,
+		CpSurfaces:        surfs,
+	})
+}
+
 // Bbox filters from the non-session endpoints are dropped here — the index
 // page calls these without a bbox.
 func mergeListInSession[T any](

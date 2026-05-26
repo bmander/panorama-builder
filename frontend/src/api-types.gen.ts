@@ -96,6 +96,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stations/{id}/world": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["StationId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Bulk-hydrate the whole world scene for one focus station
+         * @description Single-request hydration for the /world viewer: the focus station plus
+         *     every station, photo, image measurement, control point, CP constraint,
+         *     and CP surface, and the focus station's cp_observations. Replaces an
+         *     N+1 fan-out of GET /stations/{id} (one per station) and the four global
+         *     list reads the page formerly issued. Honors X-Session-Id, applying the
+         *     session overlay to every set.
+         */
+        get: operations["getWorld"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stations/{id}/photos": {
         parameters: {
             query?: never;
@@ -1281,6 +1308,32 @@ export interface components {
             cp_observations: components["schemas"]["CpObservation"][];
         };
         /**
+         * @description Everything the /world scene needs for a single focus station, in one
+         *     request — replacing an N+1 fan-out of GET /stations/{id} (one per
+         *     station) plus the four global list reads. The focus station's full
+         *     photos/measurements are partitioned out client-side by station_id;
+         *     all other stations' photos supply the frustum cones and observation
+         *     rays. Honors X-Session-Id, applying the session overlay to every set.
+         */
+        HydratedWorld: {
+            /** @description The focus station row (overlay-applied). 404 if absent. */
+            station: components["schemas"]["Station"];
+            /** @description Every station (includes the focus; the client filters it out). */
+            stations: components["schemas"]["Station"][];
+            /** @description Every photo across all stations. */
+            photos: components["schemas"]["Photo"][];
+            /** @description Every image measurement across all stations. */
+            image_measurements: components["schemas"]["ImageMeasurement"][];
+            /** @description All control points. */
+            control_points: components["schemas"]["ControlPoint"][];
+            /** @description Per-CP observation status rows for the focus station only. */
+            cp_observations: components["schemas"]["CpObservation"][];
+            /** @description All control-point constraints. */
+            cp_constraints: components["schemas"]["CPConstraint"][];
+            /** @description All control-point surfaces. */
+            cp_surfaces: components["schemas"]["CPSurface"][];
+        };
+        /**
          * @description One photo's horizontal frustum, as an azimuth plus angular subtense.
          *     The frontend derives the left/right edge bearings as
          *     photo_az ∓ size_rad/2.
@@ -2020,6 +2073,29 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getWorld: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["StationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HydratedWorld"];
+                };
             };
             404: components["responses"]["NotFound"];
         };

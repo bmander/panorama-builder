@@ -174,6 +174,77 @@ func (s *Server) getStation(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getWorld bulk-hydrates the whole /world scene for one focus station: the
+// focus row, every station/photo/image-measurement/control-point/constraint/
+// surface, and the focus station's cp_observations — all in one request. It
+// replaces an N+1 fan-out of GET /stations/{id} (one per station) plus the
+// four global list reads the page formerly issued. Reads apply the session
+// overlay when X-Session-Id is present.
+func (s *Server) getWorld(w http.ResponseWriter, r *http.Request) {
+	if sess, ok := s.tryLoadSession(w, r); !ok {
+		return
+	} else if sess != nil {
+		s.getWorldInSession(w, r, sess)
+		return
+	}
+	id := requireID(w, r, "id")
+	if id == "" {
+		return
+	}
+	ctx := r.Context()
+	st, err := scanStation(s.db.QueryRow(ctx,
+		`SELECT `+stationCols+` FROM stations WHERE id = $1`, id))
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	stations, err := s.allStations(ctx)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	photos, err := s.allPhotos(ctx)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	ims, err := s.allImageMeasurements(ctx)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	cps, err := s.allControlPoints(ctx)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	cpObs, err := s.cpObservationsByStation(ctx, id)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	cons, err := s.allCPConstraints(ctx)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	surfs, err := s.allCPSurfaces(ctx)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, HydratedWorld{
+		Station:           st,
+		Stations:          stations,
+		Photos:            photos,
+		ImageMeasurements: ims,
+		ControlPoints:     cps,
+		CpObservations:    cpObs,
+		CpConstraints:     cons,
+		CpSurfaces:        surfs,
+	})
+}
+
 func (s *Server) putStation(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.requireSession(w, r)
 	if !ok {

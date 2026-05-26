@@ -8,7 +8,7 @@
 // handlers, mostly) arrive as opts.onX hooks; station-page.ts supplies them
 // as closures over the (later-declared) interactions binding.
 
-import type { ApiHydratedStation } from '../api.js';
+import type { ApiHydratedWorld } from '../api.js';
 import { attachDownload } from '../ui.js';
 import { createCPConstraintModal } from '../cp-constraint-modal.js';
 import { createCPSurfaceModal } from '../cp-surface-modal.js';
@@ -74,7 +74,7 @@ export interface CreateStationPanelsOptions {
   // station-navigation's fly-to flow. focus centers + zooms a control point
   // once the destination station hydrates.
   readonly loadStation: (
-    id: string, prefetched?: ApiHydratedStation, focus?: CpFlightFocus | null,
+    id: string, prefetched?: ApiHydratedWorld, focus?: CpFlightFocus | null,
   ) => Promise<void>;
 }
 

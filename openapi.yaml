@@ -161,6 +161,28 @@ paths:
         '204': { description: Deleted }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /stations/{id}/world:
+    parameters:
+      - $ref: '#/components/parameters/StationId'
+    get:
+      tags: [stations]
+      summary: Bulk-hydrate the whole world scene for one focus station
+      description: |
+        Single-request hydration for the /world viewer: the focus station plus
+        every station, photo, image measurement, control point, CP constraint,
+        and CP surface, and the focus station's cp_observations. Replaces an
+        N+1 fan-out of GET /stations/{id} (one per station) and the four global
+        list reads the page formerly issued. Honors X-Session-Id, applying the
+        session overlay to every set.
+      operationId: getWorld
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HydratedWorld' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /stations/{id}/photos:
     parameters:
       - $ref: '#/components/parameters/StationId'
@@ -1580,6 +1602,49 @@ components:
           type: array
           description: Per-CP observation status rows for this station.
           items: { $ref: '#/components/schemas/CpObservation' }
+
+    HydratedWorld:
+      type: object
+      description: |
+        Everything the /world scene needs for a single focus station, in one
+        request — replacing an N+1 fan-out of GET /stations/{id} (one per
+        station) plus the four global list reads. The focus station's full
+        photos/measurements are partitioned out client-side by station_id;
+        all other stations' photos supply the frustum cones and observation
+        rays. Honors X-Session-Id, applying the session overlay to every set.
+      required: [station, stations, photos, image_measurements, control_points, cp_observations, cp_constraints, cp_surfaces]
+      properties:
+        station:
+          allOf: [{ $ref: '#/components/schemas/Station' }]
+          description: The focus station row (overlay-applied). 404 if absent.
+        stations:
+          type: array
+          description: Every station (includes the focus; the client filters it out).
+          items: { $ref: '#/components/schemas/Station' }
+        photos:
+          type: array
+          description: Every photo across all stations.
+          items: { $ref: '#/components/schemas/Photo' }
+        image_measurements:
+          type: array
+          description: Every image measurement across all stations.
+          items: { $ref: '#/components/schemas/ImageMeasurement' }
+        control_points:
+          type: array
+          description: All control points.
+          items: { $ref: '#/components/schemas/ControlPoint' }
+        cp_observations:
+          type: array
+          description: Per-CP observation status rows for the focus station only.
+          items: { $ref: '#/components/schemas/CpObservation' }
+        cp_constraints:
+          type: array
+          description: All control-point constraints.
+          items: { $ref: '#/components/schemas/CPConstraint' }
+        cp_surfaces:
+          type: array
+          description: All control-point surfaces.
+          items: { $ref: '#/components/schemas/CPSurface' }
 
     PhotoCone:
       type: object

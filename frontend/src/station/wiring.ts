@@ -2,7 +2,7 @@
 // station view needs. Owns no state of its own — pushPose and applyStation
 // are passed in by station-page.ts (closures over its top-level controllers).
 
-import type { ApiHydratedStation } from '../api.js';
+import type { ApiHydratedWorld } from '../api.js';
 import type { StationScene } from './scene.js';
 import type { StationDataController } from './data-controller.js';
 import type { StationPanels } from './panels.js';
@@ -16,7 +16,7 @@ export interface WireStationEventsOptions {
   readonly route: StationRouteState;
   readonly sundial: SundialController;
   readonly pushPose: () => void;
-  readonly applyStation: (id: string, prefetched?: ApiHydratedStation) => Promise<void>;
+  readonly applyStation: (id: string, prefetched?: ApiHydratedWorld) => Promise<void>;
 }
 
 export function wireStationEvents(opts: WireStationEventsOptions): void {

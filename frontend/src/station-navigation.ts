@@ -104,7 +104,7 @@ export interface StationNavigationDeps {
   // skip its own getStation call — the fly already fetched it. focus, when
   // set, centers + zooms the camera on that control point once the
   // destination station finishes hydrating.
-  loadStation: (destId: string, prefetched?: api.ApiHydratedStation, focus?: CpFlightFocus | null) => Promise<void>;
+  loadStation: (destId: string, prefetched?: api.ApiHydratedWorld, focus?: CpFlightFocus | null) => Promise<void>;
 }
 
 export interface StationNavigation {
@@ -190,9 +190,9 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
 
   async function fetchDestinationOrLoadDirect(
     destId: string, fallbackFocus: CpFlightFocus | null,
-  ): Promise<api.ApiHydratedStation | null> {
+  ): Promise<api.ApiHydratedWorld | null> {
     try {
-      return await api.getStation(destId);
+      return await api.getWorld(destId);
     } catch (err) {
       console.error('fly: dest fetch failed:', err);
       await loadStation(destId, undefined, fallbackFocus);
@@ -297,7 +297,7 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
   }
 
   async function finishFlight(
-    destId: string, dest: api.ApiHydratedStation, focus: CpFlightFocus | null,
+    destId: string, dest: api.ApiHydratedWorld, focus: CpFlightFocus | null,
   ): Promise<void> {
     // Hide before reset so source panes don't snap to origin for one
     // frame before clearStationData removes them.
@@ -333,7 +333,9 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
 
       if (!isFlightStillCurrent(flight)) return;
 
-      const plan = buildFlightPlan(flight, dest, focusCpId);
+      // The planner only needs the destination station's own pose + photos;
+      // carve its slice out of the world payload.
+      const plan = buildFlightPlan(flight, api.focusStationFromWorld(dest, destId), focusCpId);
 
       // Fade the origin image out, then fly over bare terrain.
       await fadePhotosOut(ORIGIN_FADE_MS);

@@ -2,7 +2,7 @@
 // sundial / data / panels / interactions controllers and the cross-cutting
 // event subscriptions, then kicks off the first hydrate.
 
-import type { ApiHydratedStation } from './api.js';
+import type { ApiHydratedWorld } from './api.js';
 import { getElement } from './types.js';
 import { FOCUS_FOV_DEG } from './viewer.js';
 import { createStationScene } from './station/scene.js';
@@ -109,7 +109,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   }
 
   async function applyStation(
-    newId: string, prefetched?: ApiHydratedStation, focus?: CpFlightFocus | null,
+    newId: string, prefetched?: ApiHydratedWorld, focus?: CpFlightFocus | null,
   ): Promise<void> {
     if (newId === route.getStationId()) return;
     route.clearFocusedCpId();
@@ -129,7 +129,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
   }
 
   async function loadStation(
-    newId: string, prefetched?: ApiHydratedStation, focus?: CpFlightFocus | null,
+    newId: string, prefetched?: ApiHydratedWorld, focus?: CpFlightFocus | null,
   ): Promise<void> {
     if (newId !== route.getStationId()) route.pushStationToHistory(newId);
     await applyStation(newId, prefetched, focus);
