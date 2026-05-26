@@ -109,7 +109,7 @@ export interface StationNavigationDeps {
 
 export interface StationNavigation {
   // focusCpId: after landing, focus the camera on this control point in the
-  // destination station (used by the CP context menu's "Zoom to…" entries).
+  // destination station (used by the CP context menu's "View from…" entries).
   flyToStation: (destId: string, focusCpId?: string | null) => Promise<void>;
 }
 

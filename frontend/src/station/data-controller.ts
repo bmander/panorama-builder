@@ -576,7 +576,7 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
       // allSettled, not all: with dozens of stations this fans out dozens of
       // concurrent getStation calls, and a single transient failure under that
       // load would otherwise reject the whole batch — blanking otherCameras and
-      // making the CP "Zoom to…" list vanish. Skip the failures, keep the rest.
+      // making the CP "View from…" list vanish. Skip the failures, keep the rest.
       void Promise.allSettled(otherStations.map(s => api.getStation(s.id)))
         .then(results => {
           if (id !== route.getStationId()) return;

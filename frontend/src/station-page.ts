@@ -115,7 +115,7 @@ export async function mountStationPage(opts: MountStationPageOptions): Promise<v
     route.clearFocusedCpId();
     route.setStationId(newId);
     clearStationData();
-    // focus (a fly-to-station "Zoom to…" target) re-centers + zooms the camera
+    // focus (a fly-to-station "View from…" target) re-centers + zooms the camera
     // on that CP once hydrated — hydrate resets orientation to the mean photo
     // direction, so this restores the CP-centered view at the caller's FOV
     // (the flight's size-matched value, or FOCUS_FOV_DEG on non-animated

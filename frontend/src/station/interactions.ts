@@ -208,7 +208,7 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
     }
     panels.contextMenu.open(sx + 20, sy, baseItems(), header, info);
 
-    // "Zoom to…" — the other stations observing this CP. Fetched from the
+    // "View from…" — the other stations observing this CP. Fetched from the
     // dedicated server-side join (one request, complete) rather than the
     // per-station getStation fan-out, which silently drops stations whose
     // fetch fails under the world-view's request load. Only when the CP has a
@@ -230,7 +230,7 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
         .map(([stId, name]) => ({ value: stId, label: name ?? `Untitled ${stId.slice(0, 6)}` }));
       const zoom: ContextMenuItem = {
         kind: 'dropdown',
-        label: 'Zoom to…',
+        label: 'View from…',
         options,
         onSelect: stId => { void panels.stationNavigation.flyToStation(stId, cpId); },
       };

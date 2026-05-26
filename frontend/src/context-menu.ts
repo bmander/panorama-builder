@@ -28,7 +28,7 @@ export interface ContextMenuDropdownOption {
 }
 
 // A <select> standing in for a long flat list of button items — keeps the menu
-// compact when the option count is open-ended (e.g. the "Zoom to…" stations
+// compact when the option count is open-ended (e.g. the "View from…" stations
 // observing a control point). `label` is the placeholder shown until a pick.
 export interface ContextMenuDropdown {
   readonly kind: 'dropdown';
@@ -47,7 +47,7 @@ export interface ContextMenu {
   close(): void;
   // Monotonic counter bumped on every open()/close(). An async caller captures
   // it after opening and bails if it changed before its late content (e.g. a
-  // fetched "Zoom to…" list) arrives — meaning the menu was closed or replaced.
+  // fetched "View from…" list) arrives — meaning the menu was closed or replaced.
   generation(): number;
 }
 
