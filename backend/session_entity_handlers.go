@@ -337,7 +337,7 @@ func (s *Server) listPhotosInSession(w http.ResponseWriter, r *http.Request, ses
 		writeErrorFromDB(w, err)
 		return
 	}
-	counts, err := s.observationCountsByPhoto(ctx)
+	counts, err := s.observationCountsByPhotoInSession(ctx, overlay)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return

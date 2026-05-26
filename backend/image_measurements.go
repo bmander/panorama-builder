@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
@@ -17,6 +18,26 @@ func scanImageMeasurement(row pgx.Row) (ImageMeasurement, error) {
 	var im ImageMeasurement
 	err := row.Scan(&im.ID, &im.PhotoID, &im.U, &im.V, &im.ControlPointID, &im.CreatedAt, &im.UpdatedAt)
 	return im, err
+}
+
+// allImageMeasurements reads every image-measurement row from main. The
+// in-session photo list overlays this set so pending inserts/deletes are
+// reflected in per-photo observation counts.
+func (s *Server) allImageMeasurements(ctx context.Context) ([]ImageMeasurement, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+imageMeasurementCols+` FROM image_measurements`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ImageMeasurement{}
+	for rows.Next() {
+		im, err := scanImageMeasurement(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, im)
+	}
+	return out, rows.Err()
 }
 
 func (s *Server) postImageMeasurement(w http.ResponseWriter, r *http.Request) {

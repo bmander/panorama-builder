@@ -333,7 +333,8 @@ func (s *Server) imageMeasurementsByControlPoint(ctx context.Context, cpID strin
 
 // observationCountsByPhoto returns, for every photo with at least one
 // image measurement, the count of measurements anchored on that photo.
-// Reads from main only; in-session inserts/deletes are not reflected.
+// Reads from main only; in-session inserts/deletes are not reflected — use
+// observationCountsByPhotoInSession on session-scoped paths.
 func (s *Server) observationCountsByPhoto(ctx context.Context) (map[string]int, error) {
 	rows, err := s.db.Query(ctx,
 		`SELECT photo_id, COUNT(*) FROM image_measurements GROUP BY photo_id`)
@@ -351,6 +352,29 @@ func (s *Server) observationCountsByPhoto(ctx context.Context) (map[string]int, 
 		out[id] = n
 	}
 	return out, rows.Err()
+}
+
+// observationCountsByPhotoInSession is the session-aware counterpart of
+// observationCountsByPhoto: it folds the session's image-measurement overlay
+// into the main set before counting, so pending inserts/deletes move the
+// per-photo counts shown in the photo list.
+func (s *Server) observationCountsByPhotoInSession(ctx context.Context, overlay sessionOverlay) (map[string]int, error) {
+	base, err := s.allImageMeasurements(ctx)
+	if err != nil {
+		return nil, err
+	}
+	merged, err := mergeOverlay(base, overlay[entityImageMeasurement],
+		func(im ImageMeasurement) string { return im.ID },
+		decodeJSON[ImageMeasurement],
+		func(ImageMeasurement) bool { return true })
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]int{}
+	for _, im := range merged {
+		out[im.PhotoID]++
+	}
+	return out, nil
 }
 
 // allPhotos returns every photo row from main. The visible-photos endpoint
