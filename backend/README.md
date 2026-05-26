@@ -136,16 +136,31 @@ photos.tgz data/`) alongside the SQL dump.
 
 ## Smoke test
 
+Writes never touch main directly — they journal into a session and land on
+merge. Every mutating call carries an `X-Session-Id` header; without it the
+API returns `428 Precondition Required`. So the flow is: open a session,
+write through it, then merge with a non-empty `sign_off`.
+
 ```sh
+SID=$(curl -sS -X POST http://localhost:8080/api/sessions | jq -r .id)
+
 ST=$(curl -sS -X POST http://localhost:8080/api/stations \
-      -H 'Content-Type: application/json' \
+      -H "X-Session-Id: $SID" -H 'Content-Type: application/json' \
       -d '{"lat":47.607,"lng":-122.335,"captured_at":"2026-05-05T12:00:00Z","name":"Seattle"}' | jq -r .id)
 
 PHOTO=$(curl -sS -X POST "http://localhost:8080/api/stations/$ST/photos" \
-         -H 'Content-Type: application/json' -d '{"aspect":1.5}' | jq -r .id)
+         -H "X-Session-Id: $SID" -H 'Content-Type: application/json' -d '{"aspect":1.5}' | jq -r .id)
 
 curl -sS -X PUT "http://localhost:8080/api/photos/$PHOTO/blob" \
-     -H 'Content-Type: image/jpeg' --data-binary @sample.jpg
+     -H "X-Session-Id: $SID" -H 'Content-Type: image/jpeg' --data-binary @sample.jpg
 
+# Until merged, the new rows are visible only through the session overlay:
+curl -sS "http://localhost:8080/api/stations/$ST" -H "X-Session-Id: $SID" | jq .
+
+# Merge promotes the session's journal into one commit on main.
+curl -sS -X POST "http://localhost:8080/api/sessions/$SID/merge" \
+     -H 'Content-Type: application/json' -d '{"sign_off":"smoke test"}' | jq .
+
+# Now the station is on main, no header needed.
 curl -sS "http://localhost:8080/api/stations/$ST" | jq .
 ```
