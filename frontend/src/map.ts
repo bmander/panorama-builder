@@ -522,13 +522,20 @@ export function createMapView({
     // bit must survive session toggles — the solver derivation says the lock
     // is forced regardless of edit mode.
     const cbs = Array.from(root.querySelectorAll<HTMLInputElement>('.popup-lock'))
-      .map(cb => ({ cb, autoLocked: cb.disabled }));
-    const syncDisabled = (): void => {
+      .map(cb => ({ cb, autoLocked: cb.disabled, row: cb.closest<HTMLElement>('.popup-lock-row') }));
+    // Locks are an edit affordance: hide the whole row outside edit mode (the
+    // marker icon already conveys lock state), and disable the checkbox while
+    // shown. Re-syncs on session change so clicking Edit reveals the controls
+    // without reopening the popup.
+    const sync = (): void => {
       const noSession = !editingActive();
-      for (const { cb, autoLocked } of cbs) cb.disabled = autoLocked || noSession;
+      for (const { cb, autoLocked, row } of cbs) {
+        cb.disabled = autoLocked || noSession;
+        if (row) row.hidden = noSession;
+      }
     };
-    syncDisabled();
-    const unsub = sessionStore.onChange(syncDisabled);
+    sync();
+    const unsub = sessionStore.onChange(sync);
     popup.on('remove', unsub);
     for (const { cb, autoLocked } of cbs) {
       cb.addEventListener('change', () => {
@@ -761,7 +768,7 @@ export function createMapView({
   function openStationPopup(p: StationMarker): void {
     const popupHtml = `<span class="name">${escapeHtml(p.label)}</span>`
       + paramRowsHtml(p.alt, p.lockLat && p.lockLng, p.lockAlt, p.autoLockPos, p.autoLockAlt)
-      + goButtonHtml('Go to station →')
+      + goButtonHtml('Show photo in place →')
       + goButtonHtml('Move', 'move');
     // Replace any prior station's decorations before opening the new popup;
     // the bubble's ✕ no longer tears them down, so we drop the previous set
@@ -773,8 +780,8 @@ export function createMapView({
       .openOn(map);
     stationPreviewEllipse = drawUncertaintyEllipse(p.latlng, p.sigmaLat, p.sigmaLng, p.covLatLng);
     onStationMarkerPreview?.(p.id);
-    // The "Go to station →" button shares the .go base class with .move, so
-    // disambiguate using ':not(.move)' rather than just '.go'.
+    // The "Show photo in place →" button shares the .go base class with .move,
+    // so disambiguate using ':not(.move)' rather than just '.go'.
     wireGoButton(popup, '.go:not(.move)', () => onStationMarkerOpen?.(p.id));
     wireMoveButton(popup, () => {
       const cur = stationMarkers.get(p.id);
