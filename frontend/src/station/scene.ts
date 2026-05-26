@@ -31,8 +31,6 @@ import { createStationMarkers } from '../station-markers.js';
 import type { StationMarker, StationMarkers } from '../station-markers.js';
 import { createStationCones } from '../station-cones.js';
 import type { StationCone, StationCones } from '../station-cones.js';
-import { createPhotoPreviews } from '../photo-previews.js';
-import type { PhotoPreviews } from '../photo-previews.js';
 import { createDotLayer } from '../dot-layer.js';
 import type { Dot, DotLayer } from '../dot-layer.js';
 import { createWorldCamera } from '../world-camera.js';
@@ -81,7 +79,6 @@ export interface StationScene {
   readonly observationRays: ObservationRays;
   readonly cpConstraintLines: CPConstraintLines;
   readonly cpSurfacesRenderer: CPSurfaces;
-  readonly photoPreviews: PhotoPreviews;
   readonly baker: Baker;
   readonly hud: Hud;
   // Sundial visuals: shadow-point dot layer + camera-anchored line. The line
@@ -151,11 +148,6 @@ export function createStationScene(opts: CreateStationSceneOptions): StationScen
     scene: viewer.scene,
     requestRender: () => { viewer.requestRender(); },
   });
-  const photoPreviews = createPhotoPreviews({
-    scene: viewer.scene,
-    requestRender: () => { viewer.requestRender(); },
-    getAnisotropy: () => viewer.renderer.capabilities.getMaxAnisotropy(),
-  });
   const cpConstraintLines = createCPConstraintLines({
     scene: viewer.scene,
     requestRender: () => { viewer.requestRender(); },
@@ -199,7 +191,6 @@ export function createStationScene(opts: CreateStationSceneOptions): StationScen
       cpSurfacesRenderer.setVisible(visible);
       sundialMarker.setVisible(visible);
       if (!visible) sundialLine.visible = false;
-      photoPreviews.setBakeHidden(!visible);
       if (!visible) previewLine.visible = false;
       // Suppress sky.regenProbe during the bake's CubeCamera render (it
       // would compete for the renderer's render-target state). The sky
@@ -312,7 +303,7 @@ export function createStationScene(opts: CreateStationSceneOptions): StationScen
     viewer, overlays, worldCamera,
     terrain, sky, sunMarker,
     cpColumns, stationDots, stationCones, observationRays,
-    cpConstraintLines, cpSurfacesRenderer, photoPreviews,
+    cpConstraintLines, cpSurfacesRenderer,
     baker, hud,
     sundialMarker, sundialLine, sundialLinePos,
     previewLine, previewPositions,

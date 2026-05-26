@@ -112,17 +112,11 @@ export function buildPoseObject(az: number, tilt: number, roll: number): THREE.O
   return _poseScratch;
 }
 
-// Place an overlay-photo plane at OVERLAY_R from `anchor` (defaults to
-// origin) in `dir`'s direction, facing the anchor and rolled by `roll`.
-// photo-previews uses a non-origin anchor to glue panes to a far station
-// while the camera flies through scene space.
-const _placeOrigin = new THREE.Vector3();
-export function placeAt(
-  o: THREE.Object3D, dir: THREE.Vector3, roll = 0, anchor?: THREE.Vector3,
-): void {
+// Place an overlay-photo plane at OVERLAY_R from the scene origin in `dir`'s
+// direction, facing the origin and rolled by `roll`.
+function placeAt(o: THREE.Object3D, dir: THREE.Vector3, roll = 0): void {
   o.position.copy(dir).normalize().multiplyScalar(OVERLAY_R);
-  if (anchor) o.position.add(anchor);
-  o.lookAt(anchor ?? _placeOrigin);
+  o.lookAt(0, 0, 0);
   if (roll !== 0) o.rotateZ(roll);
 }
 
@@ -198,7 +192,7 @@ function getFovIconTexture(): THREE.Texture {
 
 // Lazy so the canvas isn't created on the index page (no overlays there).
 let placeholderTex: THREE.Texture | null = null;
-export function getPlaceholderTexture(): THREE.Texture {
+function getPlaceholderTexture(): THREE.Texture {
   if (placeholderTex) return placeholderTex;
   const c = document.createElement('canvas');
   c.width = c.height = 16;

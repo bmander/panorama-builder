@@ -9,9 +9,7 @@ import { clamp, degToRad, radToDeg, wrapPi } from './mathx.js';
 import type { Viewer } from './viewer.js';
 import { DEFAULT_FOV, FOCUS_FOV_DEG, FOV_MAX, FOV_MIN } from './viewer.js';
 import type { TerrainView } from './terrain/index.js';
-import type { ControlPointColumns } from './map-poi-columns.js';
 import type { StationMarker } from './station-markers.js';
-import type { PhotoPreviews } from './photo-previews.js';
 import type { WorldCamera } from './world-camera.js';
 import type { LatLng } from './types.js';
 
@@ -32,6 +30,11 @@ function easeInOutCubic(t: number): number {
 // Fraction of a fly-to-CP flight over which the camera rotates to lock the CP
 // to screen center; past it the CP stays centered and the camera orbits it.
 const CP_LOCK_FRACTION = 0.25;
+
+// The origin image fades out before the camera moves; the destination image
+// fades in after landing.
+const ORIGIN_FADE_MS = 250;
+const DEST_FADE_MS = 500;
 
 // Landing orientation + FOV for a fly-to-CP target, plus the data the flight
 // needs to keep the CP screen-centered the whole way (orbit effect). The
@@ -87,13 +90,15 @@ export interface CpFlightFocus {
 export interface StationNavigationDeps {
   viewer: Viewer;
   terrain: TerrainView;
-  cpColumns: ControlPointColumns;
-  photoPreviews: PhotoPreviews;
   worldCamera: WorldCamera;
   getCurrentStationId: () => string;
   getStationName: () => string | null;
   getOtherStations: () => readonly StationMarker[];
   setOtherStations: (stations: readonly StationMarker[]) => void;
+  // Fade the station's image planes out (before the camera moves) and in
+  // (after landing) — the fly-between's photo cross-dissolve.
+  fadePhotosOut: (durationMs: number) => Promise<void>;
+  fadePhotosIn: (durationMs: number) => Promise<void>;
   // Called at fly end (and on early-out paths) to swap the host's per-
   // station data to destId. Passing the prefetched dest lets the host
   // skip its own getStation call — the fly already fetched it. focus, when
@@ -144,10 +149,11 @@ interface FlightPlan {
 
 export function createStationNavigation(deps: StationNavigationDeps): StationNavigation {
   const {
-    viewer, terrain, cpColumns, photoPreviews,
+    viewer, terrain,
     worldCamera,
     getCurrentStationId, getStationName,
     getOtherStations, setOtherStations,
+    fadePhotosOut, fadePhotosIn,
     loadStation,
   } = deps;
 
@@ -238,25 +244,20 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
     return { src, dst, srcAz, azDelta, srcAlt, dstAlt, srcFov, dstFov, durationMs, hopHeightM, focus };
   }
 
-  function prepareFlightScene(flight: NormalFlight, dest: api.ApiHydratedStation): void {
+  function prepareFlightScene(flight: NormalFlight): void {
+    // Leave the origin behind as a station dot so it's visible during the
+    // flight and in the destination view.
     setOtherStations([...flight.savedOtherStations, {
       id: flight.startStationId,
       name: flight.startStationName,
       anchor: { lat: flight.anchor.lat, lng: flight.anchor.lng },
       altitude: flight.anchorAltMSL,
     }]);
-
-    // CP markers + observation lines connect world-space CPs to
-    // source-anchored POIs; hide the whole CP layer until the post-fly
-    // reload rebuilds it for the destination station.
-    cpColumns.setVisible(false);
-
-    photoPreviews.set(dest.photos.map(p => ({
-      photoId: p.id, blobPath: p.blob_path,
-      fromLat: dest.station.lat, fromLng: dest.station.lng, fromAlt: dest.station.alt,
-      photoAz: p.photo_az, photoTilt: p.photo_tilt, photoRoll: p.photo_roll,
-      sizeRad: p.size_rad, aspect: p.aspect,
-    })));
+    // The origin's CP markers stay visible through the flight — they're
+    // world-anchored, so they parallax past as the camera moves — and only
+    // swap to the destination's set when the post-fly reload rebuilds them at
+    // landing. The origin image has already faded out and the destination
+    // fades in after landing, so no image planes show mid-flight.
   }
 
   async function animateFlight(plan: FlightPlan): Promise<void> {
@@ -287,14 +288,6 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
           viewer.setAzAlt(srcAz + azDelta * k, srcAlt + (dstAlt - srcAlt) * k);
         }
         viewer.setFov(srcFov + (dstFov - srcFov) * k);
-        // Destination-photo previews track the camera in world space.
-        // Visual quirk at k=1: the destination's cone apex / ray origins
-        // coincide with the camera at world (0,0,0), so the GPU clips
-        // those line segments at the near plane and they emerge from a
-        // small starburst near image center instead of one converging
-        // point. We accept this — landing slightly back of the lens to
-        // hide it would put the camera at a non-station position.
-        photoPreviews.update(loc, alt);
         viewer.requestRender();
         if (tau < 1) requestAnimationFrame(step);
         else resolve();
@@ -316,8 +309,6 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
   function restoreFlightScene(): void {
     viewer.overlaysGroup.visible = true;
     viewer.overlaysGroup.position.set(0, 0, 0);
-    cpColumns.setVisible(true);
-    photoPreviews.clear();
   }
 
   async function flyToStation(destId: string, focusCpId: string | null = null): Promise<void> {
@@ -343,7 +334,10 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
       if (!isFlightStillCurrent(flight)) return;
 
       const plan = buildFlightPlan(flight, dest, focusCpId);
-      prepareFlightScene(flight, dest);
+
+      // Fade the origin image out, then fly over bare terrain.
+      await fadePhotosOut(ORIGIN_FADE_MS);
+      prepareFlightScene(flight);
 
       await animateFlight(plan);
 
@@ -353,6 +347,11 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
       // focusing); land on exactly that so the post-hydrate focus doesn't snap.
       await finishFlight(destId, dest,
         focusCpId ? { cpId: focusCpId, fovDeg: plan.dstFov } : null);
+
+      // Reveal the rebuilt destination layer, then fade its images in. The
+      // finally below also restores it (idempotent) for the early-return paths.
+      restoreFlightScene();
+      await fadePhotosIn(DEST_FADE_MS);
     } finally {
       restoreFlightScene();
       endFlight();

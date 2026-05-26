@@ -206,13 +206,13 @@ export function createStationPanels(opts: CreateStationPanelsOptions): StationPa
 
   const stationNavigation = createStationNavigation({
     viewer, terrain,
-    cpColumns: scene.cpColumns,
-    photoPreviews: scene.photoPreviews,
     worldCamera,
     getCurrentStationId: () => route.getStationId(),
     getStationName: () => stationFields.getNameAndAlt()?.name ?? null,
     getOtherStations: () => data.getOtherStations(),
     setOtherStations: (s) => { data.setOtherStations(s); },
+    fadePhotosOut: (ms) => data.fadePhotosOut(ms),
+    fadePhotosIn: (ms) => data.fadePhotosIn(ms),
     loadStation: opts.loadStation,
   });
 

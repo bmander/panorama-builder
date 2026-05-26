@@ -125,6 +125,12 @@ export interface StationDataController {
   // Boot-time camera focus
   focusCameraOnControlPoint(id: string, fovDeg: number): boolean;
   focusCameraOnImageMeasurement(id: string): boolean;
+
+  // Fade the loaded photo planes out to transparent (origin fade-out before a
+  // fly-between) and back up to the opacity hydrate set (destination fade-in
+  // after landing). Resolve when the tween completes.
+  fadePhotosOut(durationMs: number): Promise<void>;
+  fadePhotosIn(durationMs: number): Promise<void>;
 }
 
 export interface CreateStationDataControllerOptions {
@@ -372,6 +378,49 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
     viewer.setAzAlt(az, alt);
     viewer.setFov(fovDeg);
     return true;
+  }
+
+  function photoGroups(): THREE.Group[] {
+    return overlays.photos.list().filter((o): o is THREE.Group => o instanceof THREE.Group);
+  }
+
+  // Linearly tween each photo's opacity from `from[i]` to `to[i]` over
+  // durationMs, repainting each frame. Resolves when the tween completes.
+  function tweenPhotoOpacity(
+    photos: readonly THREE.Group[], from: readonly number[], to: readonly number[], durationMs: number,
+  ): Promise<void> {
+    if (photos.length === 0) return Promise.resolve();
+    return new Promise(resolve => {
+      const start = performance.now();
+      function step(now: number): void {
+        const t = Math.min(1, (now - start) / durationMs);
+        for (let i = 0; i < photos.length; i++) {
+          overlays.photos.setOpacity(photos[i]!, from[i]! + (to[i]! - from[i]!) * t);
+        }
+        viewer.requestRender();
+        if (t < 1) requestAnimationFrame(step);
+        else resolve();
+      }
+      requestAnimationFrame(step);
+    });
+  }
+
+  // Fade every loaded photo to transparent — the origin fade-out at the start
+  // of a fly-between.
+  function fadePhotosOut(durationMs: number): Promise<void> {
+    const photos = photoGroups();
+    return tweenPhotoOpacity(photos, photos.map(o => overlays.photos.getOpacity(o)),
+      photos.map(() => 0), durationMs);
+  }
+
+  // Drop every loaded photo to transparent, then ramp back to the opacity
+  // hydrate set — the destination fade-in after landing. The drop is
+  // synchronous so no full-opacity frame paints before the ramp's first tick.
+  function fadePhotosIn(durationMs: number): Promise<void> {
+    const photos = photoGroups();
+    const target = photos.map(o => overlays.photos.getOpacity(o));
+    for (const o of photos) overlays.photos.setOpacity(o, 0);
+    return tweenPhotoOpacity(photos, photos.map(() => 0), target, durationMs);
   }
 
   function clear(): void {
@@ -693,5 +742,7 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
     rehydrateAfterSolve,
     focusCameraOnControlPoint,
     focusCameraOnImageMeasurement,
+    fadePhotosOut,
+    fadePhotosIn,
   };
 }
