@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: panorama-builder API
+  title: Viewfinder API
   description: |
     JSON API for compositing flat photos into a 360° panorama. Stores
     stations (camera setups), photos (with embedded pose), image

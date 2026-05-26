@@ -1,4 +1,4 @@
-# panorama-builder
+# Viewfinder
 
 A collaborative web app for working out **where photographs were taken**. You set up a *station* (a camera location), drop photos into a 360° view and aim them, mark *control points* — landmarks shared across photos and stations — and a bundle-adjustment solver recovers each photo's pose and each landmark's geographic position. Terrain, sky, and sun overlays aid alignment, and an aligned station can be baked into an equirectangular panorama.
 

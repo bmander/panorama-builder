@@ -1,4 +1,4 @@
-# panorama-builder API
+# Viewfinder API
 
 Minimal Go HTTP service exposing the panorama domain objects (stations,
 photos with embedded pose, map measurements, image measurements) over a JSON

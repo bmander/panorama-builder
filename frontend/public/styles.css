@@ -9,8 +9,16 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
         touch-action: none; user-select: none; -webkit-user-select: none;
         overscroll-behavior: none; }
 #view:active { cursor: grabbing; }
-#hud { position: fixed; top: 8px; left: 10px; color: #fff;
+#hud { position: fixed; top: 16px; left: 130px; color: #fff;
        font: 12px monospace; text-shadow: 0 0 3px #000; pointer-events: none; }
+.site-badge { position: fixed; top: 8px; left: 10px; z-index: 1200;
+              padding: 5px 9px; background: #000;
+              border: 1px solid rgba(255,255,255,0.4); color: #cccccc;
+              font: 700 16px Helvetica, Arial, sans-serif; letter-spacing: 0.03em;
+              text-decoration: none; }
+.site-badge:hover { border-color: #fff; }
+/* Leaflet's default top-left controls (zoom, layers) sit below the site badge. */
+.leaflet-top.leaflet-left { top: 34px; }
 #map-wrap { position: fixed; inset: 0; background: #000; display: none; }
 #map-wrap.show { display: block; }
 #map { width: 100%; height: 100%; }
