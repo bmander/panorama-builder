@@ -360,6 +360,22 @@ func (s *Server) postPhotoInSession(w http.ResponseWriter, r *http.Request, sess
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
+	// Reject a dangling parent reference now rather than journaling an op
+	// that only fails (as an FK violation) at merge. The station may live
+	// only in this session's overlay — currentStation handles both cases.
+	ctx := r.Context()
+	overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if _, present, err := currentStation(ctx, s.db, overlay, stationID); err != nil {
+		writeErrorFromDB(w, err)
+		return
+	} else if !present {
+		writeError(w, http.StatusNotFound, "station not found")
+		return
+	}
 	id := newID()
 	now := time.Now().UTC()
 	opacity := 1.0
@@ -402,7 +418,7 @@ func (s *Server) postPhotoInSession(w http.ResponseWriter, r *http.Request, sess
 	if req.LockDistK2 != nil {
 		p.LockDistK2 = *req.LockDistK2
 	}
-	if err := s.recordOpDirect(r.Context(), sess.ID, entityPhoto, id, "insert", nil, jsonMust(p)); err != nil {
+	if err := s.recordOpDirect(ctx, sess.ID, entityPhoto, id, "insert", nil, jsonMust(p)); err != nil {
 		writeErrorFromDB(w, err)
 		return
 	}
@@ -599,6 +615,20 @@ func (s *Server) postImageMeasurementInSession(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Reject a dangling parent reference now rather than journaling an op
+	// that only fails (as an FK violation) at merge. Runs for every insert,
+	// not just CP-linked ones; the photo may live only in this session's
+	// overlay — currentPhoto handles both cases.
+	photo, present, err := currentPhoto(ctx, s.db, overlay, photoID)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	if !present {
+		writeError(w, http.StatusNotFound, "photo not found")
+		return
+	}
+
 	// When the new measurement links to a CP, ensure the per-station
 	// cp_observation row exists with status=present. The image-measurement
 	// pixel pin is evidence backing the observation; the two facts must
@@ -606,15 +636,6 @@ func (s *Server) postImageMeasurementInSession(w http.ResponseWriter, r *http.Re
 	// absent/obscured contradicts it.
 	var observedToCreate *CpObservation
 	if req.ControlPointID != nil {
-		photo, present, err := currentPhoto(ctx, s.db, overlay, photoID)
-		if err != nil {
-			writeErrorFromDB(w, err)
-			return
-		}
-		if !present {
-			writeError(w, http.StatusNotFound, "photo not found")
-			return
-		}
 		existing, err := s.findCpObservationByPair(ctx, overlay, photo.StationID, *req.ControlPointID)
 		if err != nil {
 			writeErrorFromDB(w, err)
@@ -1179,6 +1200,29 @@ func (s *Server) listControlPointVisiblePhotosInSession(w http.ResponseWriter, r
 
 // --- CP constraints ---
 
+// requireControlPointsExist confirms each referenced CP resolves in the
+// session overlay (main rows plus session-only inserts). On the first
+// missing id it writes a 404 and returns false. This rejects a dangling
+// parent reference now rather than journaling an op that only fails (as an
+// FK violation) at merge.
+func (s *Server) requireControlPointsExist(ctx context.Context, w http.ResponseWriter, sessionID string, ids ...string) bool {
+	overlay, err := loadSessionOverlay(ctx, s.db, sessionID)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return false
+	}
+	for _, id := range ids {
+		if _, present, err := currentControlPoint(ctx, s.db, overlay, id); err != nil {
+			writeErrorFromDB(w, err)
+			return false
+		} else if !present {
+			writeError(w, http.StatusNotFound, "control point "+id+" not found")
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Server) postCPConstraintInSession(w http.ResponseWriter, r *http.Request, sess *Session) {
 	var req CPConstraintCreate
 	if !parseJSON(w, r, &req) {
@@ -1194,6 +1238,9 @@ func (s *Server) postCPConstraintInSession(w http.ResponseWriter, r *http.Reques
 	}
 	if !req.ConstraintType.Valid() {
 		writeError(w, http.StatusBadRequest, "constraint_type must be 'plumb' or 'level'")
+		return
+	}
+	if !s.requireControlPointsExist(r.Context(), w, sess.ID, req.CpAId, req.CpBId) {
 		return
 	}
 	a, b := req.CpAId, req.CpBId
@@ -1309,6 +1356,13 @@ func (s *Server) postCPSurfaceInSession(w http.ResponseWriter, r *http.Request, 
 	}
 	if req.Cp4ID != nil && seen[*req.Cp4ID] {
 		writeError(w, http.StatusBadRequest, "cp ids must be distinct")
+		return
+	}
+	cpIDs := []string{req.Cp1ID, req.Cp2ID, req.Cp3ID}
+	if req.Cp4ID != nil {
+		cpIDs = append(cpIDs, *req.Cp4ID)
+	}
+	if !s.requireControlPointsExist(r.Context(), w, sess.ID, cpIDs...) {
 		return
 	}
 	id := newID()
