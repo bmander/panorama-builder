@@ -2,7 +2,7 @@
 // optional SeededCPIDs) over HTTP and runs core.Solve or
 // SolveJointWithSeed against a Ceres-Solver-linked binary. No DB, no
 // session knowledge, no public ingress — the api service is the only
-// caller. See ../../solver/dto.go for the wire contract.
+// caller. See ../shared/wire/ for the wire contract.
 //
 // Gated on the default (no-noceres) build because it imports the Ceres-
 // bound parts of backend/solver. `go build -tags noceres ./...` skips

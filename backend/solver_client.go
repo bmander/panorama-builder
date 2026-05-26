@@ -18,7 +18,7 @@ import (
 
 // solverClient is the api side of the api ↔ solver split. Constructed once at
 // boot from SOLVER_URL; called by solve_handlers.go and solve_stream.go. The
-// solver service itself lives at cmd/solver/.
+// solver service itself lives at solver/.
 type solverClient struct {
 	baseURL string
 	http    *http.Client

@@ -16,7 +16,7 @@ import (
 //
 // Each handler loads the Problem from the DB (session-overlay-aware), then
 // hands it to the private solver service via s.solver. The solver service
-// (cmd/solver) runs Ceres and returns a wire.Result; the api writes
+// (solver/) runs Ceres and returns a wire.Result; the api writes
 // resulting changes back through the session journal.
 
 // postSolveWarmup nudges the private solver service awake when the user enters

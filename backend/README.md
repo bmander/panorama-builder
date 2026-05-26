@@ -59,9 +59,9 @@ make split-down                     # stop the cluster
 
 The api binary is built with `-tags noceres` (no cgo, no Ceres) and
 forwards `/api/solve/*` calls to the solver service via `SOLVER_URL`. The
-solver binary lives at `cmd/solver/` and exposes `POST /solve`,
+solver binary lives at `../solver/` and exposes `POST /solve`,
 `POST /solve/stream`, and `POST /stop` — see `solver_client.go` and
-`solver/dto.go` for the wire contract.
+`../shared/wire/` for the wire contract.
 
 ## Env vars
 
@@ -78,7 +78,7 @@ solver binary lives at `cmd/solver/` and exposes `POST /solve`,
 | `RATE_LIMIT_READ_PER_MIN`  | `600` (per-IP GET/HEAD budget; burst is 10% of this)                    |
 | `RATE_LIMIT_WRITE_PER_MIN` | `60` (per-IP POST/PUT/PATCH/DELETE budget; burst is 10% of this)        |
 | `TRUSTED_PROXY_HOPS` | `0` (number of trusted L7 proxies in front of this binary; e.g. `1` for Cloud Run / Cloud Run + GFE — client IP is then read from X-Forwarded-For) |
-| `SOLVER_URL`      | `http://localhost:8081` (base URL of the private solver service — see `cmd/solver/`)                                                                |
+| `SOLVER_URL`      | `http://localhost:8081` (base URL of the private solver service — see `../solver/`)                                                                |
 
 ## Routes
 
