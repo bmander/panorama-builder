@@ -15,6 +15,10 @@ export function attachSolveActions(deps: SolveActionsDeps): SolveActions {
 
   const solveModal = createSolveModal({
     onComplete: () => {
+      // The solve writes new poses + CP estimates back into the session
+      // overlay, so the cached world graph (other stations' poses, CP
+      // positions) is now stale — drop it so the next flight refetches.
+      api.invalidateWorldCache();
       rehydrate().catch((err: unknown) => { reportError('reload after solve', err); });
     },
   });

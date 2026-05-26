@@ -218,7 +218,7 @@ func (s *Server) getWorld(w http.ResponseWriter, r *http.Request) {
 		writeErrorFromDB(w, err)
 		return
 	}
-	cpObs, err := s.cpObservationsByStation(ctx, id)
+	cpObs, err := s.allCpObservations(ctx)
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return

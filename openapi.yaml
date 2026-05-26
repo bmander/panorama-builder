@@ -1611,7 +1611,9 @@ components:
         station) plus the four global list reads. The focus station's full
         photos/measurements are partitioned out client-side by station_id;
         all other stations' photos supply the frustum cones and observation
-        rays. Honors X-Session-Id, applying the session overlay to every set.
+        rays. Every set is global (focus-independent) so the client can keep
+        one hydration and re-focus any station without refetching. Honors
+        X-Session-Id, applying the session overlay to every set.
       required: [station, stations, photos, image_measurements, control_points, cp_observations, cp_constraints, cp_surfaces]
       properties:
         station:
@@ -1635,7 +1637,9 @@ components:
           items: { $ref: '#/components/schemas/ControlPoint' }
         cp_observations:
           type: array
-          description: Per-CP observation status rows for the focus station only.
+          description: |
+            Per-CP observation status rows for every station (global). The
+            client filters to the focus station by station_id.
           items: { $ref: '#/components/schemas/CpObservation' }
         cp_constraints:
           type: array

@@ -113,11 +113,13 @@ function requireSessionForWrite(method: string, path: string): void {
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   requireSessionForWrite(method, path);
+  if (method !== 'GET') invalidateWorldCache();
   return apiRequest<T>(method, path, { body, sessionId: sessionStore.current() });
 }
 
 async function requestVoid(method: string, path: string): Promise<void> {
   requireSessionForWrite(method, path);
+  if (method !== 'GET') invalidateWorldCache();
   return apiRequestVoid(method, path, { sessionId: sessionStore.current() });
 }
 
@@ -170,19 +172,45 @@ export function getWorld(id: string): Promise<ApiHydratedWorld> {
   return request<ApiHydratedWorld>('GET', `/stations/${encodeURIComponent(id)}/world`);
 }
 
+// The world payload is focus-independent, so one hydration serves every
+// station. Cache it and reuse it for flying around the world view, which
+// otherwise re-downloads the whole graph on every flight. The cache is keyed
+// by the active session id (overlay context) and is dropped by
+// invalidateWorldCache on any write / merge / revert / solve so edits still
+// appear. A cache entry only serves a station it actually contains; a station
+// born in the current session won't be there until the next fetch.
+let worldCache: { readonly sessionId: string | null; readonly world: ApiHydratedWorld } | null = null;
+
+export function invalidateWorldCache(): void {
+  worldCache = null;
+}
+
+export async function getWorldCached(id: string): Promise<ApiHydratedWorld> {
+  const sessionId = sessionStore.current();
+  const hit = worldCache;
+  if (hit?.sessionId === sessionId && hit.world.stations.some(s => s.id === id)) {
+    return hit.world;
+  }
+  const world = await getWorld(id);
+  worldCache = { sessionId, world };
+  return world;
+}
+
 // Carve one station's hydrated slice out of a world payload, in the shape a
 // single-station read returns: its own photos and the measurements anchored to
 // them, plus the (global) control points and the station's cp_observations.
-// Used by both the world hydrate and the fly-between planner.
+// Used by both the world hydrate and the fly-between planner. Everything here
+// is derived from the global sets — never from the payload's focus echo — so a
+// payload fetched for one station can re-focus any other without refetching.
 export function focusStationFromWorld(world: ApiHydratedWorld, id: string): ApiHydratedStation {
   const photos = world.photos.filter(p => p.station_id === id);
   const photoIds = new Set(photos.map(p => p.id));
   return {
-    station: world.station,
+    station: world.stations.find(s => s.id === id) ?? world.station,
     photos,
     image_measurements: world.image_measurements.filter(im => photoIds.has(im.photo_id)),
     control_points: world.control_points,
-    cp_observations: world.cp_observations,
+    cp_observations: world.cp_observations.filter(o => o.station_id === id),
   };
 }
 
@@ -214,6 +242,7 @@ export function deletePhoto(id: string): Promise<void> {
 
 export async function uploadPhotoBlob(id: string, blob: Blob): Promise<void> {
   if (sessionStore.current() === null) throw new SessionNotStartedError();
+  invalidateWorldCache();  // blob_path changes; cached photo URL goes stale
   const path = `/photos/${encodeURIComponent(id)}/blob`;
   const res = await apiFetch(path, {
     method: 'PUT',
@@ -514,6 +543,7 @@ export async function getSessionRankDeficient(id: string): Promise<readonly Rank
 // mergeSession: throws SessionConflictError on 409 so the caller can render
 // a conflict UI instead of a generic error banner.
 export async function mergeSession(id: string, body: ApiMergeRequest): Promise<ApiCommitRef> {
+  invalidateWorldCache();  // merge writes to main; cached overlay view is stale
   const init: RequestInit = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -554,6 +584,7 @@ export function getCommit(id: string): Promise<ApiCommitWithOps> {
 // revertCommit: requires a sign_off (same peppercorn rule as mergeSession);
 // shares the conflict-as-error semantics.
 export async function revertCommit(id: string, body: ApiRevertRequest): Promise<ApiCommitRef> {
+  invalidateWorldCache();  // revert rewrites main; cached graph is stale
   const init: RequestInit = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -578,6 +609,7 @@ export async function revertCommit(id: string, body: ApiRevertRequest): Promise<
 // signals a newer commit landed since (refresh and retry). 400 surfaces the
 // "range contains revert commits" refusal as a plain error message.
 export async function revertToBefore(id: string, body: ApiRevertToBeforeRequest): Promise<ApiCommitRef> {
+  invalidateWorldCache();  // revert rewrites main; cached graph is stale
   const init: RequestInit = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

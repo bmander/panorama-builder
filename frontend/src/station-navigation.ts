@@ -192,7 +192,7 @@ export function createStationNavigation(deps: StationNavigationDeps): StationNav
     destId: string, fallbackFocus: CpFlightFocus | null,
   ): Promise<api.ApiHydratedWorld | null> {
     try {
-      return await api.getWorld(destId);
+      return await api.getWorldCached(destId);
     } catch (err) {
       console.error('fly: dest fetch failed:', err);
       await loadStation(destId, undefined, fallbackFocus);

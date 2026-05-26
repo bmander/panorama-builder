@@ -326,15 +326,9 @@ func (s *Server) getWorldInSession(w http.ResponseWriter, r *http.Request, sess 
 		writeErrorFromDB(w, err)
 		return
 	}
-	cpObsBase, err := s.cpObservationsByStation(ctx, id)
-	if err != nil {
-		writeErrorFromDB(w, err)
-		return
-	}
-	cpObs, err := mergeOverlay(cpObsBase, overlay[entityCPObservation],
-		func(o CpObservation) string { return o.ID },
-		decodeJSON[CpObservation],
-		func(o CpObservation) bool { return o.StationID == id })
+	cpObs, err := mergeListInSession(overlay, entityCPObservation,
+		func() ([]CpObservation, error) { return s.allCpObservations(ctx) },
+		func(o CpObservation) string { return o.ID })
 	if err != nil {
 		writeErrorFromDB(w, err)
 		return

@@ -708,7 +708,9 @@ type HydratedStation struct {
 // station) plus the four global list reads. The focus station's full
 // photos/measurements are partitioned out client-side by station_id;
 // all other stations' photos supply the frustum cones and observation
-// rays. Honors X-Session-Id, applying the session overlay to every set.
+// rays. Every set is global (focus-independent) so the client can keep
+// one hydration and re-focus any station without refetching. Honors
+// X-Session-Id, applying the session overlay to every set.
 type HydratedWorld struct {
 	// ControlPoints All control points.
 	ControlPoints []ControlPoint `json:"control_points"`
@@ -716,7 +718,8 @@ type HydratedWorld struct {
 	// CpConstraints All control-point constraints.
 	CpConstraints []CPConstraint `json:"cp_constraints"`
 
-	// CpObservations Per-CP observation status rows for the focus station only.
+	// CpObservations Per-CP observation status rows for every station (global). The
+	// client filters to the focus station by station_id.
 	CpObservations []CpObservation `json:"cp_observations"`
 
 	// CpSurfaces All control-point surfaces.

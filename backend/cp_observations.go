@@ -344,6 +344,27 @@ func (s *Server) cpObservationsByStation(ctx context.Context, stationID string) 
 	return out, rows.Err()
 }
 
+// allCpObservations returns every cp_observation row across all stations. The
+// world read returns the full set (not just the focus station's) so the client
+// can keep one hydration and re-focus any station without refetching.
+func (s *Server) allCpObservations(ctx context.Context) ([]CpObservation, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT `+cpObservationCols+` FROM cp_observations ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CpObservation{}
+	for rows.Next() {
+		o, err := scanCpObservation(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
 // collectCpObservationsForStation returns rows currently assigned to the
 // station after the session overlay is applied. Used by the cascade walker
 // in deleteStationInSession.

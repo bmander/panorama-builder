@@ -482,7 +482,7 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
       world = prefetched;
     } else {
       try {
-        world = await api.getWorld(id);
+        world = await api.getWorldCached(id);
       } catch (err) {
         console.error('hydrate failed:', err);
         alert('Could not load this station.');

@@ -1313,7 +1313,9 @@ export interface components {
          *     station) plus the four global list reads. The focus station's full
          *     photos/measurements are partitioned out client-side by station_id;
          *     all other stations' photos supply the frustum cones and observation
-         *     rays. Honors X-Session-Id, applying the session overlay to every set.
+         *     rays. Every set is global (focus-independent) so the client can keep
+         *     one hydration and re-focus any station without refetching. Honors
+         *     X-Session-Id, applying the session overlay to every set.
          */
         HydratedWorld: {
             /** @description The focus station row (overlay-applied). 404 if absent. */
@@ -1326,7 +1328,10 @@ export interface components {
             image_measurements: components["schemas"]["ImageMeasurement"][];
             /** @description All control points. */
             control_points: components["schemas"]["ControlPoint"][];
-            /** @description Per-CP observation status rows for the focus station only. */
+            /**
+             * @description Per-CP observation status rows for every station (global). The
+             *     client filters to the focus station by station_id.
+             */
             cp_observations: components["schemas"]["CpObservation"][];
             /** @description All control-point constraints. */
             cp_constraints: components["schemas"]["CPConstraint"][];
