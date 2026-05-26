@@ -191,18 +191,24 @@ const _colTop = new THREE.Vector3();
 
 // Pick the closest control-point — either a dot at (lat,lng,alt) or a vertical
 // column at (lat,lng) with unknown altitude — to an NDC point within
-// `hitRadius`. CPs with NULL est_lat/est_lng are excluded. Returns null when
-// nothing is in range.
+// `hitRadiusPx` of pixel distance on the viewport. CPs with NULL est_lat/est_lng
+// are excluded. Returns null when nothing is in range. Pixel-based (rather than
+// NDC) so the hit footprint matches the station-dot picker and stays the same
+// size as the visible marker regardless of viewport aspect ratio.
 export function findHitColumn(
   ndc: { x: number; y: number },
-  hitRadius: number,
+  hitRadiusPx: number,
+  viewportWidth: number,
+  viewportHeight: number,
   camera: THREE.Camera,
   cameraLocation: LatLng,
   cameraMSL: number,
   controlPoints: readonly ControlPointView[],
 ): { controlPointId: string; latlng: LatLng } | null {
-  let bestDist = hitRadius;
+  let bestDist = hitRadiusPx;
   let best: { controlPointId: string; latlng: LatLng } | null = null;
+  const halfW = viewportWidth / 2;
+  const halfH = viewportHeight / 2;
   for (const cp of controlPoints) {
     if (cp.estLat === null || cp.estLng === null) continue;
     const { x, z } = latLngToCameraRelativeMeters({ lat: cp.estLat, lng: cp.estLng }, cameraLocation);
@@ -212,11 +218,11 @@ export function findHitColumn(
       const y = cp.estAlt - cameraMSL - drop;
       _proj.set(x, y, z).project(camera);
       if (_proj.z > 1) continue;
-      dist = norm2(_proj.x - ndc.x, _proj.y - ndc.y);
+      dist = norm2((_proj.x - ndc.x) * halfW, (_proj.y - ndc.y) * halfH);
     } else {
       _colBot.set(x, -COLUMN_HIT_HALF_HEIGHT - drop, z);
       _colTop.set(x, COLUMN_HIT_HALF_HEIGHT - drop, z);
-      dist = ndcDistToProjectedSegment(ndc, _colBot, _colTop, camera, false);
+      dist = ndcDistToProjectedSegment(ndc, _colBot, _colTop, camera, false, halfW, halfH);
     }
     if (dist < bestDist) {
       bestDist = dist;
