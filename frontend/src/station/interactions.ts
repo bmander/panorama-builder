@@ -225,12 +225,16 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
         if (im.station_id !== here) nameByStation.set(im.station_id, im.station_name);
       }
       if (nameByStation.size === 0) return;
-      const zoom: ContextMenuItem[] = [{ kind: 'section', label: 'Zoom to…' }];
-      for (const [stId, name] of [...nameByStation].sort((a, b) => (a[1] ?? '').localeCompare(b[1] ?? ''))) {
-        const label = name ?? `Untitled ${stId.slice(0, 6)}`;
-        zoom.push({ label, onClick: () => { void panels.stationNavigation.flyToStation(stId, cpId); } });
-      }
-      panels.contextMenu.open(sx + 20, sy, [...zoom, ...baseItems()], header, info);
+      const options = [...nameByStation]
+        .sort((a, b) => (a[1] ?? '').localeCompare(b[1] ?? ''))
+        .map(([stId, name]) => ({ value: stId, label: name ?? `Untitled ${stId.slice(0, 6)}` }));
+      const zoom: ContextMenuItem = {
+        kind: 'dropdown',
+        label: 'Zoom to…',
+        options,
+        onSelect: stId => { void panels.stationNavigation.flyToStation(stId, cpId); },
+      };
+      panels.contextMenu.open(sx + 20, sy, [zoom, ...baseItems()], header, info);
     }).catch((err: unknown) => { console.error('list cp observations failed:', err); });
   }
 

@@ -22,14 +22,22 @@ export interface ContextMenuRadioGroup {
   readonly onChange: (value: string | null) => void;
 }
 
-// A non-interactive sub-header that groups the button items beneath it
-// (e.g. "Zoom to…" above a list of stations).
-export interface ContextMenuSection {
-  readonly kind: 'section';
+export interface ContextMenuDropdownOption {
+  readonly value: string;
   readonly label: string;
 }
 
-export type ContextMenuItem = ContextMenuButtonItem | ContextMenuRadioGroup | ContextMenuSection;
+// A <select> standing in for a long flat list of button items — keeps the menu
+// compact when the option count is open-ended (e.g. the "Zoom to…" stations
+// observing a control point). `label` is the placeholder shown until a pick.
+export interface ContextMenuDropdown {
+  readonly kind: 'dropdown';
+  readonly label: string;
+  readonly options: readonly ContextMenuDropdownOption[];
+  readonly onSelect: (value: string) => void;
+}
+
+export type ContextMenuItem = ContextMenuButtonItem | ContextMenuRadioGroup | ContextMenuDropdown;
 
 export interface ContextMenu {
   open(
@@ -96,6 +104,30 @@ export function createContextMenu(): ContextMenu {
     return fs;
   }
 
+  function renderDropdown(item: ContextMenuDropdown): HTMLSelectElement {
+    const sel = document.createElement('select');
+    sel.className = 'dropdown';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = item.label;
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    sel.appendChild(placeholder);
+    for (const opt of item.options) {
+      const o = document.createElement('option');
+      o.value = opt.value;
+      o.textContent = opt.label;
+      sel.appendChild(o);
+    }
+    sel.addEventListener('change', () => {
+      const value = sel.value;
+      if (!value) return;
+      close();
+      item.onSelect(value);
+    });
+    return sel;
+  }
+
   function open(
     x: number, y: number, items: readonly ContextMenuItem[],
     header?: string, info?: readonly string[],
@@ -123,11 +155,8 @@ export function createContextMenu(): ContextMenu {
         el.appendChild(renderRadioGroup(item));
         continue;
       }
-      if (item.kind === 'section') {
-        const sec = document.createElement('div');
-        sec.className = 'section';
-        sec.textContent = item.label;
-        el.appendChild(sec);
+      if (item.kind === 'dropdown') {
+        el.appendChild(renderDropdown(item));
         continue;
       }
       const btn = document.createElement('button');
