@@ -39,6 +39,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/station-markers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List stations with view-cone tuples and matched-observation counts
+         * @description Bulk map-page endpoint: every station (up to 1000, created_at DESC)
+         *     together with the data needed to render its frustum wedges and
+         *     auto-lock state, in a single request — replacing an N+1 fan-out of
+         *     GET /stations/{id}. Honors X-Session-Id, applying the session overlay
+         *     to stations, photos, and image measurements.
+         */
+        get: operations["listStationMarkers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stations/{id}": {
         parameters: {
             query?: never;
@@ -1257,6 +1281,36 @@ export interface components {
             cp_observations: components["schemas"]["CpObservation"][];
         };
         /**
+         * @description One photo's horizontal frustum, as an azimuth plus angular subtense.
+         *     The frontend derives the left/right edge bearings as
+         *     photo_az ∓ size_rad/2.
+         */
+        PhotoCone: {
+            /**
+             * Format: double
+             * @description Viewer-azimuth of the photo center, radians.
+             */
+            photo_az: number;
+            /**
+             * Format: double
+             * @description Horizontal angular subtense of the photo, radians.
+             */
+            size_rad: number;
+        };
+        /**
+         * @description Map-listing wrapper around Station: the station row plus the
+         *     per-photo cone tuples (ordered by photo created_at ASC) and the
+         *     count of matched (control_point_id != null) image measurements
+         *     across the station's photos. Powers the bulk /station-markers
+         *     endpoint that the map page uses instead of fanning out one
+         *     GET /stations/{id} per station.
+         */
+        StationMarker: {
+            station: components["schemas"]["Station"];
+            cones: components["schemas"]["PhotoCone"][];
+            matched_obs_count: number;
+        };
+        /**
          * @description POST body. lat/lng are required; other fields default if omitted.
          *     captured_at may be omitted or null when the date is unknown.
          */
@@ -1271,9 +1325,11 @@ export interface components {
              */
             alt?: number;
             name?: string | null;
-            /** @description defaults to false when omitted */
+            /** @description defaults to true when omitted */
             lock_lat?: boolean;
+            /** @description defaults to true when omitted */
             lock_lng?: boolean;
+            /** @description defaults to true when omitted */
             lock_alt?: boolean;
             /** Format: date-time */
             captured_at?: string | null;
@@ -1874,6 +1930,26 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+        };
+    };
+    listStationMarkers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StationMarker"][];
+                };
+            };
         };
     };
     getStation: {

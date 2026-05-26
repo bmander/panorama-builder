@@ -323,6 +323,74 @@ func (s *Server) listStationsInSession(w http.ResponseWriter, r *http.Request, s
 		func(st Station) string { return st.ID })
 }
 
+// listStationMarkersInSession is the session-overlay variant of
+// listStationMarkers: stations, photos, and image measurements are each
+// merged with the session journal before cones and matched counts are
+// derived, so a station/photo/match that lives only in the open session
+// still shows its wedge and feeds auto-lock.
+func (s *Server) listStationMarkersInSession(w http.ResponseWriter, r *http.Request, sess *Session) {
+	ctx := r.Context()
+	overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	stations, err := mergeListInSession(overlay, entityStation,
+		func() ([]Station, error) { return s.allStations(ctx) },
+		func(st Station) string { return st.ID })
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	photos, err := mergeListInSession(overlay, entityPhoto,
+		func() ([]Photo, error) { return s.allPhotos(ctx) },
+		func(p Photo) string { return p.ID })
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	ims, err := mergeListInSession(overlay, entityImageMeasurement,
+		func() ([]ImageMeasurement, error) { return s.allImageMeasurements(ctx) },
+		func(im ImageMeasurement) string { return im.ID })
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+
+	// Group photos by station for cones, re-sorting each group by created_at:
+	// mergeOverlay appends session inserts after the (already ordered) base,
+	// so without this the wedge order would drift from the non-session path.
+	photoStation := map[string]string{}
+	byStation := map[string][]Photo{}
+	for _, p := range photos {
+		photoStation[p.ID] = p.StationID
+		byStation[p.StationID] = append(byStation[p.StationID], p)
+	}
+	cones := map[string][]PhotoCone{}
+	for sid, ps := range byStation {
+		sort.SliceStable(ps, func(i, j int) bool { return ps[i].CreatedAt.Before(ps[j].CreatedAt) })
+		cs := make([]PhotoCone, len(ps))
+		for i, p := range ps {
+			cs[i] = PhotoCone{PhotoAz: p.PhotoAz, SizeRad: p.SizeRad}
+		}
+		cones[sid] = cs
+	}
+
+	// Matched (control_point_id != null) measurements counted per station,
+	// resolving each measurement's station through the merged photo set.
+	matched := map[string]int{}
+	for _, im := range ims {
+		if im.ControlPointID == nil {
+			continue
+		}
+		if sid, ok := photoStation[im.PhotoID]; ok {
+			matched[sid]++
+		}
+	}
+
+	writeJSON(w, http.StatusOK, assembleStationMarkers(stations, cones, matched))
+}
+
 func (s *Server) listPhotosInSession(w http.ResponseWriter, r *http.Request, sess *Session) {
 	ctx := r.Context()
 	overlay, err := loadSessionOverlay(ctx, s.db, sess.ID)

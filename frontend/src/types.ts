@@ -56,6 +56,14 @@ export interface Cone {
   readonly azR: number;
 }
 
+// A photo's horizontal frustum as left/right viewer-azimuth bounds. The cone
+// half-angle is size_rad/2 directly (aspect doesn't enter). Both the bulk
+// station-marker tuples and a hydrated photo carry photo_az/size_rad, so this
+// is the single place that turns either into a Cone.
+export function coneFromAzSize(p: { photo_az: number; size_rad: number }): Cone {
+  return { azL: p.photo_az - p.size_rad / 2, azR: p.photo_az + p.size_rad / 2 };
+}
+
 // Per-image-measurement viewer bearing, paired with its scene-graph handle so
 // the map view can correlate clicks back to the measurement it represents.
 export interface ImageMeasurementBearing {

@@ -92,6 +92,26 @@ paths:
                 items: { $ref: '#/components/schemas/Station' }
         '400': { $ref: '#/components/responses/BadRequest' }
 
+  /station-markers:
+    get:
+      tags: [stations]
+      summary: List stations with view-cone tuples and matched-observation counts
+      description: |
+        Bulk map-page endpoint: every station (up to 1000, created_at DESC)
+        together with the data needed to render its frustum wedges and
+        auto-lock state, in a single request — replacing an N+1 fan-out of
+        GET /stations/{id}. Honors X-Session-Id, applying the session overlay
+        to stations, photos, and image measurements.
+      operationId: listStationMarkers
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/StationMarker' }
+
   /stations/{id}:
     parameters:
       - $ref: '#/components/parameters/StationId'
@@ -1560,6 +1580,40 @@ components:
           type: array
           description: Per-CP observation status rows for this station.
           items: { $ref: '#/components/schemas/CpObservation' }
+
+    PhotoCone:
+      type: object
+      description: |
+        One photo's horizontal frustum, as an azimuth plus angular subtense.
+        The frontend derives the left/right edge bearings as
+        photo_az ∓ size_rad/2.
+      required: [photo_az, size_rad]
+      properties:
+        photo_az:
+          type: number
+          format: double
+          description: Viewer-azimuth of the photo center, radians.
+        size_rad:
+          type: number
+          format: double
+          description: Horizontal angular subtense of the photo, radians.
+
+    StationMarker:
+      type: object
+      description: |
+        Map-listing wrapper around Station: the station row plus the
+        per-photo cone tuples (ordered by photo created_at ASC) and the
+        count of matched (control_point_id != null) image measurements
+        across the station's photos. Powers the bulk /station-markers
+        endpoint that the map page uses instead of fanning out one
+        GET /stations/{id} per station.
+      required: [station, cones, matched_obs_count]
+      properties:
+        station: { $ref: '#/components/schemas/Station' }
+        cones:
+          type: array
+          items: { $ref: '#/components/schemas/PhotoCone' }
+        matched_obs_count: { type: integer, minimum: 0 }
 
     CreateStationRequest:
       type: object

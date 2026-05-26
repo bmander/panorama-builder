@@ -95,6 +95,38 @@ func (s *Server) listStations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// listStationMarkers is the bulk map-page read: every station together with
+// the per-photo cone tuples and matched-observation count needed to render
+// its marker, in a single request. It replaces an N+1 fan-out of
+// GET /stations/{id} (one per station), which on a busy deploy tripped the
+// per-IP read rate limiter and silently dropped a few stations' cones. Reads
+// apply the session overlay when X-Session-Id is present.
+func (s *Server) listStationMarkers(w http.ResponseWriter, r *http.Request) {
+	if sess, ok := s.tryLoadSession(w, r); !ok {
+		return
+	} else if sess != nil {
+		s.listStationMarkersInSession(w, r, sess)
+		return
+	}
+	ctx := r.Context()
+	stations, err := s.allStations(ctx)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	cones, err := s.conesByStation(ctx)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	matched, err := s.matchedObsCountsByStation(ctx)
+	if err != nil {
+		writeErrorFromDB(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, assembleStationMarkers(stations, cones, matched))
+}
+
 func (s *Server) getStation(w http.ResponseWriter, r *http.Request) {
 	if sess, ok := s.tryLoadSession(w, r); !ok {
 		return
@@ -186,6 +218,72 @@ func (s *Server) photosByStation(ctx context.Context, stationID string) ([]Photo
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// conesByStation groups every photo's (photo_az, size_rad) by station id,
+// ordered by photo created_at so wedge order matches the station page. Used
+// by the non-session listStationMarkers path.
+func (s *Server) conesByStation(ctx context.Context) (map[string][]PhotoCone, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT station_id, photo_az, size_rad FROM photos ORDER BY station_id, created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]PhotoCone{}
+	for rows.Next() {
+		var sid string
+		var c PhotoCone
+		if err := rows.Scan(&sid, &c.PhotoAz, &c.SizeRad); err != nil {
+			return nil, err
+		}
+		out[sid] = append(out[sid], c)
+	}
+	return out, rows.Err()
+}
+
+// matchedObsCountsByStation counts, per station, the image measurements whose
+// control_point_id is non-null (a "match"), joined to stations via photos.
+func (s *Server) matchedObsCountsByStation(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT p.station_id, COUNT(*)
+		FROM image_measurements im
+		JOIN photos p ON p.id = im.photo_id
+		WHERE im.control_point_id IS NOT NULL
+		GROUP BY p.station_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var sid string
+		var n int
+		if err := rows.Scan(&sid, &n); err != nil {
+			return nil, err
+		}
+		out[sid] = n
+	}
+	return out, rows.Err()
+}
+
+// assembleStationMarkers joins station rows with their cone tuples and matched
+// counts (both keyed by station id). Stations absent from cones get an empty,
+// non-nil slice so the JSON emits `[]` rather than `null`.
+func assembleStationMarkers(stations []Station, cones map[string][]PhotoCone, matched map[string]int) []StationMarker {
+	out := make([]StationMarker, len(stations))
+	for i, st := range stations {
+		c := cones[st.ID]
+		if c == nil {
+			c = []PhotoCone{}
+		}
+		out[i] = StationMarker{
+			Station:         st,
+			Cones:           c,
+			MatchedObsCount: matched[st.ID],
+		}
+	}
+	return out
 }
 
 func (s *Server) imageMeasurementsByStation(ctx context.Context, stationID string) ([]ImageMeasurement, error) {

@@ -4,7 +4,7 @@
 // through createMapView.
 
 import * as api from './api.js';
-import type { ApiControlPoint, ApiHydratedStation, ApiStation } from './api.js';
+import type { ApiControlPoint, ApiHydratedStation, ApiStation, ApiStationMarker } from './api.js';
 import { createMapView } from './map.js';
 import type { MapView, MapViewState } from './map.js';
 import { createSolveModal } from './solve-modal.js';
@@ -16,7 +16,7 @@ import { attachHamburgerMenu } from './hamburger-menu.js';
 import { nullCpRayBearingDeg } from './null-cp-rays.js';
 import { readAspectRatio } from './handlers.js';
 import {
-  cpLifespanFromApi, getElement, lifespanOverlapsRange,
+  coneFromAzSize, cpLifespanFromApi, getElement, lifespanOverlapsRange,
   nullableIntervalOverlapsRange, stationHref,
 } from './types.js';
 import { stationAutoLockFor } from './auto-lock.js';
@@ -187,40 +187,25 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
   }
 
   async function loadStationMarkers(): Promise<void> {
-    let stations: ApiStation[];
+    // One bulk request returns every station with its per-photo cone tuples
+    // and matched-observation count. This replaced an N+1 fan-out of
+    // getStation (one per station), which on a busy deploy tripped the read
+    // rate limiter and silently dropped a few stations' cones to a bare dot.
+    let markers: ApiStationMarker[];
     try {
-      stations = await api.listStations();
+      markers = await api.listStationMarkers();
     } catch (err) {
-      console.error('list stations failed:', err);
+      console.error('list station markers failed:', err);
       return;
     }
-    // Hydrate each station in parallel so the map icon can show every photo's
-    // frustum wedge. Failures degrade to an empty cone list (the marker still
-    // renders as a bare apex dot). With ~tens of stations this is fine; if it
-    // grows we'd want a dedicated /api/stations endpoint that returns just
-    // photo (id, photo_az, size_rad) tuples.
-    const hydrated = await Promise.all(stations.map(async st => {
-      try {
-        return await api.getStation(st.id);
-      } catch (err) {
-        console.error(`hydrate station ${st.id} failed:`, err);
-        return null;
-      }
-    }));
     stationsById.clear();
-    stations.forEach((st, i) => {
-      const h = hydrated[i];
-      const cones: Cone[] = h
-        ? h.photos.map(p => ({ azL: p.photo_az - p.size_rad / 2, azR: p.photo_az + p.size_rad / 2 }))
-        : [];
-      let matchedObsCount = 0;
-      if (h) {
-        for (const im of h.image_measurements) {
-          if (im.control_point_id !== null) matchedObsCount++;
-        }
-      }
-      stationsById.set(st.id, { station: st, cones, matchedObsCount });
-    });
+    for (const m of markers) {
+      stationsById.set(m.station.id, {
+        station: m.station,
+        cones: m.cones.map(coneFromAzSize),
+        matchedObsCount: m.matched_obs_count,
+      });
+    }
     refreshStationMarkers();
   }
 
@@ -313,13 +298,7 @@ export function mountIndexPage(opts: MountIndexPageOptions): void {
       console.error('preview failed:', err);
       return;
     }
-    // size_rad is the photo's horizontal angular subtense (applySize derives
-    // plane width = 2·R·tan(sizeRad/2); height = width/aspect). The cone
-    // half-angle is sizeRad/2 directly — aspect doesn't enter here.
-    const cones = data.photos.map(p => ({
-      azL: p.photo_az - p.size_rad / 2,
-      azR: p.photo_az + p.size_rad / 2,
-    }));
+    const cones = data.photos.map(coneFromAzSize);
     // Map.ts only colors CPs that appear in the index layer (those with
     // est_lat/lng), so unestimated CPs in the set are silently ignored.
     const observedCpIds = new Set<string>();

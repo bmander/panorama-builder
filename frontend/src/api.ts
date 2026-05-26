@@ -21,6 +21,7 @@ export type ApiPhotoListItem = Schemas['PhotoListItem'];
 export type ApiImageMeasurement = Schemas['ImageMeasurement'];
 export type ApiControlPoint = Schemas['ControlPoint'];
 export type ApiHydratedStation = Schemas['HydratedStation'];
+export type ApiStationMarker = Schemas['StationMarker'];
 export type PhotoPosePatch = Schemas['PhotoPosePatch'];
 export type ImageMeasurementPatch = Schemas['ImageMeasurementPatch'];
 export type ControlPointPatch = Schemas['ControlPointPatch'];
@@ -148,6 +149,12 @@ export function createStation(latlng: LatLng, capturedAt: string | null, name?: 
 
 export function listStations(): Promise<ApiStation[]> {
   return request<ApiStation[]>('GET', '/stations');
+}
+
+// Bulk map-page read: every station with its view-cone tuples + matched
+// observation count in one request, replacing an N+1 fan-out of getStation.
+export function listStationMarkers(): Promise<ApiStationMarker[]> {
+  return request<ApiStationMarker[]>('GET', '/station-markers');
 }
 
 export function getStation(id: string): Promise<ApiHydratedStation> {

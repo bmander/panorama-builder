@@ -622,10 +622,14 @@ type CreateStationRequest struct {
 	CapturedAt *time.Time `json:"captured_at,omitempty"`
 	Lat        float64    `json:"lat"`
 	Lng        float64    `json:"lng"`
-	LockAlt    *bool      `json:"lock_alt,omitempty"`
 
-	// LockLat defaults to false when omitted
-	LockLat *bool   `json:"lock_lat,omitempty"`
+	// LockAlt defaults to true when omitted
+	LockAlt *bool `json:"lock_alt,omitempty"`
+
+	// LockLat defaults to true when omitted
+	LockLat *bool `json:"lock_lat,omitempty"`
+
+	// LockLng defaults to true when omitted
 	LockLng *bool   `json:"lock_lng,omitempty"`
 	Name    *string `json:"name,omitempty"`
 }
@@ -831,6 +835,17 @@ type Photo struct {
 	// StationID 13-character base32 server-assigned id
 	StationID ID        `json:"station_id"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// PhotoCone One photo's horizontal frustum, as an azimuth plus angular subtense.
+// The frontend derives the left/right edge bearings as
+// photo_az ∓ size_rad/2.
+type PhotoCone struct {
+	// PhotoAz Viewer-azimuth of the photo center, radians.
+	PhotoAz float64 `json:"photo_az"`
+
+	// SizeRad Horizontal angular subtense of the photo, radians.
+	SizeRad float64 `json:"size_rad"`
 }
 
 // PhotoListItem Listing-only wrapper around Photo that adds the count of image
@@ -1089,6 +1104,18 @@ type StationDerivedWindow struct {
 	CapturedAtLower *time.Time `json:"captured_at_lower"`
 	CapturedAtUpper *time.Time `json:"captured_at_upper"`
 	Inconsistent    bool       `json:"inconsistent"`
+}
+
+// StationMarker Map-listing wrapper around Station: the station row plus the
+// per-photo cone tuples (ordered by photo created_at ASC) and the
+// count of matched (control_point_id != null) image measurements
+// across the station's photos. Powers the bulk /station-markers
+// endpoint that the map page uses instead of fanning out one
+// GET /stations/{id} per station.
+type StationMarker struct {
+	Cones           []PhotoCone `json:"cones"`
+	MatchedObsCount int         `json:"matched_obs_count"`
+	Station         Station     `json:"station"`
 }
 
 // StationUpdate Partial-update body for PUT /stations/{id}. Every field is

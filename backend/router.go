@@ -16,6 +16,7 @@ func (s *Server) routes() http.Handler {
 
 	mux.HandleFunc("POST /api/stations", s.postStation)
 	mux.HandleFunc("GET /api/stations", s.listStations)
+	mux.HandleFunc("GET /api/station-markers", s.listStationMarkers)
 	mux.HandleFunc("GET /api/stations/{id}", s.getStation)
 	mux.HandleFunc("PUT /api/stations/{id}", s.putStation)
 	mux.HandleFunc("DELETE /api/stations/{id}", s.deleteStation)
