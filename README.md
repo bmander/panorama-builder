@@ -71,7 +71,7 @@ If you're adding a write path, schema-level cascade, or any operation that touch
 ## Stack
 
 - **Frontend**: TypeScript (strict + `noUncheckedIndexedAccess`), Three.js, Leaflet, bundled with Vite. Factory-function modules, no UI framework, no test suite (by design).
-- **Backend**: Go 1.22+ stdlib `net/http` (method routing), `pgx/v5`, Postgres + PostGIS; photo blobs on local disk or GCS.
+- **Backend**: Go 1.25+ stdlib `net/http` (method routing), `pgx/v5`, Postgres + PostGIS; photo blobs on local disk or GCS.
 - **Solver**: Go + Google Ceres-Solver via cgo, reached over HTTP; the `shared/wire` package carries the request/response types.
 
 ## Commands

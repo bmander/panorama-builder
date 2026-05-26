@@ -8,7 +8,7 @@ so a single `make run` brings up both API and SPA on `:8080`.
 
 ## Quick start
 
-Requires Go 1.22+ for the stdlib method-routing mux. Links Google
+Requires Go 1.25+ for the stdlib method-routing mux. Links Google
 Ceres-Solver via cgo for bundle adjustment (see `solver/bridge.cc`);
 install system deps first:
 

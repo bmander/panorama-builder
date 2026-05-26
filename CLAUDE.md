@@ -66,7 +66,7 @@ Single Go package under `backend/`:
 - `solver/` — bundle-adjustment solver invoked from `solve_handlers.go` / `solve_stream.go`. Links Google Ceres-Solver via cgo (`solver/bridge.cc` + `solver/bridge.go`). Problem build, CP-class union-find, and the `composeChanges` diff emission live in `solver/context.go`.
 - Domain vocabulary: **stations** (camera setup points; formerly "locations"/"projects"), **control points** (cross-station landmarks with latent estimated locations), **map measurements** (per-station ground-truth observations on the map; formerly "map POI"), **image measurements** (reticle anchors on photos; formerly "image POI"). Both measurement types FK to a control point
 
-External deps: `github.com/jackc/pgx/v5` (Postgres) and Ceres-Solver linked via cgo (system install — see `backend/README.md`). Targets Go 1.22+ for stdlib method-routing.
+External deps: `github.com/jackc/pgx/v5` (Postgres) and Ceres-Solver linked via cgo (system install — see `backend/README.md`). Targets Go 1.25+ for stdlib method-routing.
 
 ## Conventions
 
@@ -80,7 +80,7 @@ External deps: `github.com/jackc/pgx/v5` (Postgres) and Ceres-Solver linked via 
 - **Imports keep `.js` extensions** (`import { foo } from './bar.js'`) — historical from the importmap days; Vite + `moduleResolution: Bundler` accept them and we keep the convention so all imports look the same.
 
 ### Backend
-- **Stdlib first.** Only `pgx/v5` so far. Don't add chi/gin/echo/gorilla; the Go 1.22 method-routing mux is enough.
+- **Stdlib first.** Only `pgx/v5` so far. Don't add chi/gin/echo/gorilla; the Go 1.25 method-routing mux is enough.
 - **No ORM.** Hand-rolled SQL with prepared statements via `s.db.QueryRow` / `s.db.Query` / `s.db.Exec`.
 - **Server-assigned IDs.** 13-char base32 from `newID()`. Validate every path-param id with `requireID(w, r, "id")` before any work.
 - **Validation in handler-local `validate()` methods.** Range-check lat/lng, u/v, opacity, etc. Reject early with `writeError(w, 400, ...)`.
