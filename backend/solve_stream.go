@@ -11,29 +11,33 @@ import (
 
 // SSE solver streams. Both endpoints emit:
 //
+//	data: {"kind":"stage","stage":"load|solve|writeback"[,"count":N]}\n\n
 //	data: {"kind":"iter","iter":N,"rms":R,"accepted":bool}\n\n
 //	data: {"kind":"done","result":{...SolveResult JSON...}}\n\n
 //	data: {"kind":"stopped","result":{...SolveResult JSON...}}\n\n
 //	data: {"kind":"cancelled"}\n\n
 //	data: {"kind":"error","message":"..."}\n\n
 //
-// The api proxies these to the private solver service. Iter frames are
-// forwarded verbatim (the byte shape is identical on both sides). The
-// terminal `done` / `stopped` kinds are picked from wire.SolverDoneEvent's
-// Aborted bit; `cancelled` fires when the api's own request context dies
-// (browser disconnect) before the solver could land a terminal frame.
+// `stage` frames bracket the phases the browser would otherwise see as dead
+// air (DB load, solver contact, writeback) so the modal can show what the
+// solve is doing before the first iter lands. The api proxies the iter frames
+// to the private solver service — forwarded verbatim (the byte shape is
+// identical on both sides). The terminal `done` / `stopped` kinds are picked
+// from wire.SolverDoneEvent's Aborted bit; `cancelled` fires when the api's own
+// request context dies (browser disconnect) before the solver could land a
+// terminal frame.
 
 func (s *Server) postSolveJointStream(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.requireSession(w, r)
 	if !ok {
 		return
 	}
-	cfg, ok := parseSolveConfig(w, r)
+	p, ok := parseSolveConfig(w, r)
 	if !ok {
 		return
 	}
-	cfg.Mode = wire.ModeJoint
-	s.streamSolve(w, r, sess, cfg)
+	p.cfg.Mode = wire.ModeJoint
+	s.streamSolve(w, r, sess, p.cfg, p.dryRun)
 }
 
 func (s *Server) postSolveStationStream(w http.ResponseWriter, r *http.Request) {
@@ -45,16 +49,16 @@ func (s *Server) postSolveStationStream(w http.ResponseWriter, r *http.Request) 
 	if id == "" {
 		return
 	}
-	cfg, ok := parseSolveConfig(w, r)
+	p, ok := parseSolveConfig(w, r)
 	if !ok {
 		return
 	}
-	cfg.Mode = wire.ModeSingleStation
-	cfg.FocusID = id
-	s.streamSolve(w, r, sess, cfg)
+	p.cfg.Mode = wire.ModeSingleStation
+	p.cfg.FocusID = id
+	s.streamSolve(w, r, sess, p.cfg, p.dryRun)
 }
 
-func (s *Server) streamSolve(w http.ResponseWriter, r *http.Request, sess *Session, cfg wire.SolveConfigDTO) {
+func (s *Server) streamSolve(w http.ResponseWriter, r *http.Request, sess *Session, cfg wire.SolveConfigDTO, dryRun bool) {
 	// Streaming runs are user-cancellable via Cancel/Stop, so the cap mainly
 	// guards against pathological non-converging configurations.
 	if cfg.MaxIters == 0 {
@@ -64,17 +68,12 @@ func (s *Server) streamSolve(w http.ResponseWriter, r *http.Request, sess *Sessi
 	defer s.solveMu.Unlock()
 
 	ctx := r.Context()
-	prob, seededCPIDs, exists, err := s.loadProblem(ctx, cfg, sess)
-	if err != nil {
-		log.Printf("solver load: %v", err)
-		writeError(w, http.StatusInternalServerError, "load failed")
-		return
-	}
-	if !exists {
-		writeError(w, http.StatusNotFound, "focus entity not found")
-		return
-	}
 
+	// Open the SSE stream up front — before the DB load — so every phase
+	// (load, solver contact, writeback) can emit a `stage` frame the browser
+	// can show. This is the only pre-stream error path left: once the headers
+	// are committed below, load/lookup failures surface as in-stream `error`
+	// frames rather than HTTP status codes.
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "streaming unsupported")
@@ -98,6 +97,21 @@ func (s *Server) streamSolve(w http.ResponseWriter, r *http.Request, sess *Sessi
 	sendError := func(msg string) {
 		sendEvent(map[string]string{"kind": "error", "message": msg})
 	}
+	sendStage := func(stage string) {
+		sendEvent(map[string]string{"kind": "stage", "stage": stage})
+	}
+
+	sendStage("load")
+	prob, seededCPIDs, exists, err := s.loadProblem(ctx, cfg, sess)
+	if err != nil {
+		log.Printf("solver load: %v", err)
+		sendError("load failed")
+		return
+	}
+	if !exists {
+		sendError("focus entity not found")
+		return
+	}
 
 	// Iter events have the same JSON shape on both internal (solver→api) and
 	// external (api→browser) wires, so we relay the raw bytes — no parse,
@@ -107,6 +121,10 @@ func (s *Server) streamSolve(w http.ResponseWriter, r *http.Request, sess *Sessi
 		flusher.Flush()
 	}
 
+	// The solver contact + cold start + first Ceres iteration all happen inside
+	// SolveStream; emitting "solve" right before it lets the browser detect a
+	// cold start (no event for a beat after this frame).
+	sendStage("solve")
 	res, aborted, err := s.solver.SolveStream(ctx, prob, cfg, seededCPIDs, onIter)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -122,13 +140,19 @@ func (s *Server) streamSolve(w http.ResponseWriter, r *http.Request, sess *Sessi
 		return
 	}
 
-	if err := s.writebackChangesInSession(ctx, sess.ID, res.Changes); err != nil {
-		log.Printf("solver writeback: %v", err)
-		sendError("writeback failed")
-		return
-	}
-	if err := s.recordSolveRMS(ctx, sess.ID, res.FinalResidualRMS); err != nil {
-		log.Printf("solver rms record: %v", err)
+	// dry_run previews the fit — the result still carries the would-be changes
+	// for the UI, but we journal nothing (and emit no writeback stage) so the
+	// run leaves no trace.
+	if !dryRun {
+		sendEvent(map[string]any{"kind": "stage", "stage": "writeback", "count": len(res.Changes)})
+		if err := s.writebackChangesInSession(ctx, sess.ID, res.Changes); err != nil {
+			log.Printf("solver writeback: %v", err)
+			sendError("writeback failed")
+			return
+		}
+		if err := s.recordSolveRMS(ctx, sess.ID, res.FinalResidualRMS); err != nil {
+			log.Printf("solver rms record: %v", err)
+		}
 	}
 
 	terminalKind := "done"

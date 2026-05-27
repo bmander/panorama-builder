@@ -408,6 +408,7 @@ export function deleteCPSurface(id: string): Promise<void> {
 // the server detects the disconnect, and the in-flight solve breaks early
 // without writing anything back.
 export type SolveProgressEvent =
+  | { readonly kind: 'stage'; readonly stage: 'load' | 'solve' | 'writeback'; readonly count?: number }
   | { readonly kind: 'iter'; readonly iter: number; readonly rms: number; readonly accepted: boolean }
   | { readonly kind: 'done'; readonly result: SolveResult }
   | { readonly kind: 'stopped'; readonly result: SolveResult }

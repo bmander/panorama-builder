@@ -44,6 +44,22 @@ interface ChartState {
 
 const CHART_PADDING_PX = 24;
 
+// ~2.5s after "Contacting solver…" with no further event ⇒ almost certainly a
+// Cloud Run cold start (the solver is scaled to zero and spinning up). A single
+// label switch, not a ticking counter.
+const COLD_START_MS = 2500;
+
+function stageLabel(ev: { stage: 'load' | 'solve' | 'writeback'; count?: number }): string {
+  switch (ev.stage) {
+    case 'load': return 'Loading problem…';
+    case 'solve': return 'Contacting solver…';
+    case 'writeback': {
+      const n = ev.count ?? 0;
+      return `Writing back ${n.toString()} change${n === 1 ? '' : 's'}…`;
+    }
+  }
+}
+
 export function createSolveModal(
   { onComplete }: CreateSolveModalOptions,
 ): SolveModal {
@@ -87,7 +103,15 @@ export function createSolveModal(
 
   let activeAbort: AbortController | null = null;
   let activeRun: SolveRun | null = null;
+  let coldStartTimer: number | null = null;
   const chart: ChartState = { iters: [], rms: [], logMin: 0, logMax: 0 };
+
+  function clearColdStart(): void {
+    if (coldStartTimer !== null) {
+      clearTimeout(coldStartTimer);
+      coldStartTimer = null;
+    }
+  }
 
   function setRunning(running: boolean): void {
     functionTolEl.disabled = running;
@@ -107,6 +131,7 @@ export function createSolveModal(
       activeAbort.abort();
       activeAbort = null;
     }
+    clearColdStart();
     modalEl.hidden = true;
     setRunning(false);
     progressEl.hidden = true;
@@ -250,9 +275,19 @@ export function createSolveModal(
     let errorMessage: string | null = null;
 
     run.start(base, ev => {
+      // Any frame means the solver is responding, so cancel a pending
+      // cold-start escalation; only the "solve" stage re-arms it.
+      clearColdStart();
       if (ev.kind === 'iter') {
         pushPoint(ev.iter, ev.rms);
         statusEl.textContent = `iter ${(ev.iter + 1).toString()}  rms ${ev.rms.toExponential(4)}`;
+      } else if (ev.kind === 'stage') {
+        statusEl.textContent = stageLabel(ev);
+        if (ev.stage === 'solve') {
+          coldStartTimer = window.setTimeout(() => {
+            statusEl.textContent = 'Waking solver (cold start)…';
+          }, COLD_START_MS);
+        }
       } else if (ev.kind === 'done' || ev.kind === 'stopped') {
         result = ev.result;
         terminalKind = ev.kind;
@@ -263,6 +298,7 @@ export function createSolveModal(
         errorMessage = ev.message;
       }
     }, abort.signal).then(() => {
+      clearColdStart();
       if (activeAbort === abort) activeAbort = null;
       setRunning(false);
       if (terminalKind === 'cancelled') {
@@ -297,6 +333,7 @@ export function createSolveModal(
         }
       }
     }, (err: unknown) => {
+      clearColdStart();
       if (activeAbort === abort) activeAbort = null;
       setRunning(false);
       statusEl.textContent = `request failed: ${String(err)}`;

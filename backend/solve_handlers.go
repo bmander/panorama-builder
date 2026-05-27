@@ -45,12 +45,12 @@ func (s *Server) postSolveJoint(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cfg, ok := parseSolveConfig(w, r)
+	p, ok := parseSolveConfig(w, r)
 	if !ok {
 		return
 	}
-	cfg.Mode = wire.ModeJoint
-	s.runSolve(w, r, cfg, sess)
+	p.cfg.Mode = wire.ModeJoint
+	s.runSolve(w, r, p.cfg, p.dryRun, sess)
 }
 
 func (s *Server) postSolveStation(w http.ResponseWriter, r *http.Request) {
@@ -62,13 +62,13 @@ func (s *Server) postSolveStation(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		return
 	}
-	cfg, ok := parseSolveConfig(w, r)
+	p, ok := parseSolveConfig(w, r)
 	if !ok {
 		return
 	}
-	cfg.Mode = wire.ModeSingleStation
-	cfg.FocusID = id
-	s.runSolve(w, r, cfg, sess)
+	p.cfg.Mode = wire.ModeSingleStation
+	p.cfg.FocusID = id
+	s.runSolve(w, r, p.cfg, p.dryRun, sess)
 }
 
 func (s *Server) postSolveControlPoint(w http.ResponseWriter, r *http.Request) {
@@ -80,43 +80,56 @@ func (s *Server) postSolveControlPoint(w http.ResponseWriter, r *http.Request) {
 	if id == "" {
 		return
 	}
-	cfg, ok := parseSolveConfig(w, r)
+	p, ok := parseSolveConfig(w, r)
 	if !ok {
 		return
 	}
-	cfg.Mode = wire.ModeSingleControlPoint
-	cfg.FocusID = id
-	s.runSolve(w, r, cfg, sess)
+	p.cfg.Mode = wire.ModeSingleControlPoint
+	p.cfg.FocusID = id
+	s.runSolve(w, r, p.cfg, p.dryRun, sess)
 }
 
-func parseSolveConfig(w http.ResponseWriter, r *http.Request) (wire.SolveConfigDTO, bool) {
-	cfg := wire.SolveConfigDTO{}
+// solveParams is the parsed solve request: the solver-bound config DTO plus
+// api-only flags that never cross the solver wire. dryRun gates the api's
+// session writeback — the solver always computes and returns the would-be
+// changes; on a dry run we simply don't journal them — so it deliberately
+// stays out of wire.SolveConfigDTO, which mirrors the solver's own Config.
+type solveParams struct {
+	cfg    wire.SolveConfigDTO
+	dryRun bool
+}
+
+func parseSolveConfig(w http.ResponseWriter, r *http.Request) (solveParams, bool) {
+	p := solveParams{}
 	if r.ContentLength == 0 {
-		return cfg, true
+		return p, true
 	}
 	var req SolveConfig
 	if !parseJSON(w, r, &req) {
-		return cfg, false
+		return p, false
 	}
 	if req.MaxIters != nil {
-		cfg.MaxIters = *req.MaxIters
+		p.cfg.MaxIters = *req.MaxIters
 	}
 	if req.FunctionTol != nil {
-		cfg.FunctionTol = *req.FunctionTol
+		p.cfg.FunctionTol = *req.FunctionTol
 	}
 	if req.StepTol != nil {
-		cfg.StepTol = *req.StepTol
+		p.cfg.StepTol = *req.StepTol
 	}
 	if req.KRegLambda != nil {
-		cfg.KRegLambda = *req.KRegLambda
+		p.cfg.KRegLambda = *req.KRegLambda
 	}
 	if req.PositionRegLambda != nil {
-		cfg.PositionRegLambda = *req.PositionRegLambda
+		p.cfg.PositionRegLambda = *req.PositionRegLambda
 	}
-	return cfg, true
+	if req.DryRun != nil {
+		p.dryRun = *req.DryRun
+	}
+	return p, true
 }
 
-func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg wire.SolveConfigDTO, sess *Session) {
+func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg wire.SolveConfigDTO, dryRun bool, sess *Session) {
 	s.solveMu.Lock()
 	defer s.solveMu.Unlock()
 
@@ -147,13 +160,18 @@ func (s *Server) runSolve(w http.ResponseWriter, r *http.Request, cfg wire.Solve
 		}
 		return
 	}
-	if err := s.writebackChangesInSession(ctx, sess.ID, res.Changes); err != nil {
-		log.Printf("solver writeback: %v", err)
-		writeError(w, http.StatusInternalServerError, "writeback failed")
-		return
-	}
-	if err := s.recordSolveRMS(ctx, sess.ID, res.FinalResidualRMS); err != nil {
-		log.Printf("solver rms record: %v", err)
+	// dry_run previews the fit: the solver still returns the would-be changes
+	// (surfaced in the result for the UI), but we journal nothing and leave
+	// session metadata untouched, so the run has no persistent effect.
+	if !dryRun {
+		if err := s.writebackChangesInSession(ctx, sess.ID, res.Changes); err != nil {
+			log.Printf("solver writeback: %v", err)
+			writeError(w, http.StatusInternalServerError, "writeback failed")
+			return
+		}
+		if err := s.recordSolveRMS(ctx, sess.ID, res.FinalResidualRMS); err != nil {
+			log.Printf("solver rms record: %v", err)
+		}
 	}
 	writeJSON(w, http.StatusOK, toAPISolveResult(res))
 }
