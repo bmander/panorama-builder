@@ -1,6 +1,8 @@
 import * as api from './api.js';
 import { degToRad } from './mathx.js';
 import { createSessionPanel } from './session-panel.js';
+import { createSolverPanel } from './solver-panel.js';
+import { createSolveModal } from './solve-modal.js';
 import { bindDisabledToSession, editingActive, sessionStore } from './session-store.js';
 import {
   appendSigmaMeters, appendSigmaScalar, cpLabel,
@@ -650,6 +652,19 @@ function attachLocationLockToggle(cp: api.ApiControlPoint, elId: string): void {
 }
 
 async function main(): Promise<void> {
+  const solveModal = createSolveModal({
+    // A successful writeback moves this CP's estimated location/elevation
+    // into the session overlay; reload to show the new values. The pending
+    // counters live in localStorage keyed by session id, so the solver
+    // widget and Save button survive the reload.
+    onComplete: () => {
+      api.invalidateWorldCache();
+      location.reload();
+    },
+  });
+  createSolverPanel(getElement('solver-host'), () => {
+    solveModal.open({ start: api.solveJointStream, title: 'Solve all (joint)' });
+  });
   createSessionPanel(getElement('session-host'));
   const m = CP_ID_RE.exec(location.pathname);
   const nameEl = getElement('name');
