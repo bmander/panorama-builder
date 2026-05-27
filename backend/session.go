@@ -656,12 +656,6 @@ func applyPhotoPatch(p *Photo, patch Patch) error {
 		}
 		p.SizeRad = v
 	}
-	if v, present, err := patch.Float64("opacity"); present {
-		if err != nil || !inRange(v, 0, 1) {
-			return errors.New("opacity must be in [0, 1]")
-		}
-		p.Opacity = v
-	}
 	if v, present, err := patch.Float64("dist_k1"); present {
 		if err != nil {
 			return err

@@ -182,7 +182,7 @@ export interface paths {
         /** Get photo metadata */
         get: operations["getPhoto"];
         /**
-         * Partial-update photo pose / opacity / aspect / locks
+         * Partial-update photo pose / aspect / locks
          * @description Partial update: only the keys present in the request body are
          *     written. Omitting a key preserves its current value.
          */
@@ -1048,8 +1048,6 @@ export interface components {
              * @description horizontal angular subtense radians
              */
             size_rad: number;
-            /** Format: double */
-            opacity: number;
             lock_photo_az: boolean;
             lock_photo_tilt: boolean;
             lock_photo_roll: boolean;
@@ -1414,7 +1412,7 @@ export interface components {
         };
         /**
          * @description POST body for `POST /stations/{id}/photos`. Pose fields are
-         *     required; opacity / lock_* / dist_k* default if omitted.
+         *     required; lock_* / dist_k* default if omitted.
          */
         PhotoPosePatch: {
             /** Format: double */
@@ -1427,8 +1425,6 @@ export interface components {
             photo_roll: number;
             /** Format: double */
             size_rad: number;
-            /** Format: double */
-            opacity?: number;
             /** @description defaults to true when omitted */
             lock_photo_az?: boolean;
             lock_photo_tilt?: boolean;
@@ -1460,8 +1456,6 @@ export interface components {
             photo_roll?: number;
             /** Format: double */
             size_rad?: number;
-            /** Format: double */
-            opacity?: number;
             lock_photo_az?: boolean;
             lock_photo_tilt?: boolean;
             lock_photo_roll?: boolean;

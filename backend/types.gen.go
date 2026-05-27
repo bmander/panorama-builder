@@ -832,7 +832,6 @@ type Photo struct {
 	LockPhotoTilt bool    `json:"lock_photo_tilt"`
 	LockSizeRad   bool    `json:"lock_size_rad"`
 	MimeType      *string `json:"mime_type"`
-	Opacity       float64 `json:"opacity"`
 
 	// PhotoAz viewer-azimuth radians (CCW from -Z)
 	PhotoAz float64 `json:"photo_az"`
@@ -892,7 +891,7 @@ type PhotoListItem struct {
 }
 
 // PhotoPosePatch POST body for `POST /stations/{id}/photos`. Pose fields are
-// required; opacity / lock_* / dist_k* default if omitted.
+// required; lock_* / dist_k* default if omitted.
 type PhotoPosePatch struct {
 	Aspect float64 `json:"aspect"`
 
@@ -905,15 +904,14 @@ type PhotoPosePatch struct {
 	LockDistK2 *bool `json:"lock_dist_k2,omitempty"`
 
 	// LockPhotoAz defaults to true when omitted
-	LockPhotoAz   *bool    `json:"lock_photo_az,omitempty"`
-	LockPhotoRoll *bool    `json:"lock_photo_roll,omitempty"`
-	LockPhotoTilt *bool    `json:"lock_photo_tilt,omitempty"`
-	LockSizeRad   *bool    `json:"lock_size_rad,omitempty"`
-	Opacity       *float64 `json:"opacity,omitempty"`
-	PhotoAz       float64  `json:"photo_az"`
-	PhotoRoll     float64  `json:"photo_roll"`
-	PhotoTilt     float64  `json:"photo_tilt"`
-	SizeRad       float64  `json:"size_rad"`
+	LockPhotoAz   *bool   `json:"lock_photo_az,omitempty"`
+	LockPhotoRoll *bool   `json:"lock_photo_roll,omitempty"`
+	LockPhotoTilt *bool   `json:"lock_photo_tilt,omitempty"`
+	LockSizeRad   *bool   `json:"lock_size_rad,omitempty"`
+	PhotoAz       float64 `json:"photo_az"`
+	PhotoRoll     float64 `json:"photo_roll"`
+	PhotoTilt     float64 `json:"photo_tilt"`
+	SizeRad       float64 `json:"size_rad"`
 }
 
 // PhotoUpdate Partial-update body for PUT /photos/{id}. Every field is
@@ -928,7 +926,6 @@ type PhotoUpdate struct {
 	LockPhotoRoll *bool    `json:"lock_photo_roll,omitempty"`
 	LockPhotoTilt *bool    `json:"lock_photo_tilt,omitempty"`
 	LockSizeRad   *bool    `json:"lock_size_rad,omitempty"`
-	Opacity       *float64 `json:"opacity,omitempty"`
 	PhotoAz       *float64 `json:"photo_az,omitempty"`
 	PhotoRoll     *float64 `json:"photo_roll,omitempty"`
 	PhotoTilt     *float64 `json:"photo_tilt,omitempty"`

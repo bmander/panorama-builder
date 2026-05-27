@@ -243,7 +243,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
     put:
       tags: [photos]
-      summary: Partial-update photo pose / opacity / aspect / locks
+      summary: Partial-update photo pose / aspect / locks
       description: |
         Partial update: only the keys present in the request body are
         written. Omitting a key preserves its current value.
@@ -1279,7 +1279,6 @@ components:
         - photo_tilt
         - photo_roll
         - size_rad
-        - opacity
         - lock_photo_az
         - lock_photo_tilt
         - lock_photo_roll
@@ -1308,7 +1307,6 @@ components:
         photo_tilt: { type: number, format: double, description: viewer-altitude radians (above horizon) }
         photo_roll: { type: number, format: double, description: in-plane roll radians }
         size_rad: { type: number, format: double, description: horizontal angular subtense radians }
-        opacity: { type: number, format: double, minimum: 0, maximum: 1 }
         lock_photo_az: { type: boolean }
         lock_photo_tilt: { type: boolean }
         lock_photo_roll: { type: boolean }
@@ -1721,7 +1719,7 @@ components:
       type: object
       description: |
         POST body for `POST /stations/{id}/photos`. Pose fields are
-        required; opacity / lock_* / dist_k* default if omitted.
+        required; lock_* / dist_k* default if omitted.
       required: [aspect, photo_az, photo_tilt, photo_roll, size_rad]
       properties:
         aspect: { type: number, format: double }
@@ -1729,7 +1727,6 @@ components:
         photo_tilt: { type: number, format: double }
         photo_roll: { type: number, format: double }
         size_rad: { type: number, format: double }
-        opacity: { type: number, format: double, minimum: 0, maximum: 1 }
         lock_photo_az: { type: boolean, description: defaults to true when omitted }
         lock_photo_tilt: { type: boolean }
         lock_photo_roll: { type: boolean }
@@ -1750,7 +1747,6 @@ components:
         photo_tilt: { type: number, format: double }
         photo_roll: { type: number, format: double }
         size_rad: { type: number, format: double }
-        opacity: { type: number, format: double, minimum: 0, maximum: 1 }
         lock_photo_az: { type: boolean }
         lock_photo_tilt: { type: boolean }
         lock_photo_roll: { type: boolean }

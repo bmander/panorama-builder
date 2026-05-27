@@ -85,20 +85,20 @@ func insertEntityFromJSON(ctx context.Context, tx pgx.Tx, entityType string, bod
 		_, err := tx.Exec(ctx, `
 			INSERT INTO photos
 			  (id, station_id, blob_path, mime_type, size_bytes, aspect,
-			   photo_az, photo_tilt, photo_roll, size_rad, opacity,
+			   photo_az, photo_tilt, photo_roll, size_rad,
 			   lock_photo_az, lock_photo_tilt, lock_photo_roll, lock_size_rad,
 			   dist_k1, dist_k2, lock_dist_k1, lock_dist_k2,
 			   sigma_photo_az, sigma_photo_tilt, sigma_photo_roll,
 			   sigma_size_rad, sigma_dist_k1, sigma_dist_k2,
 			   created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6,
-			        $7, $8, $9, $10, $11,
-			        $12, $13, $14, $15,
-			        $16, $17, $18, $19,
-			        $20, $21, $22, $23, $24, $25,
-			        $26, NOW())`,
+			        $7, $8, $9, $10,
+			        $11, $12, $13, $14,
+			        $15, $16, $17, $18,
+			        $19, $20, $21, $22, $23, $24,
+			        $25, NOW())`,
 			p.ID, p.StationID, p.BlobPath, p.MimeType, p.SizeBytes, p.Aspect,
-			p.PhotoAz, p.PhotoTilt, p.PhotoRoll, p.SizeRad, p.Opacity,
+			p.PhotoAz, p.PhotoTilt, p.PhotoRoll, p.SizeRad,
 			p.LockPhotoAz, p.LockPhotoTilt, p.LockPhotoRoll, p.LockSizeRad,
 			p.DistK1, p.DistK2, p.LockDistK1, p.LockDistK2,
 			p.SigmaPhotoAz, p.SigmaPhotoTilt, p.SigmaPhotoRoll,
@@ -221,7 +221,6 @@ func updateEntityFromJSON(ctx context.Context, tx pgx.Tx, entityType, id string,
 			bindIf("photo_tilt", "photo_tilt", p.PhotoTilt).
 			bindIf("photo_roll", "photo_roll", p.PhotoRoll).
 			bindIf("size_rad", "size_rad", p.SizeRad).
-			bindIf("opacity", "opacity", p.Opacity).
 			bindIf("lock_photo_az", "lock_photo_az", p.LockPhotoAz).
 			bindIf("lock_photo_tilt", "lock_photo_tilt", p.LockPhotoTilt).
 			bindIf("lock_photo_roll", "lock_photo_roll", p.LockPhotoRoll).

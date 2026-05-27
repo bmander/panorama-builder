@@ -96,7 +96,7 @@ export function createOrchestration({
         const az = (i / N) * 2 * Math.PI;
         const meta = {
           aspect, photo_az: az, photo_tilt: 0, photo_roll: 0,
-          size_rad: DEFAULT_SIZE_RAD, opacity: 1,
+          size_rad: DEFAULT_SIZE_RAD,
         };
         const photo = await api.createPhoto(created.id, meta);
         await api.uploadPhotoBlob(photo.id, file);
@@ -119,7 +119,7 @@ export function createOrchestration({
     const locId = getCurrentStationId();
     const az = Math.atan2(-dir.x, -dir.z);
     const alt = Math.asin(clamp(dir.y, -1, 1));
-    const pose = { aspect, photo_az: az, photo_tilt: alt, photo_roll: 0, size_rad: DEFAULT_SIZE_RAD, opacity: 1 };
+    const pose = { aspect, photo_az: az, photo_tilt: alt, photo_roll: 0, size_rad: DEFAULT_SIZE_RAD };
 
     let photo;
     try {

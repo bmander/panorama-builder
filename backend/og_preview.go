@@ -213,7 +213,7 @@ func (b photoBasis) planeUV(d vec3) (u, v float64, ok bool) {
 
 // selectCoveringPhoto picks the photo whose plane the center ray (az,alt)
 // hits in-bounds, tie-broken by smallest angular distance to the photo's
-// pointing direction, then higher opacity.
+// pointing direction (first match wins on an exact tie).
 func selectCoveringPhoto(photos []Photo, az, alt float64) (Photo, bool) {
 	center := dirFromAzAlt(az, alt)
 	var best Photo
@@ -228,8 +228,7 @@ func selectCoveringPhoto(photos []Photo, az, alt float64) (Photo, bool) {
 			continue
 		}
 		ang := math.Acos(clampF(center.dot(b.dir), -1, 1))
-		if !found || ang < bestAng-1e-9 ||
-			(math.Abs(ang-bestAng) <= 1e-9 && p.Opacity > best.Opacity) {
+		if !found || ang < bestAng-1e-9 {
 			best, bestAng, found = p, ang, true
 		}
 	}

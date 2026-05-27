@@ -16,7 +16,6 @@ export interface SyncedPhoto {
   photo_tilt: number;
   photo_roll: number;
   size_rad: number;
-  opacity: number;
   dist_k1: number;
   dist_k2: number;
 }
@@ -80,7 +79,6 @@ export function createSyncManager({
       photo_tilt: pose.photoTilt,
       photo_roll: pose.photoRoll,
       size_rad: pose.sizeRad,
-      opacity: overlays.photos.getOpacity(o),
       dist_k1: pose.k1,
       dist_k2: pose.k2,
     };
@@ -88,7 +86,7 @@ export function createSyncManager({
 
   function photosEqual(a: SyncedPhoto, b: SyncedPhoto): boolean {
     return a.aspect === b.aspect && a.photo_az === b.photo_az && a.photo_tilt === b.photo_tilt
-      && a.photo_roll === b.photo_roll && a.size_rad === b.size_rad && a.opacity === b.opacity
+      && a.photo_roll === b.photo_roll && a.size_rad === b.size_rad
       && a.dist_k1 === b.dist_k1 && a.dist_k2 === b.dist_k2;
   }
   function imageMeasurementsEqual(a: SyncedImageMeasurement, b: SyncedImageMeasurement): boolean {

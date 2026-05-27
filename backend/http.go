@@ -108,9 +108,6 @@ func validatePhotoPosePatch(req PhotoPosePatch) string {
 	if req.SizeRad < 0 {
 		return "size_rad must be non-negative"
 	}
-	if req.Opacity != nil && !inRange(*req.Opacity, 0, 1) {
-		return "opacity must be in [0, 1]"
-	}
 	return ""
 }
 

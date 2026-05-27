@@ -1,6 +1,7 @@
-// Right-side HUD: opacity slider + photo parameters. Every field commits on
-// change; opacity commits live as the slider moves. One commit = one undo
-// entry.
+// Right-side HUD: opacity slider + photo parameters. Pose/lock fields commit
+// on change (one commit = one undo entry). Opacity is a session-only display
+// control (see settings.ts) — it drives the photo's material live and is not
+// persisted to the server or recorded for undo.
 
 import {
   createSigmaSpan, fmtSigmaRad, getElement, overlayData, sigmaSeverityClass,

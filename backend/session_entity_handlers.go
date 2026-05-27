@@ -531,10 +531,6 @@ func (s *Server) postPhotoInSession(w http.ResponseWriter, r *http.Request, sess
 	}
 	id := newID()
 	now := time.Now().UTC()
-	opacity := 1.0
-	if req.Opacity != nil {
-		opacity = *req.Opacity
-	}
 	sizeRad := req.SizeRad
 	if sizeRad == 0 {
 		sizeRad = 0.5236
@@ -542,7 +538,7 @@ func (s *Server) postPhotoInSession(w http.ResponseWriter, r *http.Request, sess
 	p := Photo{
 		ID: id, StationID: stationID,
 		Aspect: req.Aspect, PhotoAz: req.PhotoAz, PhotoTilt: req.PhotoTilt,
-		PhotoRoll: req.PhotoRoll, SizeRad: sizeRad, Opacity: opacity,
+		PhotoRoll: req.PhotoRoll, SizeRad: sizeRad,
 		LockPhotoAz: true, LockPhotoTilt: true, LockPhotoRoll: true, LockSizeRad: true,
 		LockDistK1: true, LockDistK2: true,
 		CreatedAt: now, UpdatedAt: now,

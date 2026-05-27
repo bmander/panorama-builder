@@ -12,7 +12,7 @@ import (
 // present.
 
 const photoCols = `id, station_id, blob_path, mime_type, size_bytes, aspect,
-		photo_az, photo_tilt, photo_roll, size_rad, opacity,
+		photo_az, photo_tilt, photo_roll, size_rad,
 		lock_photo_az, lock_photo_tilt, lock_photo_roll, lock_size_rad,
 		dist_k1, dist_k2, lock_dist_k1, lock_dist_k2,
 		created_at, updated_at,
@@ -22,7 +22,7 @@ const photoCols = `id, station_id, blob_path, mime_type, size_bytes, aspect,
 func scanPhoto(row pgx.Row) (Photo, error) {
 	var p Photo
 	err := row.Scan(&p.ID, &p.StationID, &p.BlobPath, &p.MimeType, &p.SizeBytes,
-		&p.Aspect, &p.PhotoAz, &p.PhotoTilt, &p.PhotoRoll, &p.SizeRad, &p.Opacity,
+		&p.Aspect, &p.PhotoAz, &p.PhotoTilt, &p.PhotoRoll, &p.SizeRad,
 		&p.LockPhotoAz, &p.LockPhotoTilt, &p.LockPhotoRoll, &p.LockSizeRad,
 		&p.DistK1, &p.DistK2, &p.LockDistK1, &p.LockDistK2,
 		&p.CreatedAt, &p.UpdatedAt,

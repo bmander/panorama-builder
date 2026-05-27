@@ -6,8 +6,9 @@
 //
 // Apply paths reuse the existing mutation surfaces:
 //   - photo pose changes → applyPhotoSnapshot (api.updatePhoto +
-//     sync.registerPhoto + applyPose/setPhotoLocks/setOpacity), shared
-//     with the photo HUD's save flow.
+//     sync.registerPhoto + applyPose/setPhotoLocks), shared with the
+//     photo HUD's save flow. Opacity is a session-only display control
+//     (see settings.ts) and is intentionally not part of the snapshot.
 //   - POI moves → overlays.moveImageMeasurement; the diff-based sync
 //     flush handles the PUT (same as a user-driven drag).
 //
@@ -26,7 +27,6 @@ export interface PhotoSnapshot {
   readonly photoRoll: number;
   readonly sizeRad: number;
   readonly aspect: number;
-  readonly opacity: number;
   readonly distK1: number;
   readonly distK2: number;
   readonly locks: PhotoLocks;
@@ -60,7 +60,7 @@ const STACK_CAP = 100;
 function photoSnapshotsEqual(a: PhotoSnapshot, b: PhotoSnapshot): boolean {
   return a.photoAz === b.photoAz && a.photoTilt === b.photoTilt
     && a.photoRoll === b.photoRoll && a.sizeRad === b.sizeRad
-    && a.aspect === b.aspect && a.opacity === b.opacity
+    && a.aspect === b.aspect
     && a.distK1 === b.distK1 && a.distK2 === b.distK2
     && a.locks.lockPhotoAz === b.locks.lockPhotoAz
     && a.locks.lockPhotoTilt === b.locks.lockPhotoTilt
@@ -80,7 +80,6 @@ export function snapshotPhoto(overlays: OverlayManager, id: string): PhotoSnapsh
     photoRoll: pose.photoRoll,
     sizeRad: pose.sizeRad,
     aspect: pose.aspect,
-    opacity: overlays.photos.getOpacity(o),
     distK1: pose.k1,
     distK2: pose.k2,
     locks: overlays.photos.getLocks(o),
@@ -110,7 +109,6 @@ export function applyPhotoSnapshot(
     photo_tilt: snap.photoTilt,
     photo_roll: snap.photoRoll,
     size_rad: snap.sizeRad,
-    opacity: snap.opacity,
     lock_photo_az: snap.locks.lockPhotoAz,
     lock_photo_tilt: snap.locks.lockPhotoTilt,
     lock_photo_roll: snap.locks.lockPhotoRoll,
@@ -127,7 +125,6 @@ export function applyPhotoSnapshot(
       photo_tilt: snap.photoTilt,
       photo_roll: snap.photoRoll,
       size_rad: snap.sizeRad,
-      opacity: snap.opacity,
       dist_k1: snap.distK1,
       dist_k2: snap.distK2,
     });
@@ -139,7 +136,6 @@ export function applyPhotoSnapshot(
         k1: snap.distK1, k2: snap.distK2,
       });
       overlays.photos.setLocks(o, snap.locks);
-      overlays.photos.setOpacity(o, snap.opacity);
     });
   });
 }

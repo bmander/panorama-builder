@@ -413,8 +413,8 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
       photos.map(() => 0), durationMs);
   }
 
-  // Drop every loaded photo to transparent, then ramp back to the opacity
-  // hydrate set — the destination fade-in after landing. The drop is
+  // Drop every loaded photo to transparent, then ramp back to each photo's
+  // current opacity — the destination fade-in after landing. The drop is
   // synchronous so no full-opacity frame paints before the ramp's first tick.
   function fadePhotosIn(durationMs: number): Promise<void> {
     const photos = photoGroups();
@@ -521,7 +521,6 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
           sizeRad: p.size_rad, aspect: p.aspect, camLat: loc.lat, camLng: loc.lng,
           k1: p.dist_k1, k2: p.dist_k2,
         });
-        overlays.photos.setOpacity(o, p.opacity);
         overlays.photos.setLocks(o, {
           lockPhotoAz: p.lock_photo_az, lockPhotoTilt: p.lock_photo_tilt,
           lockPhotoRoll: p.lock_photo_roll, lockSizeRad: p.lock_size_rad,
@@ -537,7 +536,7 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
         });
         sync.registerPhoto(p.id, {
           aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,
-          photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
+          photo_roll: p.photo_roll, size_rad: p.size_rad,
           dist_k1: p.dist_k1, dist_k2: p.dist_k2,
         });
         const fullUrl = api.photoBlobUrl(p);
@@ -616,7 +615,7 @@ export function createStationDataController(opts: CreateStationDataControllerOpt
         });
         sync.registerPhoto(p.id, {
           aspect: p.aspect, photo_az: p.photo_az, photo_tilt: p.photo_tilt,
-          photo_roll: p.photo_roll, size_rad: p.size_rad, opacity: p.opacity,
+          photo_roll: p.photo_roll, size_rad: p.size_rad,
           dist_k1: p.dist_k1, dist_k2: p.dist_k2,
         });
       }
