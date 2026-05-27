@@ -19,7 +19,7 @@ function renderRow(st: api.ApiStation): HTMLElement {
   if (!st.lock_lat || !st.lock_lng) {
     appendSigmaMeters(loc, st.sigma_lat, st.sigma_lng,
       SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M,
-      'σ from last solve (max of lat/lng, in meters)');
+      'σ from last solve (max of lat/lng, in feet)');
   }
   const elev = makeListCell('col-elev', fmtAlt(st.alt), st.lock_alt);
   if (!st.lock_alt) {

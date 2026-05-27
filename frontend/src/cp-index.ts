@@ -87,7 +87,7 @@ function renderRow(cp: api.ApiControlPoint, fit: api.ApiControlPointFit | undefi
   if (!cp.lock_est_lat || !cp.lock_est_lng) {
     appendSigmaMeters(loc, cp.sigma_est_lat, cp.sigma_est_lng,
       SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M,
-      'σ from last solve (max of est_lat/est_lng, in meters)');
+      'σ from last solve (max of est_lat/est_lng, in feet)');
   }
   const elev = makeListCell('col-elev', fmtAlt(cp.est_alt),
     cp.lock_est_alt, cp.est_alt === null);

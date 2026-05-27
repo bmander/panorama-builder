@@ -725,7 +725,7 @@ async function main(): Promise<void> {
   appendSigmaMeters(latEl.parentElement!,
     cp.sigma_est_lat ?? null, cp.sigma_est_lng ?? null,
     SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M,
-    'σ from last solve (max of lat/lng, in meters)');
+    'σ from last solve (max of lat/lng, in feet)');
   appendSigmaScalar(altEl.parentElement!,
     cp.sigma_est_alt ?? null,
     SIGMA_ALT_WARN_M, SIGMA_ALT_REFUSE_M,

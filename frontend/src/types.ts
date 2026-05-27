@@ -618,18 +618,20 @@ function deficientAxisLink(a: DeficientAxisItem): HTMLElement {
   return link;
 }
 
-// Format a σ value (meters) for compact display. Chooses unit by magnitude
-// so cm-scale uncertainties don't render as "0.012 m" but "1.2 cm".
-//   null  →  "?"   (no solve has populated this axis yet)
-//   < 0.1 m  →  "X.Xcm"
-//   < 1000 m →  "X.XXm"
-//   else  →  "X.Xkm"
+// Format a σ value (input in meters) for compact display in feet — the UI's
+// linear unit. Chooses precision/unit by magnitude so sub-foot uncertainties
+// keep their digits and degenerate ones stay readable.
+//   null     →  "?"   (no solve has populated this axis yet)
+//   < 1 ft   →  "X.XX ft"
+//   < 1 mi   →  "X.X ft"
+//   else     →  "X.X mi"
 export function fmtSigmaMeters(sigma: number | null | undefined): string {
   if (sigma === null || sigma === undefined) return '?';
-  const abs = Math.abs(sigma);
-  if (abs < 0.1) return `${(sigma * 100).toFixed(1)}cm`;
-  if (abs < 1000) return `${sigma.toFixed(2)}m`;
-  return `${(sigma / 1000).toFixed(1)}km`;
+  const ft = metersToFeet(sigma);
+  const abs = Math.abs(ft);
+  if (abs < 1) return `${ft.toFixed(2)} ft`;
+  if (abs < 5280) return `${ft.toFixed(1)} ft`;
+  return `${(ft / 5280).toFixed(1)} mi`;
 }
 
 // Format a σ value (radians) for compact display as degrees / arc-units.

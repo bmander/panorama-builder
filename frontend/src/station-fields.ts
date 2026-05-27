@@ -104,7 +104,7 @@ export function createStationFields(opts: CreateStationFieldsOptions): StationFi
       const worst = worstHorizontalSigma(s.sigma_lat, s.sigma_lng);
       updateSigma(sigmaPosEl, fmtSigmaMeters(worst),
         sigmaSeverityClass(worst, SIGMA_POS_WARN_M, SIGMA_POS_REFUSE_M),
-        'σ from last solve (max of lat/lng, in meters)');
+        'σ from last solve (max of lat/lng, in feet)');
     }
     sigmaAltEl.hidden = s.lock_alt;
     if (!s.lock_alt) {
