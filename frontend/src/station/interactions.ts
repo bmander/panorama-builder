@@ -30,7 +30,9 @@ import type { StationPanels } from './panels.js';
 
 const SHIFT_WHEEL_LOG_PER_PX = 0.005;
 const COLUMN_NDC_HIT_RADIUS = 0.01;
-const STATION_DOT_HIT_PX = 10;
+// Screen-space hit radius shared by the station-dot and control-point markers
+// (both 12 px dots) so the two pick the same way.
+const DOT_HIT_PX = 10;
 
 export interface StationInteractions {
   getSelectedStationId(): string | null;
@@ -289,8 +291,9 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
     findColumnAtNDC: ndc => {
       const pose = worldCamera.getPose();
       if (!pose.stationAnchor) return null;
-      return findHitColumn(ndc, COLUMN_NDC_HIT_RADIUS, viewer.camera, pose.stationAnchor,
-        pose.altitudeMSL, data.getVisibleCps());
+      const canvas = viewer.renderer.domElement;
+      return findHitColumn(ndc, DOT_HIT_PX, canvas.clientWidth, canvas.clientHeight,
+        viewer.camera, pose.stationAnchor, pose.altitudeMSL, data.getVisibleCps());
     },
     onHoveredColumnChange: id => { cpColumns.setHoveredMarker(id); },
     onPhotoBodyContextMenu: (overlay, u, v, sx, sy) => {
@@ -322,7 +325,7 @@ export function createStationInteractions(opts: CreateStationInteractionsOptions
       const others = data.getOtherStations();
       if (!pose.stationAnchor || others.length === 0) return null;
       const canvas = viewer.renderer.domElement;
-      return findHitDot(ndc, STATION_DOT_HIT_PX,
+      return findHitDot(ndc, DOT_HIT_PX,
         canvas.clientWidth, canvas.clientHeight, viewer.camera, pose.stationAnchor,
         pose.altitudeMSL, others);
     },

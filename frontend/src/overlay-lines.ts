@@ -51,12 +51,17 @@ export function clearLineGroup(group: THREE.Group): void {
   group.clear();
 }
 
-// Distance in NDC from `ndc` to the line segment a→b (both in viewer-local
-// world coords) projected through `camera`. When `clamp` is true the
-// projection parameter is bounded to [0, 1] (finite segment); otherwise the
-// distance is to the infinite line through a, b. Returns Infinity when
-// either endpoint sits behind the near plane (project() flips sign there
-// and the projected line stops representing the visible segment).
+// Distance from `ndc` to the line segment a→b (both in viewer-local world
+// coords) projected through `camera`. When `clamp` is true the projection
+// parameter is bounded to [0, 1] (finite segment); otherwise the distance is
+// to the infinite line through a, b. Returns Infinity when either endpoint
+// sits behind the near plane (project() flips sign there and the projected
+// line stops representing the visible segment).
+//
+// `halfW`/`halfH` scale the projected NDC coords to pixel offsets from the
+// viewport center before measuring, so the result is a pixel distance — pass
+// viewportWidth/2, viewportHeight/2 for a screen-space hit radius. Left at the
+// 1 defaults the distance stays in (aspect-dependent) NDC units.
 const _segA = new THREE.Vector3();
 const _segB = new THREE.Vector3();
 export function ndcDistToProjectedSegment(
@@ -64,17 +69,22 @@ export function ndcDistToProjectedSegment(
   a: THREE.Vector3, b: THREE.Vector3,
   camera: THREE.Camera,
   clamp: boolean,
+  halfW = 1,
+  halfH = 1,
 ): number {
   _segA.copy(a).project(camera);
   _segB.copy(b).project(camera);
   if (_segA.z > 1 || _segB.z > 1) return Infinity;
-  const dx = _segB.x - _segA.x;
-  const dy = _segB.y - _segA.y;
+  const ax = _segA.x * halfW, ay = _segA.y * halfH;
+  const bx = _segB.x * halfW, by = _segB.y * halfH;
+  const px = ndc.x * halfW, py = ndc.y * halfH;
+  const dx = bx - ax;
+  const dy = by - ay;
   const len = norm2(dx, dy);
   if (len === 0) return Infinity;
   if (!clamp) {
-    return Math.abs(dx * (ndc.y - _segA.y) - dy * (ndc.x - _segA.x)) / len;
+    return Math.abs(dx * (py - ay) - dy * (px - ax)) / len;
   }
-  const t = Math.max(0, Math.min(1, ((ndc.x - _segA.x) * dx + (ndc.y - _segA.y) * dy) / (len * len)));
-  return norm2(ndc.x - (_segA.x + t * dx), ndc.y - (_segA.y + t * dy));
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (len * len)));
+  return norm2(px - (ax + t * dx), py - (ay + t * dy));
 }
