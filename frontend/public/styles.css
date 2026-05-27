@@ -34,7 +34,8 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
                  display: flex; flex-direction: column; }
 #menu-dropdown[hidden] { display: none; }
 .menu-item { padding: 6px 10px; background: transparent; border: none;
-             color: #fff; font: inherit; text-align: left; cursor: pointer; }
+             color: #fff; font: inherit; text-align: left; cursor: pointer;
+             text-decoration: none; }
 .menu-item:hover { background: rgba(255,255,255,0.15); }
 .menu-item[hidden] { display: none; }
 label.menu-item { display: flex; align-items: center; gap: 6px; }
