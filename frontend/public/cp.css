@@ -6,11 +6,29 @@
 }
 html, body { margin: 0; min-height: 100%; height: auto; overflow: visible;
               background: #111; color: #fff; font: 14px monospace; }
-.session-host { position: fixed; top: 16px; right: 16px; z-index: 1000; }
+#session-controls { position: fixed; top: 16px; right: 16px; z-index: 1000;
+                    display: flex; gap: 8px; align-items: flex-start; }
 .session-widget { display: inline-flex; gap: 8px; align-items: center;
                   padding: 8px 12px; background: rgba(0,0,0,0.7);
                   border: 1px solid rgba(255,255,255,0.4); color: #fff;
-                  font: 12px monospace; }
+                  font: 12px monospace; position: relative; }
+.session-widget[hidden] { display: none; }
+.session-widget-counter { white-space: nowrap; }
+.session-widget-problems { white-space: nowrap; color: var(--sigma-bad); cursor: pointer;
+                           border: 0; background: transparent; font: inherit;
+                           padding: 0 4px; }
+.session-widget-problems[hidden] { display: none; }
+.session-widget-problems:hover { color: #ff8080; }
+.session-widget-dropdown { position: absolute; top: 100%; right: 0;
+                           margin-top: 4px; min-width: 320px; max-width: 480px;
+                           max-height: 320px; overflow-y: auto;
+                           background: rgba(0,0,0,0.92); color: #fff;
+                           border: 1px solid rgba(255,255,255,0.4);
+                           padding: 6px 8px; font: 11px monospace; z-index: 1100; }
+.session-widget-dropdown[hidden] { display: none; }
+.deficient-axes-list { list-style: none; margin: 0; padding: 0; }
+.deficient-axes-list li { padding: 2px 0; }
+.deficient-axes-list .axes { color: var(--sigma-warn); }
 .session-widget .btn { padding: 8px 14px; background: rgba(0,0,0,0.5);
                        color: #fff; border: 1px solid #fff;
                        font: 12px monospace; cursor: pointer; }
@@ -167,6 +185,49 @@ button.danger { font: inherit; color: #ff8080; background: transparent;
                 padding: 6px 12px; cursor: pointer; }
 button.danger:hover:not(:disabled) { background: rgba(255,128,128,0.12); }
 button.danger:disabled { opacity: 0.5; cursor: default; }
+
+/* Solve / save / conflict modals (shared with the solver + session widgets). */
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+         display: flex; align-items: center; justify-content: center; z-index: 2000; }
+.modal[hidden] { display: none; }
+.modal-panel { background: rgba(0,0,0,0.85); color: #fff; border: 1px solid #fff;
+               padding: 16px; min-width: 320px; font: 12px monospace;
+               display: flex; flex-direction: column; gap: 12px; }
+.modal-panel .modal-header { display: flex; align-items: center; justify-content: space-between;
+                             font-weight: bold; }
+.modal-panel .modal-header .btn { padding: 2px 6px; }
+.modal-panel[hidden] { display: none; }
+.modal-field { display: flex; flex-direction: column; gap: 4px; }
+.modal-field input[type="text"],
+.modal-field textarea {
+  background: rgba(255,255,255,0.1); color: #fff; border: 1px solid #888;
+  font: 12px monospace; padding: 4px 6px; }
+.modal-field textarea { resize: vertical; }
+.modal-error { color: #ff8080; font: 12px monospace; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+#solve-modal .modal-panel { width: 480px; }
+.settings-row { display: flex; flex-direction: column; gap: 4px; }
+.settings-row input[type="range"] { width: 100%; accent-color: #fff; }
+.settings-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.settings-check input { margin: 0; }
+.settings-check:has(input:disabled) { cursor: default; opacity: 0.55; }
+.solve-slider-row { display: grid; grid-template-columns: 1fr auto;
+                    column-gap: 8px; row-gap: 4px; align-items: center; }
+.solve-slider-row > label { grid-column: 1 / -1; }
+.solve-slider-row input[type="range"] { width: 100%; accent-color: #fff; }
+.solve-slider-readout { font: 12px monospace; color: #ddd; min-width: 5ch;
+                        text-align: right; }
+#solve-progress { display: flex; flex-direction: column; gap: 6px; }
+#solve-progress[hidden] { display: none; }
+#solve-status { font: 12px monospace; color: #ddd; }
+#solve-loss-chart { width: 100%; height: 160px; background: rgba(255,255,255,0.04);
+                    border: 1px solid #333; display: block; box-sizing: border-box; }
+.btn.loading { color: transparent; position: relative; cursor: wait; }
+.btn.loading::after { content: ''; position: absolute; inset: 0; margin: auto;
+                      width: 12px; height: 12px;
+                      border: 2px solid rgba(255,255,255,0.25); border-top-color: #fff;
+                      border-radius: 50%; animation: btn-spin 0.7s linear infinite; }
+@keyframes btn-spin { to { transform: rotate(360deg); } }
 
 /* Touch devices: scale text up roughly 1.6×. Layout stays the same. */
 @media (pointer: coarse) {
