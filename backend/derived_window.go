@@ -490,9 +490,8 @@ func fromNanos(p *int64) *time.Time {
 // Other entity kinds (photo, image_measurement, cp_constraint, cp_surface)
 // don't contribute and can skip propagation outright.
 func isDateGraphEntity(entityType string) bool {
-	switch entityType {
-	case entityCPObservation, entityStation, entityControlPoint:
-		return true
+	if spec, ok := entityRegistry[entityType]; ok {
+		return spec.feedsDateGraph()
 	}
 	return false
 }
