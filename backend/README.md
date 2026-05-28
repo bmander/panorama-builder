@@ -134,6 +134,32 @@ make restore DUMP_FILE=path/to/backup.sql
 To back up photos as well, snapshot `STORAGE_DIR` (e.g. `tar czf
 photos.tgz data/`) alongside the SQL dump.
 
+## Tests
+
+Most of the suite is pure (no DB) and runs with no setup:
+
+```sh
+go test ./...
+```
+
+The merge/revert tests in `session_merge_revert_test.go` exercise the full
+apply → merge → revert cycle (the rollback invariant) against live tables, so
+they need a Postgres+PostGIS database. They **skip** unless `TEST_DATABASE_URL`
+is set, which is why the bare `go test ./...` above stays green. The tests
+truncate every domain table between runs, so point the var at a **throwaway**
+database — never one whose data you care about:
+
+```sh
+docker compose up -d postgres                       # postgres + postgis on :5432
+docker compose exec -T postgres createdb -U panorama panorama_test
+
+TEST_DATABASE_URL='postgres://panorama:panorama@localhost:5432/panorama_test?sslmode=disable' \
+  go test ./...
+```
+
+There is no CI test job today (the only workflow builds + deploys), so these
+are run manually.
+
 ## Smoke test
 
 Writes never touch main directly — they journal into a session and land on

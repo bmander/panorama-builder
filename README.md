@@ -74,6 +74,10 @@ If you're adding a write path, schema-level cascade, or any operation that touch
 - **Backend**: Go 1.25+ stdlib `net/http` (method routing), `pgx/v5`, Postgres + PostGIS; photo blobs on local disk or GCS.
 - **Solver**: Go + Google Ceres-Solver via cgo, reached over HTTP; the `shared/wire` package carries the request/response types.
 
+## Testing
+
+The frontend has no test suite (by design). The Go modules do: `make test` from the repo root runs `go test ./...` across all three. Most tests are pure and need no setup, so this stays green out of the box. The backend's merge/revert rollback tests additionally exercise the apply → merge → revert cycle against a live Postgres+PostGIS database; they skip unless `TEST_DATABASE_URL` points at a throwaway DB. See [`backend/README.md`](backend/README.md#tests) for how to run them. There is no CI test job yet — tests are run manually.
+
 ## Commands
 
 - **Frontend** (from `frontend/`): `npm run {dev, build, typecheck, lint, lint:fix, generate-types}`.
