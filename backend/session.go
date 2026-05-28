@@ -38,16 +38,15 @@ const (
 // children so foreign-key references resolve. A delete of a station inside
 // a session must explicitly journal the dependent photo / image-measurement
 // deletes ahead of it (handled by deleteStationInSession), so this rank
-// applies cleanly to forward replay.
-var entityRank = map[string]int{
-	entityStation:          0,
-	entityPhoto:            1,
-	entityControlPoint:     2,
-	entityImageMeasurement: 3,
-	entityCPConstraint:     4,
-	entityCPSurface:        5,
-	entityCPObservation:    6,
-}
+// applies cleanly to forward replay. Derived from the entityRegistry (each
+// spec's rank()) so there is a single source of truth.
+var entityRank = func() map[string]int {
+	m := make(map[string]int, len(entityRegistry))
+	for t, spec := range entityRegistry {
+		m[t] = spec.rank()
+	}
+	return m
+}()
 
 type Session struct {
 	ID      string
